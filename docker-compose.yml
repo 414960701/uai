@@ -15,9 +15,10 @@ services:
       UAI_FORGE_HOST: 0.0.0.0
       UAI_FORGE_PORT: "8000"
       UAI_FORGE_SEED_DEMO: ${UAI_FORGE_SEED_DEMO:-true}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     init: true
     ports:
-      - "${UAI_FORGE_API_PORT:-8000}:8000"
+      - "${UAI_FORGE_BIND_ADDRESS:-127.0.0.1}:${UAI_FORGE_API_PORT:-8000}:8000"
     restart: unless-stopped
     stop_grace_period: 30s
     volumes:
@@ -46,7 +47,7 @@ services:
       PORT: "3000"
     init: true
     ports:
-      - "${UAI_FORGE_WEB_PORT:-3000}:3000"
+      - "${UAI_FORGE_BIND_ADDRESS:-127.0.0.1}:${UAI_FORGE_WEB_PORT:-3000}:3000"
     restart: unless-stopped
     healthcheck:
       test:

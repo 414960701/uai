@@ -7,7 +7,7 @@ VENV_UAI := $(VENV)/bin/uai-forge
 
 .PHONY: help install install-backend install-frontend dev-backend dev-frontend \
 	doctor test test-backend test-frontend lint typecheck build compose-config \
-	compose-up compose-down compose-logs docker-build clean
+	compose-up compose-down compose-logs docker-build container-smoke clean
 
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "UAI Forge commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -64,6 +64,9 @@ compose-logs: ## Follow local container logs
 
 docker-build: ## Build both production container images
 	docker compose build
+
+container-smoke: ## Build, start, health-check, and exercise bounded delegation in containers
+	./scripts/container-smoke.sh
 
 clean: ## Remove generated local build output (keeps SQLite data)
 	rm -rf dist .vinext

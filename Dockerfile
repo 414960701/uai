@@ -16,26 +16,29 @@ RUN mkdir -p .openai && \
     fi && \
     npm run build
 
+FROM dependencies AS runtime-dependencies
+RUN npm prune --omit=dev && \
+    npm audit --omit=dev --audit-level=high
+
 FROM node:22.13-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production \
-    HOSTNAME=0.0.0.0 \
+    UAI_FORGE_WEB_HOST=0.0.0.0 \
     PORT=3000 \
     WRANGLER_WRITE_LOGS=false
 
 RUN addgroup -S -g 10001 uai && \
     adduser -S -D -H -u 10001 -G uai uai
 
-# vinext is currently a development dependency but also provides the production
-# server binary, so retain the lockfile-resolved dependency tree in this image.
 COPY --from=build --chown=uai:uai /app/package.json /app/package-lock.json ./
-COPY --from=build --chown=uai:uai /app/node_modules ./node_modules
+COPY --from=runtime-dependencies --chown=uai:uai /app/node_modules ./node_modules
 COPY --from=build --chown=uai:uai /app/dist ./dist
+COPY --from=build --chown=uai:uai /app/scripts/start-web.mjs ./scripts/start-web.mjs
 
 USER uai
 EXPOSE 3000
 
-HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 CMD node -e "fetch('http://127.0.0.1:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||'3000')+'/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
-CMD ["npm", "run", "start", "--", "--hostname", "0.0.0.0", "--port", "3000"]
+CMD ["npm", "run", "start"]

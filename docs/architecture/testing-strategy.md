@@ -25,6 +25,7 @@ last_reviewed: 2026-07-30
 | Adapter contract | 所有实现遵守自有 Protocol | 部分 built-in 测试 | Storage/Bus/Provider/Workspace TCK |
 | Integration | API + SQLite + runtime + event | FastAPI TestClient、真实 SQLite | Postgres、queue、outbox、migration |
 | Frontend | SSR、类型、lint、真实连接状态 | Node SSR test、lint、typecheck | 浏览器交互与无障碍 E2E |
+| Deployment | 生产镜像、健康、真实 API 委派 | 隔离 Compose smoke、容器 doctor、有序事件 | TLS/OIDC、备份恢复、多 worker chaos |
 | Recovery/chaos | 崩溃、重投、lease、取消 | 无 | kill worker、重复 delivery、网络分区 |
 | Security | tenant、Secret、policy、插件 | 基础 tenant 和协议拒绝 | OIDC/RBAC、approval、SSRF、泄露测试 |
 | Model eval | 任务质量和回归 | 无稳定套件 | nightly/release，和确定性 CI 分离 |
@@ -33,12 +34,16 @@ last_reviewed: 2026-07-30
 
 ```bash
 .venv/bin/python -m pytest backend/tests -q
+npm audit --omit=dev --audit-level=high
 npm run lint
 npm run typecheck
 npm test
+./scripts/container-smoke.sh
 ```
 
-这些命令证明当前 Python、TypeScript、SSR 和构建基线，不证明：
+production-only npm high/critical audit 是发布硬门禁；完整开发工具链 audit 仍需评审
+剩余项及修复代价。以上命令证明当前 Python、TypeScript、SSR、构建和单节点容器基线，
+不证明：
 
 - worker 崩溃恢复；
 - 分布式消息投递；
@@ -46,6 +51,7 @@ npm test
 - OIDC/RBAC；
 - 插件隔离；
 - 真实模型回答质量。
+- 公网 TLS、OIDC、备份恢复或多 worker 容错。
 
 ## 关键不变量测试
 

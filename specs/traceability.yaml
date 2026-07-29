@@ -324,6 +324,26 @@ requirements:
       - "docs/architecture/threat-model.md"
     gaps:
       - "No automated provider raw/log/exception leak test"
+  - id: "SEC-006"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "package.json"
+      - "package-lock.json"
+      - "Dockerfile"
+      - "scripts/start-web.mjs"
+      - ".github/workflows/ci.yml"
+    verification:
+      - "npm ci"
+      - "npm ls --all"
+      - "npm audit --omit=dev --audit-level=high"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+      - "scripts/container-smoke.sh"
+      - "specs/changes/CHG-0005-container-release-evidence/acceptance.md"
+    limits:
+      - "Full development dependency audit is reviewed and recorded but is not required to be zero"
   - id: "UI-001"
     status: "partial"
     target: "0.2"
@@ -362,7 +382,7 @@ requirements:
       - "backend/tests/test_api.py::test_control_plane_crud_and_capabilities"
       - "tests/rendered-html.test.mjs::server-renders the UAI Forge control center"
   - id: "DEP-002"
-    status: "specified"
+    status: "implemented"
     target: "0.1"
     contracts:
       - "docs/architecture/deployment.md"
@@ -371,9 +391,11 @@ requirements:
       - "backend/Dockerfile"
       - "docker-compose.yml"
       - "deploy/kubernetes"
+      - "scripts/container-smoke.sh"
       - ".github/workflows/ci.yml"
-    gaps:
-      - "Real container build/start, health-check, and delegation smoke execution evidence must be attached"
+    verification:
+      - "scripts/container-smoke.sh"
+      - ".github/workflows/ci.yml::containers"
   - id: "DEP-003"
     status: "planned"
     target: "0.3"

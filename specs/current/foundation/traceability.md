@@ -47,9 +47,10 @@ last_reviewed: 2026-07-30
 | `SEC-003` | Planned | 可选共享 API key | 缺 OIDC/RBAC/ABAC |
 | `SEC-004` | Partial | confirm fail-closed；服务端清空客户端审批声明 | 伪造防护有测；缺 Approval API 与恢复流程 |
 | `SEC-005` | Partial | 未持久化专门 CoT block | 缺 provider raw/log 泄露测试 |
+| `SEC-006` | Implemented | 锁定兼容依赖、CI production audit、裁剪 Web 运行镜像 | `npm ci`、production-only audit、lint/typecheck/test 与镜像内 audit 通过；完整开发链剩余项记录在 CHG-0005 |
 | `UI-001` | Partial | 高级 revision/mount plugin scope/plugin/Instance 编辑与真实 history | SSR/源合同测试 + rev 2、第二 Instance、17 条事件浏览器 E2E；缺 Schema 自动表单、Instance override、revision diff 与 peer |
 | `UI-002` | Implemented | live/demo state | `rendered-html.test.mjs` 静态连接契约 |
 | `OBS-001` | Partial | Run Event/metrics | 缺 OTel/correlation/脱敏 |
 | `DEP-001` | Implemented | CLI/FastAPI/SQLite/Web | backend + frontend 门禁 |
-| `DEP-002` | Specified | 单节点 Docker/Compose 制品、Kubernetes 单副本清单、CI 容器构建任务 | 需真实容器 build/start、健康检查与委派 smoke 运行证据 |
+| `DEP-002` | Implemented | 已验证单节点 Docker/Compose 与 SQLite volume；Kubernetes 单副本清单是未实测示例 | `scripts/container-smoke.sh` + CI：双镜像、双健康容器、doctor、真实委派、连续事件与隔离清理 |
 | `DEP-003` | Planned | 无正式云 adapter | 需 Postgres/bus/chaos |

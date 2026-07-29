@@ -49,6 +49,12 @@ last_reviewed: 2026-07-30
 - [x] `TASK-018` 实现插件 config、工具/委派 arguments 的 JSON Schema fail-closed
   边界，并修复 memory binding 启用与独立策略语义。
   需求：`EXT-006`
+- [x] `TASK-019` 增加隔离的单节点容器 build/start/health/doctor/真实委派 smoke，
+  接入 CI 并同步部署状态。
+  需求：`DEP-002`
+- [x] `TASK-020` 锁定公开发布 Web 依赖，在 CI 和裁剪后的 Web 运行镜像加入
+  production-only high/critical audit 门禁，审查完整开发工具链 audit 并复跑兼容性门禁。
+  需求：`SEC-006`
 
 ## Wave 1：可恢复执行 `0.2`
 

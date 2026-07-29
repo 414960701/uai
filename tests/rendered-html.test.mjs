@@ -86,6 +86,10 @@ test("keeps advanced Agent configuration and real event history wired", async ()
   assert.match(controlCenter, /环境标签（不负责部署）/);
   assert.match(controlCenter, /全链路事件脱敏/);
   assert.match(controlCenter, /单节点容器/);
-  assert.match(controlCenter, /尚未真实启动验收/);
+  assert.match(controlCenter, /真实委派/);
+  assert.match(controlCenter, /deployment-state verified/);
+  assert.match(controlCenter, /可恢复云集群/);
+  assert.match(controlCenter, /deployment-state planned/);
+  assert.doesNotMatch(controlCenter, /尚未真实启动验收/);
   assert.doesNotMatch(controlCenter, /function SettingToggle/);
 });

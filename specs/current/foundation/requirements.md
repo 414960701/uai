@@ -357,6 +357,23 @@ THE SYSTEM SHALL 不持久化或展示原始 chain-of-thought，只保存最小�
 
 当前事件没有专门的 thinking block，但仍需 provider/日志/异常泄露测试。
 
+### SEC-006 — 公开发布生产依赖门禁
+
+状态：`Implemented`，目标版本：`0.1`
+
+WHEN JavaScript/TypeScript 控制后台准备公开发布
+THE SYSTEM SHALL 使用已提交的 `package-lock.json` 与 `npm ci` 解析依赖，完整通过
+lint、typecheck、production build/test，并让
+`npm audit --omit=dev --audit-level=high` 成功，即 npm 分类的生产依赖图中不存在
+high/critical advisory。
+
+WHEN 构建 Web 运行镜像
+THE SYSTEM SHALL 裁剪仅构建和开发时使用的依赖，并对镜像内 production graph 重复
+执行同一 audit 门禁。
+
+完整开发依赖 audit SHALL 被审查并记录剩余范围；不得使用未经审查的
+`npm audit fix --force`、静默降级依赖或升级到未经兼容测试的破坏性主版本。
+
 ## 控制后台与观测
 
 ### UI-001 — 管理多个 Agent 与 Instance
@@ -405,11 +422,16 @@ Agent CRUD 与 bounded delegation。
 
 ### DEP-002 — 单节点容器
 
-状态：`Specified`，目标版本：`0.1`
+状态：`Implemented`，目标版本：`0.1`
 
 WHEN 使用容器部署 `0.1.x`
 THE SYSTEM SHALL 保持单 worker、持久 SQLite volume、健康检查和真实委派 smoke test，
 并明确不支持水平扩 worker。
+
+可重复的 Compose 门禁构建两个生产镜像，启动并验证两个健康容器，运行后端 doctor，
+再通过 HTTP API 完成 bounded child 委派并校验从 1 连续到终态的事件；2026-07-30
+实测为 17 条。测试资源按唯一 project/volume 和动态测试端口隔离，并在结束时验证
+容器、network 与 volume 均已清理。
 
 ### DEP-003 — 可恢复云适配
 

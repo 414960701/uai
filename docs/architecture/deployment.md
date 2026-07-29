@@ -43,7 +43,7 @@ flowchart LR
 npm run dev
 ```
 
-## 模式 B：单节点容器（`Specified`）
+## 模式 B：单节点容器（`0.1.0 Implemented`）
 
 ```mermaid
 flowchart LR
@@ -53,16 +53,23 @@ flowchart LR
   API --> Provider["External model API"]
 ```
 
-该模式是云端试运行目标，不等于分布式：
+该模式可用于单节点云试运行，不等于分布式：
 
 - API 和 worker 必须保持单副本，或使用同一进程。
+- Compose host port 默认只绑定 `127.0.0.1`；远程暴露前必须配置控制密钥、可信
+  CORS/TLS，并显式设置 `UAI_FORGE_BIND_ADDRESS`。
 - SQLite 使用单写节点和持久卷；不能放在多写共享文件系统上。
 - 终止前需要停止接收 Run、等待短任务或明确取消。
 - 重启前处于 `running` 的记录目前不能自动续跑，应被运维检查并标记失败。
 - readiness 必须验证数据库可写和内置插件注册；liveness 只检查进程响应。
 
-只有容器构建、启动、健康检查和真实委派 smoke test 全部通过后，部署清单才能标记
-`Implemented`。
+`scripts/container-smoke.sh` 是可重复门禁：它以唯一 Compose project、动态 loopback
+端口和 volume 构建并启动两个生产镜像，等待 Web/API 健康，运行容器内 doctor，再通过
+HTTP API 完成
+真实 bounded child 委派并验证连续终态事件。Web 运行镜像只保留 production graph，
+镜像构建阶段对裁剪后的 graph 重复 production audit，最后断言本次容器、network 和
+volume 均已清理。
+2026-07-30 在 Linux/arm64 Docker Engine 上通过；CI 对公开提交重复执行同一脚本。
 
 ## 模式 C：可恢复云部署（`Specified` / `Planned`）
 
@@ -151,3 +158,16 @@ spec。provider/tool/plugin 配置覆盖、正式 deployment profile 和 Instanc
 - [ ] Run 取消和进程终止行为已验证。
 - [ ] 数据备份与恢复演练完成。
 - [ ] 若多 worker：重复投递、lease 过期和 worker kill 测试完成。
+
+### `0.1.x` 单节点容器证据
+
+- [x] 部署模式固定为单后端 worker、单 Web 副本与单写 SQLite volume。
+- [x] 两个生产镜像构建并启动成功。
+- [x] 两个容器健康，后端 doctor 无插件错误。
+- [x] Web 运行镜像裁剪开发工具并通过镜像内 production audit。
+- [x] 确定性 provider 的真实 bounded delegation 成功并产生连续终态事件。
+- [x] smoke 使用唯一 project/volume/image tag 和动态 loopback 端口，并验证容器、
+  network、volume 与临时 image tag 清理。
+
+这些勾选只证明本地/单节点容器语义。公网 TLS、可信身份、CORS 生产来源、备份恢复和
+多 worker 故障测试仍属于具体云环境或后续版本的发布门。

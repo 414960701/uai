@@ -1,0 +1,23 @@
+change_id: CHG-0005
+api:
+  payload_changed: false
+runtime:
+  execution_semantics_changed: false
+deployment:
+  compose_contract_changed: false
+  new_repeatable_smoke_gate: true
+  single_node_only: true
+dependencies:
+  lockfile_changed: true
+  semver_major_dev_dependency_upgrade: true
+  breaking_behavior_observed: false
+  major_upgrade_note: "@cloudflare/workers-types 5.x is required by wrangler 4.115 and is covered by typecheck/build"
+  production_high_advisories_allowed: false
+  development_audit_review_required: true
+storage:
+  schema_change: false
+plugins:
+  protocol_change: false
+rollback:
+  data_migration_required: false
+  note: "Revert the smoke/CI and compatible dependency updates; runtime data and public contracts are unchanged"

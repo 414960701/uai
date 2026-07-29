@@ -2138,8 +2138,8 @@ function SettingsView({
             </div>
             <div className="deployment-option">
               <Box size={18} />
-              <span><strong>单节点容器</strong><small>Docker / Compose / Kubernetes 清单已提供，尚未真实启动验收</small></span>
-              <span className="deployment-state planned">待 smoke</span>
+              <span><strong>单节点容器</strong><small>Docker / Compose 已通过 build、健康检查与真实委派；Kubernetes 单副本清单已提供</small></span>
+              <span className="deployment-state verified">已验证</span>
             </div>
             <div className="deployment-option">
               <Cloud size={18} />

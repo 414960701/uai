@@ -2326,6 +2326,12 @@ a:focus-visible {
   color: var(--lime);
 }
 
+.deployment-state.verified {
+  background: #edf5f1;
+  border-color: #c7ddd2;
+  color: #356b55;
+}
+
 .deployment-state.planned {
   background: #f0f3f1;
   color: #74807b;

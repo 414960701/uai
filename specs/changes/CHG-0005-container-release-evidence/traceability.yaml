@@ -1,0 +1,36 @@
+change_id: CHG-0005
+requirements:
+  DEP-002A:
+    implementation:
+      - Dockerfile
+      - backend/Dockerfile
+      - docker-compose.yml
+      - scripts/container-smoke.sh
+    verification:
+      - scripts/container-smoke.sh
+      - .github/workflows/ci.yml
+  DEP-002B:
+    implementation:
+      - backend/src/uai_forge/api.py
+      - backend/src/uai_forge/runtime.py
+      - scripts/container-smoke.sh
+    verification:
+      - scripts/container-smoke.sh
+  DEP-002C:
+    implementation:
+      - scripts/container-smoke.sh
+      - app/control-center.tsx
+      - docs/architecture/deployment.md
+    verification:
+      - scripts/container-smoke.sh
+      - tests/rendered-html.test.mjs
+  SEC-006A:
+    implementation:
+      - package.json
+      - package-lock.json
+      - Dockerfile
+      - scripts/start-web.mjs
+    verification:
+      - "npm audit --omit=dev --audit-level=high"
+      - "specs/changes/CHG-0005-container-release-evidence/acceptance.md"
+      - "npm test"

@@ -2,7 +2,7 @@
 
 UAI Forge 是一个以扩展契约为中心的 Python Agent 框架和多 Agent 控制面。
 它把 Agent 定义、不可变修订、运行实例、子 Agent 挂载、执行预算和事件流分开，
-使同一套领域逻辑可在本地单进程运行，并提供面向容器化单节点云试运行的制品与清单。
+使同一套领域逻辑可在本地单进程运行，并提供经过可重复 smoke 验证的单节点容器制品。
 当前环境字段只是运行上下文标签，不会自动创建容器或云资源。
 
 当前版本是可运行的 `0.1.0` 基线，包含：
@@ -89,20 +89,34 @@ docker compose up --build
 ```
 
 后台位于 `http://localhost:3000`，API 文档位于
-`http://localhost:8000/docs`。SQLite 数据保存在命名卷中。
+`http://localhost:8000/docs`。SQLite 数据保存在命名卷中。默认只绑定
+`127.0.0.1`；需要远程访问时，必须先配置控制密钥、可信 CORS/TLS，再显式把
+`UAI_FORGE_BIND_ADDRESS` 设为所需接口。
+
+完整的隔离容器验收会构建镜像、等待健康、运行 doctor、发起真实子 Agent 委派，
+并清理本次测试资源：
+
+```bash
+make container-smoke
+```
 
 ## 测试
 
 ```bash
 .venv/bin/python -m pytest backend/tests -q
+npm audit --omit=dev --audit-level=high
 npm run lint
 npm run typecheck
 npm test
+make container-smoke
 ```
 
 2026-07-30 合并基线在 Python 3.9.6 上为后端 `65 passed`；前端 lint、typecheck、
 production build 与 3 项 SSR/source 合同测试全部通过。真实浏览器委派 Run 产生
-17 条连续持久事件，并可通过 SSE `Last-Event-ID` 续播终态。
+17 条连续持久事件，并可通过 SSE `Last-Event-ID` 续播终态。单节点 Compose smoke
+还验证了双镜像构建、双容器健康、容器内 doctor、Web 运行镜像的开发工具裁剪与
+production-only audit、连续真实委派事件和隔离资源清理。完整开发工具链 audit 会
+单独审查，不能用未经验证的破坏性主版本升级静默消除。
 
 测试覆盖版本冲突、跨租户数据隔离、挂载环、子 Agent 委派、共享预算、
 实例策略收紧、mount 权限交集、插件配置与工具参数 Schema、记忆启停、密钥输入拒绝、
@@ -119,8 +133,13 @@ production build 与 3 项 SSR/source 合同测试全部通过。真实浏览器
 | `UAI_FORGE_SEED_DEMO` | `true` | 空数据库是否写入研究团队示例 |
 | `UAI_FORGE_HOST` | `0.0.0.0` | API 监听地址 |
 | `UAI_FORGE_PORT` | `8000` | API 端口 |
+| `UAI_FORGE_BIND_ADDRESS` | `127.0.0.1` | Compose 发布到宿主机的绑定地址；远程暴露前先配置密钥/CORS/TLS |
+| `UAI_FORGE_WEB_HOST` | `0.0.0.0` | production Web 监听地址 |
+| `PORT` | `3000` | production Web 容器内端口 |
 
 模型密钥只通过环境变量引用。Agent 配置保存 `api_key_env`，不保存明文。
+Compose 默认把 `OPENAI_API_KEY` 从宿主环境传给后端；使用其他变量名时，通过私有
+Compose override/Secret 注入同名环境变量，不要把值写入 Agent 配置或版本库。
 
 ## 扩展
 
