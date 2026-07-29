@@ -1,0 +1,19 @@
+change_id: CHG-0003
+api:
+  additive_schema:
+    - "ChildMount.allowed_tools: optional list of ToolBinding.plugin_id"
+  defaults:
+    missing_or_null_allowed_tools: "inherit upstream scope without adding a restriction"
+    empty_allowed_tools: "deny all plugin tools in the mounted bounded subtree"
+storage:
+  schema_change: false
+  old_revision_json_compatible: true
+runtime:
+  intentional_restrictions:
+    - "Child execution now enforces its own tool, token, timeout, and parallel limits"
+    - "Child execution now enforces ancestor and local max_depth limits"
+    - "Explicit mount allowlists can only reduce inherited tool access"
+claims:
+  tenant_policy_engine_implemented: false
+  approval_workflow_implemented: false
+  durable_peer_permissions_implemented: false

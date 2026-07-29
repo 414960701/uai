@@ -1,0 +1,375 @@
+schema_version: "uai-forge.traceability/1.0"
+spec_id: "SPEC-FOUNDATION"
+reviewed_at: "2026-07-30"
+status_definitions:
+  implemented: "Current implementation and repeatable automated evidence exist."
+  partial: "Some implementation exists, but one or more acceptance conditions are missing."
+  specified: "Normative behavior is defined; implementation evidence is absent."
+  planned: "Direction exists; the public contract is not yet stable."
+requirements:
+  - id: "CORE-001"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/models.py"
+      - "backend/src/uai_forge/ports.py"
+    verification:
+      - "backend/tests/test_registry.py::test_builtin_capability_catalog_covers_extension_points"
+  - id: "CORE-002"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/storage.py"
+    verification:
+      - "backend/tests/test_storage_and_graph.py::test_agent_updates_are_versioned_and_optimistic"
+  - id: "CORE-003"
+    status: "partial"
+    target: "0.2"
+    implementation:
+      - "backend/src/uai_forge/models.py::AgentInstance"
+      - "backend/src/uai_forge/models.py::InstanceConfigOverrides"
+      - "backend/src/uai_forge/models.py::build_effective_agent_spec"
+      - "backend/src/uai_forge/api.py"
+      - "backend/src/uai_forge/run_manager.py"
+      - "backend/src/uai_forge/runtime.py"
+    verification:
+      - "backend/tests/test_api.py::test_run_lifecycle_from_instance"
+      - "backend/tests/test_api.py::test_instance_override_contract_is_explicit_and_fail_closed"
+      - "backend/tests/test_runtime.py::test_instance_override_builds_restricted_effective_spec_and_runtime_context"
+      - "backend/tests/test_runtime.py::test_instance_step_override_actually_tightens_shared_run_budget"
+      - "backend/tests/test_runtime.py::test_direct_agent_run_keeps_empty_instance_context"
+    gaps:
+      - "Environment is a runtime context label, not a reconciled deployment profile"
+      - "Changing max_concurrency on an existing instance does not resize its process-local semaphore"
+  - id: "CORE-004"
+    status: "specified"
+    target: "0.2"
+    contracts:
+      - "specs/current/foundation/design.md"
+    gaps:
+      - "No first-class persistent Session store or version"
+  - id: "CORE-005"
+    status: "specified"
+    target: "0.2"
+    implementation:
+      - "backend/src/uai_forge/storage.py::delete_agent"
+    gaps:
+      - "Deleting the latest row leaves revision 1 and makes same-ID recreation fail at a database unique key"
+  - id: "CORE-006"
+    status: "specified"
+    target: "0.3"
+    implementation:
+      - "backend/src/uai_forge/models.py::AgentInstance"
+    gaps:
+      - "Desired state, observed state, generation, and controller reconciliation are not separated"
+  - id: "RUN-001"
+    status: "partial"
+    target: "0.2"
+    implementation:
+      - "backend/src/uai_forge/run_manager.py"
+    verification:
+      - "backend/tests/test_api.py::test_run_lifecycle_from_instance"
+    gaps:
+      - "No waiting_input, waiting_approval, paused, CAS reducer, or persisted transition reason"
+  - id: "RUN-002"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/events.py"
+      - "backend/src/uai_forge/storage.py"
+      - "backend/src/uai_forge/api.py"
+    verification:
+      - "backend/tests/test_api.py::test_run_lifecycle_from_instance"
+      - "backend/tests/test_runtime.py::test_subscriber_closes_replay_live_registration_window_without_loss"
+      - "backend/tests/test_runtime.py::test_slow_subscriber_is_disconnected_without_failing_publish"
+  - id: "RUN-003"
+    status: "specified"
+    target: "0.2"
+    contracts:
+      - "docs/architecture/adr/ADR-0005-at-least-once-recovery.md"
+    gaps:
+      - "No checkpoint store or crash recovery"
+  - id: "RUN-004"
+    status: "specified"
+    target: "0.2"
+    contracts:
+      - "docs/architecture/adr/ADR-0005-at-least-once-recovery.md"
+    gaps:
+      - "No outbox, intent, or idempotency record"
+  - id: "RUN-005"
+    status: "specified"
+    target: "0.2"
+    contracts:
+      - "docs/architecture/adr/ADR-0005-at-least-once-recovery.md"
+    gaps:
+      - "No lease or fencing token"
+  - id: "RUN-006"
+    status: "partial"
+    target: "0.2"
+    implementation:
+      - "backend/src/uai_forge/run_manager.py::RunManager.cancel"
+    gaps:
+      - "No persisted cancellation tree or restart propagation"
+  - id: "RUN-007"
+    status: "specified"
+    target: "0.2"
+    implementation:
+      - "backend/src/uai_forge/run_manager.py"
+      - "backend/src/uai_forge/storage.py"
+    gaps:
+      - "Terminal Run update and terminal event append are separate transactions"
+  - id: "RUN-008"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/events.py"
+    verification:
+      - "backend/tests/test_runtime.py::test_slow_subscriber_is_disconnected_without_failing_publish"
+  - id: "PROTO-001"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/api.py"
+    verification:
+      - "backend/tests/test_api.py::test_control_plane_crud_and_capabilities"
+  - id: "PROTO-002"
+    status: "specified"
+    target: "0.2"
+    contracts:
+      - "specs/current/foundation/contracts/run-event.schema.json"
+      - "specs/current/foundation/contracts/event-envelope.v2.proposed.schema.json"
+    gaps:
+      - "The v2 envelope has no producer or migration adapter"
+  - id: "MAG-001"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/graph.py"
+      - "backend/src/uai_forge/run_manager.py::_resolve_target"
+    verification:
+      - "backend/tests/test_storage_and_graph.py::test_mount_cycles_are_rejected"
+      - "backend/tests/test_storage_and_graph.py::test_graph_traverses_the_pinned_revision_instead_of_latest"
+      - "backend/tests/test_storage_and_graph.py::test_graph_detects_a_cycle_present_only_in_the_pinned_revision"
+      - "backend/tests/test_runtime.py::test_instance_validates_its_pinned_root_revision_not_invalid_latest"
+      - "backend/tests/test_runtime.py::test_instance_rejects_invalid_pinned_root_even_when_latest_is_valid"
+  - id: "MAG-002"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/runtime.py"
+    verification:
+      - "backend/tests/test_runtime.py::test_mounted_agent_executes_as_guarded_tool"
+  - id: "MAG-003"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/runtime.py::BudgetLedger"
+      - "backend/src/uai_forge/runtime.py::InvocationBudget"
+      - "backend/src/uai_forge/runtime.py::RootConcurrencyLease"
+    verification:
+      - "backend/tests/test_runtime.py::test_global_step_budget_covers_child_calls"
+      - "backend/tests/test_runtime.py::test_mount_concurrency_semaphores_are_isolated_by_tenant"
+      - "backend/tests/test_runtime.py::test_new_parent_revision_uses_its_updated_mount_concurrency"
+      - "backend/tests/test_multi_agent_policy.py::test_child_invocation_enforces_local_step_tool_and_token_limits"
+      - "backend/tests/test_multi_agent_policy.py::test_child_timeout_cancels_and_releases_all_concurrency_permits"
+      - "backend/tests/test_multi_agent_policy.py::test_child_local_parallel_limit_caps_grandchild_fanout"
+      - "backend/tests/test_multi_agent_policy.py::test_child_local_depth_zero_blocks_its_own_delegation"
+      - "backend/tests/test_multi_agent_policy.py::test_child_local_tool_limit_also_blocks_delegation_calls"
+  - id: "MAG-004"
+    status: "specified"
+    target: "1.0"
+    contracts:
+      - "docs/architecture/adr/ADR-0003-dual-agent-collaboration.md"
+    gaps:
+      - "No Team, peer Session, inbox, or durable message worker"
+  - id: "MAG-005"
+    status: "planned"
+    target: "0.4"
+    gaps:
+      - "No WorkspaceProvider contract or sandbox implementation"
+  - id: "MAG-006"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/runtime.py::RootConcurrencyLease"
+    verification:
+      - "backend/tests/test_runtime.py::test_three_level_delegation_with_one_root_slot_does_not_deadlock"
+  - id: "MAG-007"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/models.py::ChildMount"
+      - "backend/src/uai_forge/runtime.py"
+      - "backend/src/uai_forge/seed.py"
+    verification:
+      - "backend/tests/test_api.py::test_child_mount_tool_allowlist_is_explicit_and_fail_closed"
+      - "backend/tests/test_multi_agent_policy.py::test_mount_allowlist_null_is_compatible_and_empty_denies_all_tools"
+      - "backend/tests/test_multi_agent_policy.py::test_descendant_mount_cannot_expand_ancestor_tool_scope"
+      - "backend/tests/test_multi_agent_policy.py::test_mount_allowlist_cannot_upgrade_child_deny_policy"
+      - "backend/tests/test_multi_agent_policy.py::test_child_mount_allowed_tools_contract_rejects_ambiguous_values"
+    limits:
+      - "No tenant PolicyEngine, stable binding grant, Secret/workspace scope, consumable Approval, or durable-peer permission model"
+  - id: "EXT-001"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/registry.py"
+    contracts:
+      - "specs/current/foundation/contracts/plugin-manifest.schema.json"
+    verification:
+      - "backend/tests/test_registry.py::test_incompatible_plugin_protocol_fails_closed"
+  - id: "EXT-002"
+    status: "specified"
+    target: "0.3"
+    contracts:
+      - "specs/current/foundation/contracts/plugin-package-manifest.v2.proposed.schema.json"
+    gaps:
+      - "Current entry-point discovery imports executable code before manifest preflight"
+  - id: "EXT-003"
+    status: "specified"
+    target: "0.3"
+    contracts:
+      - "docs/architecture/adr/ADR-0004-plugin-trust.md"
+    gaps:
+      - "No non-bypassable core PolicyEngine"
+  - id: "EXT-004"
+    status: "specified"
+    target: "0.3"
+    gaps:
+      - "No namespaced plugin state or migration runner"
+  - id: "EXT-005"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/ports.py::RepositoryPort"
+      - "backend/src/uai_forge/ports.py::EventStorePort"
+      - "backend/src/uai_forge/ports.py::EventBusPort"
+      - "backend/src/uai_forge/ports.py::EventStreamPort"
+      - "backend/src/uai_forge/graph.py"
+      - "backend/src/uai_forge/runtime.py"
+      - "backend/src/uai_forge/run_manager.py"
+      - "backend/src/uai_forge/events.py"
+    verification:
+      - "backend/tests/test_core_ports.py::test_execution_core_accepts_non_sqlite_repository_and_event_bus_ports"
+      - "backend/tests/test_core_ports.py::test_execution_core_constructor_annotations_use_owned_ports"
+      - "backend/tests/test_core_ports.py::test_builtin_local_adapters_structurally_implement_owned_ports"
+    limits:
+      - "SQLiteRepository and EventBroker remain the only built-in production adapters"
+      - "No formal adapter TCK, PostgreSQL, durable bus, Checkpoint, Outbox, or Lease port yet"
+  - id: "EXT-006"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/schema_validation.py"
+      - "backend/src/uai_forge/registry.py"
+      - "backend/src/uai_forge/validated_repository.py"
+      - "backend/src/uai_forge/api.py"
+      - "backend/src/uai_forge/run_manager.py"
+      - "backend/src/uai_forge/runtime.py"
+      - "backend/src/uai_forge/memory.py"
+    contracts:
+      - "specs/current/foundation/contracts/plugin-manifest.schema.json"
+    verification:
+      - "backend/tests/test_plugin_config_validation.py::test_every_runtime_binding_kind_uses_its_manifest_schema"
+      - "backend/tests/test_plugin_config_validation.py::test_save_boundary_rejects_calculator_unknown_config_without_persisting"
+      - "backend/tests/test_plugin_config_validation.py::test_save_boundary_uses_dynamically_registered_plugin_schema"
+      - "backend/tests/test_plugin_config_validation.py::test_run_submission_and_runtime_revalidate_bypassed_storage"
+      - "backend/tests/test_tool_argument_validation.py::test_tool_arguments_reject_required_extra_and_type_before_invoke"
+      - "backend/tests/test_tool_argument_validation.py::test_delegation_arguments_are_schema_validated_before_child_start"
+      - "backend/tests/test_tool_argument_validation.py::test_middleware_mutated_arguments_are_revalidated_before_invoke"
+      - "backend/tests/test_memory_bindings.py::test_disabled_memory_binding_never_creates_loads_or_appends"
+      - "backend/tests/test_memory_bindings.py::test_in_process_memory_applies_retention_per_binding_without_cross_agent_leak"
+  - id: "SEC-001"
+    status: "partial"
+    target: "0.3"
+    implementation:
+      - "backend/src/uai_forge/models.py::reject_inline_secrets"
+      - "backend/src/uai_forge/api.py"
+      - "backend/src/uai_forge/providers.py"
+    verification:
+      - "backend/tests/test_registry.py::test_binding_configs_reject_plaintext_credentials_and_accept_references"
+      - "backend/tests/test_api.py::test_patch_and_run_metadata_reject_inline_secrets_without_persisting"
+    gaps:
+      - "No generic SecretRef or CredentialResolver"
+      - "Plugin-defined sensitive fields and logs, exceptions, events, and HTML lack an exhaustive leak test"
+  - id: "SEC-002"
+    status: "partial"
+    target: "0.4"
+    implementation:
+      - "backend/src/uai_forge/storage.py"
+      - "backend/src/uai_forge/api.py::tenant_id"
+    verification:
+      - "backend/tests/test_storage_and_graph.py::test_tenant_data_is_isolated"
+    gaps:
+      - "Tenant header is not bound to authenticated identity"
+  - id: "SEC-003"
+    status: "planned"
+    target: "0.4"
+    gaps:
+      - "No OIDC, RBAC, or ABAC"
+  - id: "SEC-004"
+    status: "partial"
+    target: "0.2"
+    implementation:
+      - "backend/src/uai_forge/run_manager.py"
+      - "backend/src/uai_forge/runtime.py"
+    verification:
+      - "backend/tests/test_runtime.py::test_client_metadata_cannot_approve_confirm_tool"
+    gaps:
+      - "No persistent Approval resource, signed one-time grant, waiting state, or resume flow"
+  - id: "SEC-005"
+    status: "partial"
+    target: "0.2"
+    contracts:
+      - "docs/architecture/threat-model.md"
+    gaps:
+      - "No automated provider raw/log/exception leak test"
+  - id: "UI-001"
+    status: "partial"
+    target: "0.2"
+    implementation:
+      - "app/control-center.tsx"
+      - "app/globals.css"
+    verification:
+      - "tests/rendered-html.test.mjs::server-renders the UAI Forge control center"
+      - "tests/rendered-html.test.mjs::keeps advanced Agent configuration and real event history wired"
+      - "specs/changes/CHG-0002-control-center-editors/acceptance.md"
+    gaps:
+      - "Plugin config uses generic JSON objects instead of manifest-driven JSON Schema widgets"
+      - "No Instance policy override editor, revision diff, or peer session editor"
+  - id: "UI-002"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "app/control-center.tsx"
+    verification:
+      - "tests/rendered-html.test.mjs::removes starter-only infrastructure and wires the product client"
+  - id: "OBS-001"
+    status: "partial"
+    target: "0.3"
+    implementation:
+      - "backend/src/uai_forge/events.py"
+      - "backend/src/uai_forge/runtime.py"
+    gaps:
+      - "No OpenTelemetry or stable correlation and causation identifiers"
+  - id: "DEP-001"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/cli.py"
+      - "app/control-center.tsx"
+    verification:
+      - "backend/tests/test_api.py::test_control_plane_crud_and_capabilities"
+      - "tests/rendered-html.test.mjs::server-renders the UAI Forge control center"
+  - id: "DEP-002"
+    status: "specified"
+    target: "0.1"
+    contracts:
+      - "docs/architecture/deployment.md"
+    gaps:
+      - "Container build and real delegation smoke evidence must be attached"
+  - id: "DEP-003"
+    status: "planned"
+    target: "0.3"
+    gaps:
+      - "No PostgreSQL, durable bus, multi-worker lease, or chaos evidence"

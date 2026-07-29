@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uai-forge.local/schemas/event-envelope/2.0-proposed",
+  "title": "UAI Forge Event Envelope v2 (proposed)",
+  "description": "Proposed cross-process event envelope. The 0.1 producer emits run-event/1.0 instead.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "spec_version",
+    "event_type",
+    "tenant_id",
+    "agent_id",
+    "session_id",
+    "run_id",
+    "event_id",
+    "correlation_id",
+    "causation_id",
+    "sequence",
+    "timestamp",
+    "payload_schema",
+    "payload"
+  ],
+  "properties": {
+    "spec_version": {
+      "const": "uai-forge.event/2.0"
+    },
+    "event_type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{2,127}$"
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "agent_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agent_revision": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "agent_instance_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "parent_agent_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "invocation_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "parent_invocation_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "correlation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "causation_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload_schema": {
+      "type": "string",
+      "minLength": 1
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "applied",
+        "policy_version"
+      ],
+      "properties": {
+        "applied": {
+          "type": "boolean"
+        },
+        "policy_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "payload": {
+      "type": "object"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+change_id: CHG-0004
+api:
+  new_error_shape:
+    status: 422
+    fields:
+      - code
+      - plugin_id
+      - expected_kind
+      - path
+      - keyword
+  successful_payloads_changed: false
+runtime:
+  intentional_restrictions:
+    - "Previously accepted plugin configs that violate manifest schemas are rejected"
+    - "Malformed provider tool/delegation arguments are rejected before side effects"
+    - "Disabled memory bindings no longer read or retain messages"
+storage:
+  schema_change: false
+plugins:
+  manifest_protocol_change: false
+  config_schema_now_enforced: true
+rollback:
+  data_migration_required: false
+  note: "Fix invalid stored revisions or roll back core; no database migration is involved"

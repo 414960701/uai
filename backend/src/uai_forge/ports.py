@@ -1,0 +1,212 @@
+"""Stable runtime ports implemented by built-ins and third-party plugins."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Any, AsyncIterator, Dict, List, Optional, Protocol, runtime_checkable
+
+from pydantic import Field
+
+from .models import (
+    AgentInstance,
+    AgentSpec,
+    PluginManifest,
+    RunEvent,
+    RunRecord,
+    StrictModel,
+)
+
+
+@runtime_checkable
+class RepositoryPort(Protocol):
+    """Small persistence surface required by graph validation and Run execution.
+
+    Control-plane CRUD is intentionally not part of this port. Adapters may expose
+    richer administrative methods, while the execution core remains coupled only
+    to UAI Forge domain contracts.
+    """
+
+    async def get_agent(
+        self,
+        tenant_id: str,
+        agent_id: str,
+        revision: Optional[int] = None,
+    ) -> Optional[AgentSpec]:
+        ...
+
+    async def get_instance(
+        self,
+        tenant_id: str,
+        instance_id: str,
+    ) -> Optional[AgentInstance]:
+        ...
+
+    async def create_run(self, run: RunRecord) -> RunRecord:
+        ...
+
+    async def update_run(self, run: RunRecord) -> RunRecord:
+        ...
+
+    async def get_run(
+        self,
+        tenant_id: str,
+        run_id: str,
+    ) -> Optional[RunRecord]:
+        ...
+
+
+@runtime_checkable
+class EventStorePort(Protocol):
+    """Durable event operations used by the built-in live event adapter."""
+
+    async def append_event(self, tenant_id: str, event: RunEvent) -> RunEvent:
+        ...
+
+    async def list_events(
+        self,
+        tenant_id: str,
+        run_id: str,
+        after_sequence: int = 0,
+    ) -> List[RunEvent]:
+        ...
+
+    async def terminal_event_exists(self, tenant_id: str, run_id: str) -> bool:
+        ...
+
+
+@runtime_checkable
+class EventBusPort(Protocol):
+    """Core-facing event publication boundary."""
+
+    async def publish(self, tenant_id: str, event: RunEvent) -> RunEvent:
+        ...
+
+
+@runtime_checkable
+class EventStreamPort(EventBusPort, Protocol):
+    """Optional replay/live subscription surface used by HTTP/SSE adapters."""
+
+    def subscribe(
+        self,
+        tenant_id: str,
+        run_id: str,
+        after_sequence: int = 0,
+        heartbeat_seconds: float = 15.0,
+    ) -> AsyncIterator[Optional[RunEvent]]:
+        ...
+
+
+class ToolCall(StrictModel):
+    id: str
+    name: str
+    arguments: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelMessage(StrictModel):
+    role: str
+    content: Optional[str] = None
+    name: Optional[str] = None
+    tool_call_id: Optional[str] = None
+    tool_calls: List[ToolCall] = Field(default_factory=list)
+
+
+class TokenUsage(StrictModel):
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
+class ModelRequest(StrictModel):
+    model: str
+    messages: List[ModelMessage]
+    tools: List[Dict[str, Any]] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelOutput(StrictModel):
+    content: str = ""
+    tool_calls: List[ToolCall] = Field(default_factory=list)
+    usage: TokenUsage = Field(default_factory=TokenUsage)
+    raw: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelProvider(ABC):
+    manifest: PluginManifest
+
+    @abstractmethod
+    async def complete(self, request: ModelRequest) -> ModelOutput:
+        raise NotImplementedError
+
+
+class ToolPlugin(ABC):
+    manifest: PluginManifest
+    name: str
+    description: str
+    parameters: Dict[str, Any]
+
+    def definition(self, exposed_name: Optional[str] = None) -> Dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": exposed_name or self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            },
+        }
+
+    @abstractmethod
+    async def invoke(self, arguments: Dict[str, Any], context: Dict[str, Any]) -> Any:
+        raise NotImplementedError
+
+
+class MemoryStore(ABC):
+    manifest: PluginManifest
+
+    @abstractmethod
+    async def load(self, tenant_id: str, session_id: str, agent_id: str) -> List[ModelMessage]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def append(
+        self,
+        tenant_id: str,
+        session_id: str,
+        agent_id: str,
+        messages: List[ModelMessage],
+    ) -> None:
+        raise NotImplementedError
+
+
+class Middleware(ABC):
+    """Low-coupling lifecycle hooks. Methods may mutate the supplied values."""
+
+    manifest: PluginManifest
+
+    async def before_model(self, context: Dict[str, Any], request: ModelRequest) -> ModelRequest:
+        return request
+
+    async def after_model(self, context: Dict[str, Any], output: ModelOutput) -> ModelOutput:
+        return output
+
+    async def before_tool(
+        self, context: Dict[str, Any], name: str, arguments: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        return arguments
+
+    async def after_tool(self, context: Dict[str, Any], name: str, result: Any) -> Any:
+        return result
+
+
+class Scheduler(ABC):
+    manifest: PluginManifest
+
+    @abstractmethod
+    async def schedule(self, schedule_id: str, expression: str, payload: Dict[str, Any]) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def cancel(self, schedule_id: str) -> None:
+        raise NotImplementedError

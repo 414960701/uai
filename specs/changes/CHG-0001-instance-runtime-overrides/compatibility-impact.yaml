@@ -1,0 +1,16 @@
+change_id: CHG-0001
+api:
+  additive_schema:
+    - InstanceExecutionPolicyOverrides
+    - InstanceConfigOverrides
+  intentional_restrictions:
+    - "AgentInstance.config_overrides rejects fields outside the 0.1.x policy allowlist"
+storage:
+  schema_change: false
+  existing_empty_override_compatible: true
+runtime:
+  direct_agent_run_compatible: true
+  revision_mutation: false
+claims:
+  cloud_runtime_implemented: false
+  deployment_profiles_implemented: false

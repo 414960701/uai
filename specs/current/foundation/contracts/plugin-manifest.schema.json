@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uai-forge.local/schemas/plugin-manifest/1.0",
+  "title": "UAI Forge Plugin Manifest v1",
+  "description": "Serialized PluginManifest exposed by the 0.1 control API. This describes registered capabilities, not a safe pre-import package manifest.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "kind",
+    "display_name",
+    "version",
+    "protocol_version",
+    "description",
+    "capabilities",
+    "config_schema",
+    "homepage",
+    "available",
+    "source"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{1,63}$"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "provider",
+        "tool",
+        "memory",
+        "storage",
+        "event_bus",
+        "scheduler",
+        "middleware",
+        "ui"
+      ]
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "protocol_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The current registry enforces the numeric major component."
+    },
+    "description": {
+      "type": "string"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "config_schema": {
+      "type": "object",
+      "description": "A valid supported-dialect JSON Schema. The registry meta-validates and compiles it before accepting the manifest; absent $schema defaults to Draft 2020-12."
+    },
+    "homepage": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "available": {
+      "type": "boolean"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "builtin",
+        "entry_point",
+        "remote"
+      ]
+    }
+  },
+  "examples": [
+    {
+      "id": "tool.calculator",
+      "kind": "tool",
+      "display_name": "Safe calculator",
+      "version": "1.0.0",
+      "protocol_version": "1.0",
+      "description": "Arithmetic tool",
+      "capabilities": [
+        "deterministic"
+      ],
+      "config_schema": {},
+      "homepage": null,
+      "available": true,
+      "source": "builtin"
+    }
+  ]
+}

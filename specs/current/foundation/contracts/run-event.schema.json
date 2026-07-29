@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uai-forge.local/schemas/run-event/1.0",
+  "title": "UAI Forge persisted RunEvent v1",
+  "description": "The 0.1 persisted/SSE event. It is ordered only within one tenant and run and is not the proposed distributed event envelope.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "sequence",
+    "type",
+    "timestamp",
+    "agent_id",
+    "parent_agent_id",
+    "depth",
+    "payload"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "SQLite assigns a positive sequence before an event crosses the persistence/SSE boundary."
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "run.started",
+        "run.completed",
+        "run.failed",
+        "run.cancelled",
+        "agent.started",
+        "agent.completed",
+        "agent.failed",
+        "model.started",
+        "model.completed",
+        "tool.started",
+        "tool.completed",
+        "tool.failed",
+        "delegation.started",
+        "delegation.completed",
+        "delegation.failed",
+        "permission.required",
+        "budget.updated"
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "agent_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "parent_agent_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "depth": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "payload": {
+      "type": "object"
+    }
+  }
+}

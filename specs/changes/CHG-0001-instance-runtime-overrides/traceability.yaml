@@ -1,0 +1,27 @@
+change_id: CHG-0001
+requirements:
+  CORE-003A:
+    implementation:
+      - backend/src/uai_forge/models.py
+    verification:
+      - backend/tests/test_api.py
+      - backend/tests/test_registry.py
+  CORE-003B:
+    implementation:
+      - backend/src/uai_forge/models.py
+      - backend/src/uai_forge/run_manager.py
+    verification:
+      - backend/tests/test_runtime.py
+  CORE-003C:
+    implementation:
+      - backend/src/uai_forge/run_manager.py
+      - backend/src/uai_forge/runtime.py
+    verification:
+      - backend/tests/test_runtime.py
+      - backend/tests/test_api.py
+  SEC-001A:
+    implementation:
+      - backend/src/uai_forge/models.py
+    verification:
+      - backend/tests/test_registry.py
+      - backend/tests/test_api.py

@@ -1,0 +1,23 @@
+change_id: CHG-0004
+requirements:
+  EXT-006A:
+    implementation:
+      - backend/src/uai_forge/schema_validation.py
+      - backend/src/uai_forge/registry.py
+      - backend/src/uai_forge/validated_repository.py
+      - backend/src/uai_forge/api.py
+      - backend/src/uai_forge/run_manager.py
+      - backend/src/uai_forge/runtime.py
+    verification:
+      - backend/tests/test_plugin_config_validation.py
+  EXT-006B:
+    implementation:
+      - backend/src/uai_forge/runtime.py
+    verification:
+      - backend/tests/test_tool_argument_validation.py
+  EXT-006C:
+    implementation:
+      - backend/src/uai_forge/runtime.py
+      - backend/src/uai_forge/memory.py
+    verification:
+      - backend/tests/test_memory_bindings.py

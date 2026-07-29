@@ -1,0 +1,31 @@
+change_id: CHG-0003
+requirements:
+  MAG-003A:
+    implementation:
+      - backend/src/uai_forge/runtime.py
+    verification:
+      - backend/tests/test_multi_agent_policy.py
+  MAG-003B:
+    implementation:
+      - backend/src/uai_forge/runtime.py
+    verification:
+      - backend/tests/test_multi_agent_policy.py
+  MAG-003C:
+    implementation:
+      - backend/src/uai_forge/runtime.py
+    verification:
+      - backend/tests/test_multi_agent_policy.py
+      - backend/tests/test_runtime.py
+  MAG-003D:
+    implementation:
+      - backend/src/uai_forge/models.py
+      - backend/src/uai_forge/runtime.py
+      - backend/src/uai_forge/seed.py
+    verification:
+      - backend/tests/test_multi_agent_policy.py
+      - backend/tests/test_api.py
+  MAG-003E:
+    implementation:
+      - backend/src/uai_forge/runtime.py
+    verification:
+      - backend/tests/test_multi_agent_policy.py

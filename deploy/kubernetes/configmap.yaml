@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: uai-forge-config
+data:
+  UAI_FORGE_ALLOWED_ORIGINS: "https://forge.example.com"
+  UAI_FORGE_DATABASE_PATH: "/data/forge.db"
+  UAI_FORGE_HOST: "0.0.0.0"
+  UAI_FORGE_PORT: "8000"
+  UAI_FORGE_SEED_DEMO: "false"

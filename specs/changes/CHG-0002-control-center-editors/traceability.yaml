@@ -1,0 +1,26 @@
+change_id: CHG-0002
+requirements:
+  UI-001A:
+    implementation:
+      - app/control-center.tsx
+      - app/globals.css
+    verification:
+      - tests/rendered-html.test.mjs
+      - "browser-e2e: agent rev 2"
+  UI-001B:
+    implementation:
+      - app/control-center.tsx
+    verification:
+      - "browser-e2e: second instance stop/enable"
+  RUN-002A:
+    implementation:
+      - app/control-center.tsx
+      - backend/src/uai_forge/api.py
+    verification:
+      - backend/tests/test_api.py::test_run_lifecycle_from_instance
+      - "browser-e2e: 17 ordered events"
+  UI-002A:
+    implementation:
+      - app/control-center.tsx
+    verification:
+      - tests/rendered-html.test.mjs
