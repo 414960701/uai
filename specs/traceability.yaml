@@ -366,8 +366,14 @@ requirements:
     target: "0.1"
     contracts:
       - "docs/architecture/deployment.md"
+    implementation:
+      - "Dockerfile"
+      - "backend/Dockerfile"
+      - "docker-compose.yml"
+      - "deploy/kubernetes"
+      - ".github/workflows/ci.yml"
     gaps:
-      - "Container build and real delegation smoke evidence must be attached"
+      - "Real container build/start, health-check, and delegation smoke execution evidence must be attached"
   - id: "DEP-003"
     status: "planned"
     target: "0.3"

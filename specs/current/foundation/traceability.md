@@ -51,5 +51,5 @@ last_reviewed: 2026-07-30
 | `UI-002` | Implemented | live/demo state | `rendered-html.test.mjs` 静态连接契约 |
 | `OBS-001` | Partial | Run Event/metrics | 缺 OTel/correlation/脱敏 |
 | `DEP-001` | Implemented | CLI/FastAPI/SQLite/Web | backend + frontend 门禁 |
-| `DEP-002` | Specified | 部署设计 | 需容器制品与 smoke 证据 |
+| `DEP-002` | Specified | 单节点 Docker/Compose 制品、Kubernetes 单副本清单、CI 容器构建任务 | 需真实容器 build/start、健康检查与委派 smoke 运行证据 |
 | `DEP-003` | Planned | 无正式云 adapter | 需 Postgres/bus/chaos |
