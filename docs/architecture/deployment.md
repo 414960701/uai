@@ -124,10 +124,12 @@ Sites 可托管控制后台，但 Python Runtime 必须部署到可由浏览器�
 
 1. 版本化默认值。
 2. 部署环境配置。
-3. Agent Instance 允许范围内的覆盖。
-4. 单次 Run 非敏感参数。
+3. 数据库中的租户 RuntimeConfig、CredentialProfile 和 ModelProfile。
+4. Agent Instance 允许范围内的覆盖。
+5. 单次 Run 非敏感参数。
 
-SecretRef 不参与普通覆盖合并。Instance override 必须经过显式 Schema 和 allowlist；
+CredentialProfile secret 不参与普通覆盖合并，只在 provider 适配器边界短暂解析。Instance
+override 必须经过显式 Schema 和 allowlist；
 `0.1.x` 当前只允许收紧 execution policy，并为本次 Run 构造不写回 revision 的 effective
 spec。provider/tool/plugin 配置覆盖、正式 deployment profile 和 Instance capacity 热更新
 仍未完成，因此 `CORE-003` 保持 `Partial`。

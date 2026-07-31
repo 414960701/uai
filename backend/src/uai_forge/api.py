@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator, List, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
@@ -18,18 +19,32 @@ from .models import (
     AgentInstance,
     AgentPatch,
     AgentSpec,
+    CredentialProfile,
+    CredentialProfilePatch,
+    CredentialProfileWrite,
     GraphValidationResult,
     InstancePatch,
+    ModelProfile,
+    ModelProfilePatch,
+    ModelProfileWrite,
     PluginKind,
     PluginManifest,
+    RuntimeConfigEntry,
+    RuntimeConfigPatch,
     RunEvent,
     RunRecord,
     RunRequest,
+    new_id,
 )
 from .seed import seed_demo_data
 from .registry import PluginBindingError
 from .settings import Settings
-from .storage import RevisionConflictError
+from .storage import (
+    ConfigurationConflictError,
+    ConfigurationInUseError,
+    RecordNotFoundError,
+    RevisionConflictError,
+)
 
 
 def create_app(settings: Settings = None) -> FastAPI:
@@ -73,6 +88,20 @@ def create_app(settings: Settings = None) -> FastAPI:
             content={"detail": exc.as_detail()},
         )
 
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error(
+        request: Request,
+        exc: RequestValidationError,
+    ) -> JSONResponse:
+        # FastAPI normally echoes the rejected input.  That is unsafe for a
+        # one-time credential submission, so validation responses use the same
+        # input-free shape as Agent patch validation.
+        del request
+        return JSONResponse(
+            status_code=422,
+            content={"detail": validation_error_detail(exc)},
+        )
+
     def get_container(request: Request) -> Container:
         return request.app.state.container
 
@@ -98,14 +127,62 @@ def create_app(settings: Settings = None) -> FastAPI:
     protected = [Depends(authorize)]
 
     def validation_error_detail(exc: ValidationError) -> list:
+        try:
+            errors = exc.errors(include_input=False)
+        except TypeError:  # FastAPI's RequestValidationError on Pydantic 2.10
+            errors = exc.errors()
         return [
             {
                 "type": item["type"],
                 "loc": list(item["loc"]),
                 "msg": item["msg"],
             }
-            for item in exc.errors(include_input=False)
+            for item in errors
         ]
+
+    async def validate_model_profile_reference(
+        current: Container,
+        tenant: str,
+        profile_id: Optional[str],
+        provider: Optional[str] = None,
+    ) -> None:
+        if not profile_id:
+            if provider == "openai_compatible":
+                raise HTTPException(
+                    status_code=422,
+                    detail="openai_compatible agents must reference a model profile",
+                )
+            return
+        profile = await current.repository.get_model_profile(tenant, profile_id)
+        if profile is None:
+            raise HTTPException(status_code=422, detail="model profile not found")
+        if not profile.enabled:
+            raise HTTPException(status_code=422, detail="model profile is disabled")
+        config = dict(profile.config)
+        if profile.base_url:
+            config.setdefault("base_url", profile.base_url)
+        try:
+            current.registry.validate_binding(
+                profile.provider,
+                PluginKind.PROVIDER,
+                config,
+            )
+        except PluginBindingError as exc:
+            raise HTTPException(status_code=422, detail=exc.as_detail()) from exc
+        if profile.credential_profile_id:
+            credential = await current.repository.get_credential(
+                tenant, profile.credential_profile_id
+            )
+            if credential is None or not credential.enabled:
+                raise HTTPException(
+                    status_code=422,
+                    detail="model credential profile is unavailable",
+                )
+        elif profile.provider == "openai_compatible":
+            raise HTTPException(
+                status_code=422,
+                detail="openai_compatible model profiles require a credential profile",
+            )
 
     @app.get("/health")
     async def health() -> dict:
@@ -126,6 +203,9 @@ def create_app(settings: Settings = None) -> FastAPI:
                 "event_replay",
                 "budget_guards",
                 "plugin_entry_points",
+                "database_backed_credentials",
+                "model_profiles",
+                "versioned_runtime_config",
             ],
             "plugin_discovery_errors": current.registry.discovery_errors,
         }
@@ -136,6 +216,281 @@ def create_app(settings: Settings = None) -> FastAPI:
         current: Container = Depends(get_container),
     ) -> List[PluginManifest]:
         return current.registry.manifests(kind)
+
+    @app.get(
+        "/api/v1/credentials",
+        response_model=List[CredentialProfile],
+        dependencies=protected,
+    )
+    async def list_credentials(
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> List[CredentialProfile]:
+        return await current.repository.list_credentials(tenant)
+
+    @app.post(
+        "/api/v1/credentials",
+        response_model=CredentialProfile,
+        status_code=status.HTTP_201_CREATED,
+        dependencies=protected,
+    )
+    async def create_credential(
+        payload: CredentialProfileWrite,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> CredentialProfile:
+        credential_id = payload.id or new_id("cred")
+        if await current.repository.get_credential(tenant, credential_id):
+            raise HTTPException(status_code=409, detail="credential id already exists")
+        profile = CredentialProfile(
+            id=credential_id,
+            tenant_id=tenant,
+            name=payload.name,
+            provider=payload.provider,
+            enabled=payload.enabled,
+            metadata=payload.metadata,
+        )
+        return await current.repository.save_credential(
+            tenant, profile, payload.secret_value
+        )
+
+    @app.get(
+        "/api/v1/credentials/{credential_id}",
+        response_model=CredentialProfile,
+        dependencies=protected,
+    )
+    async def get_credential(
+        credential_id: str,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> CredentialProfile:
+        profile = await current.repository.get_credential(tenant, credential_id)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="credential profile not found")
+        return profile
+
+    @app.patch(
+        "/api/v1/credentials/{credential_id}",
+        response_model=CredentialProfile,
+        dependencies=protected,
+    )
+    async def update_credential(
+        credential_id: str,
+        patch: CredentialProfilePatch,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> CredentialProfile:
+        existing = await current.repository.get_credential(tenant, credential_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="credential profile not found")
+        candidate = existing.model_copy(
+            update=patch.model_dump(exclude_none=True, exclude={"secret", "api_key"})
+        )
+        try:
+            return await current.repository.save_credential(
+                tenant, candidate, patch.secret_value
+            )
+        except RecordNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="credential profile not found") from exc
+
+    @app.delete(
+        "/api/v1/credentials/{credential_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=protected,
+    )
+    async def delete_credential(
+        credential_id: str,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> Response:
+        try:
+            deleted = await current.repository.delete_credential(tenant, credential_id)
+        except ConfigurationInUseError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not deleted:
+            raise HTTPException(status_code=404, detail="credential profile not found")
+        return Response(status_code=204)
+
+    @app.get(
+        "/api/v1/model-profiles",
+        response_model=List[ModelProfile],
+        dependencies=protected,
+    )
+    async def list_model_profiles(
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> List[ModelProfile]:
+        return await current.repository.list_model_profiles(tenant)
+
+    @app.post(
+        "/api/v1/model-profiles",
+        response_model=ModelProfile,
+        status_code=status.HTTP_201_CREATED,
+        dependencies=protected,
+    )
+    async def create_model_profile(
+        payload: ModelProfileWrite,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> ModelProfile:
+        profile_id = payload.id or new_id("mdl")
+        if await current.repository.get_model_profile(tenant, profile_id):
+            raise HTTPException(status_code=409, detail="model profile id already exists")
+        profile = ModelProfile(
+            id=profile_id,
+            tenant_id=tenant,
+            name=payload.name,
+            provider=payload.provider,
+            model=payload.model,
+            credential_profile_id=payload.credential_profile_id,
+            base_url=payload.base_url,
+            config=payload.config,
+            enabled=payload.enabled,
+        )
+        # Validate the provider and credential before persisting this new profile.
+        try:
+            config = dict(profile.config)
+            if profile.base_url:
+                config.setdefault("base_url", profile.base_url)
+            current.registry.validate_binding(profile.provider, PluginKind.PROVIDER, config)
+        except PluginBindingError as exc:
+            raise HTTPException(status_code=422, detail=exc.as_detail()) from exc
+        if profile.credential_profile_id:
+            credential = await current.repository.get_credential(
+                tenant, profile.credential_profile_id
+            )
+            if credential is None or not credential.enabled:
+                raise HTTPException(status_code=422, detail="credential profile not found")
+        elif profile.provider == "openai_compatible":
+            raise HTTPException(
+                status_code=422,
+                detail="openai_compatible model profiles require a credential profile",
+            )
+        return await current.repository.save_model_profile(tenant, profile)
+
+    @app.get(
+        "/api/v1/model-profiles/{profile_id}",
+        response_model=ModelProfile,
+        dependencies=protected,
+    )
+    async def get_model_profile(
+        profile_id: str,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> ModelProfile:
+        profile = await current.repository.get_model_profile(tenant, profile_id)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="model profile not found")
+        return profile
+
+    @app.patch(
+        "/api/v1/model-profiles/{profile_id}",
+        response_model=ModelProfile,
+        dependencies=protected,
+    )
+    async def update_model_profile(
+        profile_id: str,
+        patch: ModelProfilePatch,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> ModelProfile:
+        existing = await current.repository.get_model_profile(tenant, profile_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="model profile not found")
+        candidate = ModelProfile.model_validate(
+            {
+                **existing.model_dump(),
+                **patch.model_dump(exclude_unset=True),
+                "id": existing.id,
+                "tenant_id": tenant,
+            }
+        )
+        config = dict(candidate.config)
+        if candidate.base_url:
+            config.setdefault("base_url", candidate.base_url)
+        try:
+            current.registry.validate_binding(candidate.provider, PluginKind.PROVIDER, config)
+        except PluginBindingError as exc:
+            raise HTTPException(status_code=422, detail=exc.as_detail()) from exc
+        if candidate.credential_profile_id:
+            credential = await current.repository.get_credential(
+                tenant, candidate.credential_profile_id
+            )
+            if credential is None or not credential.enabled:
+                raise HTTPException(status_code=422, detail="credential profile not found")
+        elif candidate.provider == "openai_compatible":
+            raise HTTPException(
+                status_code=422,
+                detail="openai_compatible model profiles require a credential profile",
+            )
+        return await current.repository.save_model_profile(tenant, candidate)
+
+    @app.delete(
+        "/api/v1/model-profiles/{profile_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=protected,
+    )
+    async def delete_model_profile(
+        profile_id: str,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> Response:
+        profile_in_use = getattr(current.repository, "model_profile_is_referenced", None)
+        in_use = (
+            await profile_in_use(tenant, profile_id)
+            if profile_in_use is not None
+            else any(
+                agent.model.profile_id == profile_id
+                for agent in await current.repository.list_agents(tenant)
+            )
+        )
+        if in_use:
+            raise HTTPException(status_code=409, detail="model profile is used by an agent")
+        if not await current.repository.delete_model_profile(tenant, profile_id):
+            raise HTTPException(status_code=404, detail="model profile not found")
+        return Response(status_code=204)
+
+    @app.get(
+        "/api/v1/runtime-config",
+        response_model=List[RuntimeConfigEntry],
+        dependencies=protected,
+    )
+    async def list_runtime_config(
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> List[RuntimeConfigEntry]:
+        return await current.repository.list_runtime_configs(tenant)
+
+    @app.patch(
+        "/api/v1/runtime-config",
+        response_model=RuntimeConfigEntry,
+        dependencies=protected,
+    )
+    async def patch_runtime_config(
+        patch: RuntimeConfigPatch,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> RuntimeConfigEntry:
+        try:
+            return await current.repository.save_runtime_config(
+                tenant,
+                patch.key,
+                patch.value,
+                expected_version=patch.expected_version,
+            )
+        except ConfigurationConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/v1/config/catalog", dependencies=protected)
+    async def configuration_catalog(
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> dict:
+        return {
+            "credentials": await current.repository.list_credentials(tenant),
+            "model_profiles": await current.repository.list_model_profiles(tenant),
+            "runtime": await current.repository.list_runtime_configs(tenant),
+        }
 
     @app.get("/api/v1/agents", response_model=List[AgentSpec], dependencies=protected)
     async def list_agents(
@@ -156,6 +511,9 @@ def create_app(settings: Settings = None) -> FastAPI:
         current: Container = Depends(get_container),
     ) -> AgentSpec:
         current.registry.validate_agent_spec(spec)
+        await validate_model_profile_reference(
+            current, tenant, spec.model.profile_id, spec.model.provider
+        )
         existing = await current.repository.get_agent(tenant, spec.id)
         if existing:
             raise HTTPException(status_code=409, detail="agent id already exists")
@@ -194,6 +552,9 @@ def create_app(settings: Settings = None) -> FastAPI:
                 detail=validation_error_detail(exc),
             ) from exc
         current.registry.validate_agent_spec(candidate)
+        await validate_model_profile_reference(
+            current, tenant, candidate.model.profile_id, candidate.model.provider
+        )
         try:
             return await current.repository.save_agent(
                 tenant, candidate, expected_revision=patch.expected_revision

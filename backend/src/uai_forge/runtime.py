@@ -13,6 +13,7 @@ from .models import (
     ChildMount,
     EventType,
     ExecutionPolicy,
+    ModelBinding,
     RunEvent,
     RunRecord,
 )
@@ -178,6 +179,59 @@ class AgentRuntime:
 
         self.registry.validate_agent_spec(spec)
 
+    async def _resolve_model_binding(
+        self, tenant_id: str, binding: ModelBinding
+    ) -> ModelBinding:
+        """Resolve a database profile into a short-lived provider binding.
+
+        The returned object is never persisted.  Its credential is a private
+        Pydantic attribute so it cannot enter Agent specs, Run records, events,
+        traces or API responses.
+        """
+
+        get_profile = getattr(self.repository, "get_model_profile", None)
+        resolve_credential = getattr(self.repository, "resolve_credential", None)
+        profile_id = binding.profile_id
+        if not profile_id:
+            get_runtime_config = getattr(self.repository, "get_runtime_config", None)
+            if get_runtime_config is not None:
+                default = await get_runtime_config(
+                    tenant_id, "runtime.default_model_profile_id"
+                )
+                if default is not None and isinstance(default.value, str):
+                    profile_id = default.value
+        if not profile_id:
+            if binding.provider == "openai_compatible":
+                raise RuntimeGuardError(
+                    "openai_compatible provider requires a database model profile"
+                )
+            return binding
+        if get_profile is None:
+            raise RuntimeGuardError("database-backed model profiles are unavailable")
+        profile = await get_profile(tenant_id, profile_id)
+        if profile is None or not profile.enabled:
+            raise RuntimeGuardError(f"model profile is unavailable: {profile_id}")
+
+        # Profile values are the defaults; an Agent revision may carry
+        # non-secret extension overrides that are also persisted in SQLite.
+        config = {**profile.config, **binding.config}
+        if profile.base_url:
+            config.setdefault("base_url", profile.base_url)
+        resolved = ModelBinding(
+            provider=profile.provider,
+            model=profile.model,
+            profile_id=profile.id,
+            config=config,
+        )
+        if profile.credential_profile_id:
+            if resolve_credential is None:
+                raise RuntimeGuardError("database-backed credentials are unavailable")
+            secret = await resolve_credential(tenant_id, profile.credential_profile_id)
+            if not secret:
+                raise RuntimeGuardError("model credential profile is unavailable")
+            resolved._runtime_credential = secret
+        return resolved
+
     async def execute(self, run: RunRecord, root_spec: AgentSpec) -> Tuple[str, Dict[str, Any]]:
         ledger = BudgetLedger(root_spec.policy)
         root_semaphore = asyncio.Semaphore(root_spec.policy.max_parallel_children)
@@ -336,7 +390,8 @@ class AgentRuntime:
                 ),
                 ModelMessage(role="user", content=input_text),
             ]
-            provider = self.registry.create_provider(spec.model)
+            model_binding = await self._resolve_model_binding(run.tenant_id, spec.model)
+            provider = self.registry.create_provider(model_binding)
             middlewares = self.registry.create_middlewares(spec.middlewares)
             configured_tool_bindings = {
                 binding.exposed_name: binding
@@ -379,7 +434,7 @@ class AgentRuntime:
             for local_step in range(spec.policy.max_steps):
                 await budget.consume_step()
                 request = ModelRequest(
-                    model=spec.model.model,
+                    model=model_binding.model,
                     messages=history,
                     tools=tool_definitions,
                     metadata={
@@ -409,8 +464,8 @@ class AgentRuntime:
                     spec.id,
                     depth,
                     {
-                        "provider": spec.model.provider,
-                        "model": spec.model.model,
+                        "provider": model_binding.provider,
+                        "model": model_binding.model,
                         "step": local_step + 1,
                     },
                     parent_agent_id,
@@ -436,8 +491,8 @@ class AgentRuntime:
                     spec.id,
                     depth,
                     {
-                        "provider": spec.model.provider,
-                        "model": spec.model.model,
+                        "provider": model_binding.provider,
+                        "model": model_binding.model,
                         "tool_calls": len(output.tool_calls),
                         "usage": output.usage.model_dump(),
                     },

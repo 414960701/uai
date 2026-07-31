@@ -17,6 +17,7 @@ UAI Forge 是一个以扩展契约为中心的 Python Agent 框架和多 Agent �
 - 核心只依赖自有 Repository/Event Port；SQLite 与进程内 EventBroker 是可替换的内置适配器。
 - OpenAI-compatible 与确定性离线模型适配器。
 - SQLite 持久化、按 Run 单调排序的事件和可重连 SSE。
+- 数据库驱动的多凭据、多模型配置档和版本化运行配置；provider AK 加密存储，控制台仅展示脱敏信息。
 - React/TypeScript 管理后台：可发布 Agent 修订，配置模型、工具权限、记忆、中间件、
   子 Agent 固定修订/并发/输入模板，管理多个实例，并查看真实运行事件。
 - Docker、本地命令、Kubernetes 单副本示例、CI、规格、ADR、威胁模型与需求追踪。
@@ -74,7 +75,12 @@ npm run dev
 ```
 
 打开 `http://localhost:3000`。页面会自动连接
-`http://localhost:8000/api/v1`；如果控制面不在线，会明确进入演示模式。
+`http://localhost:8000/api/v1`；如果控制面不在线，会明确显示未连接空状态，不生成本地业务数据。
+
+业务配置全部由控制面数据库提供。首次接入真实模型时，请在“系统设置”创建凭据和模型
+配置档，再在 Agent 编辑器选择 `profile_id`；AK 不会写入 Agent JSON、浏览器持久化或事件。
+本地/云端部署都应注入高熵 `UAI_FORGE_CREDENTIAL_MASTER_KEY`（由 Secret Manager 提供），
+不要依赖仅用于开发测试的默认 master key。
 
 离线模型可以直接验证多 Agent 委派：
 
@@ -111,7 +117,7 @@ npm test
 make container-smoke
 ```
 
-2026-07-30 合并基线在 Python 3.9.6 上为后端 `65 passed`；前端 lint、typecheck、
+2026-07-31 当前基线在 Python 3.9.6 上为后端 `69 passed`；前端 lint、typecheck、
 production build 与 3 项 SSR/source 合同测试全部通过。真实浏览器委派 Run 产生
 17 条连续持久事件，并可通过 SSE `Last-Event-ID` 续播终态。单节点 Compose smoke
 还验证了双镜像构建、双容器健康、容器内 doctor、Web 运行镜像的开发工具裁剪与
@@ -129,6 +135,7 @@ production-only audit、连续真实委派事件和隔离资源清理。完整�
 |---|---|---|
 | `UAI_FORGE_DATABASE_PATH` | `.uai-forge/forge.db` | SQLite 文件路径 |
 | `UAI_FORGE_CONTROL_API_KEY` | 空 | 设置后所有 `/api/v1` 请求必须携带密钥 |
+| `UAI_FORGE_CREDENTIAL_MASTER_KEY` | 空（仅开发回退） | 数据库凭据加密主密钥；部署必须由 Secret Manager 注入 |
 | `UAI_FORGE_ALLOWED_ORIGINS` | 本地后台地址 | 逗号分隔 CORS 来源 |
 | `UAI_FORGE_SEED_DEMO` | `true` | 空数据库是否写入研究团队示例 |
 | `UAI_FORGE_HOST` | `0.0.0.0` | API 监听地址 |
@@ -137,9 +144,9 @@ production-only audit、连续真实委派事件和隔离资源清理。完整�
 | `UAI_FORGE_WEB_HOST` | `0.0.0.0` | production Web 监听地址 |
 | `PORT` | `3000` | production Web 容器内端口 |
 
-模型密钥只通过环境变量引用。Agent 配置保存 `api_key_env`，不保存明文。
-Compose 默认把 `OPENAI_API_KEY` 从宿主环境传给后端；使用其他变量名时，通过私有
-Compose override/Secret 注入同名环境变量，不要把值写入 Agent 配置或版本库。
+模型 AK 通过“系统设置”写入数据库 CredentialProfile，并由 ModelProfile 引用；API 只返回
+脱敏 mask，运行时短暂解密。OpenAI-compatible provider 没有数据库凭据时会 fail closed。
+不要把 AK 写入 Agent 配置、环境文件、浏览器持久化或版本库。
 
 OpenAI Sites 的 `.openai/hosting.json` 同样只保存在部署者本机；公开源码提供
 `.openai/hosting.example.json`，干净 checkout 没有真实 hosting 文件也可直接构建。

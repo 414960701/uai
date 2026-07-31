@@ -2,7 +2,7 @@ import pytest
 
 from uai_forge.builtins import register_builtins
 from uai_forge.models import AgentInstance, ModelBinding, PluginKind, PluginManifest, ToolBinding
-from uai_forge.registry import PluginCompatibilityError, PluginRegistry
+from uai_forge.registry import PluginBindingError, PluginCompatibilityError, PluginRegistry
 
 
 def test_builtin_capability_catalog_covers_extension_points():
@@ -35,9 +35,12 @@ def test_incompatible_plugin_protocol_fails_closed():
         registry.register_manifest(manifest)
 
 
-def test_binding_configs_reject_plaintext_credentials_and_accept_references():
+def test_binding_configs_reject_plaintext_credentials_and_unknown_provider_keys():
     with pytest.raises(ValueError, match="inline credential"):
         ModelBinding(config={"api_key": "sk-plaintext"})
+
+    with pytest.raises(ValueError, match="inline credential"):
+        ModelBinding(config={"api_key_env": "OPENAI_API_KEY"})
 
     with pytest.raises(ValueError, match="inline credential"):
         ToolBinding(
@@ -52,9 +55,11 @@ def test_binding_configs_reject_plaintext_credentials_and_accept_references():
             config_overrides={"provider": {"password": "plaintext"}},
         )
 
-    safe = ModelBinding(
-        provider="openai_compatible",
-        model="example",
-        config={"api_key_env": "OPENAI_API_KEY"},
-    )
-    assert safe.config["api_key_env"] == "OPENAI_API_KEY"
+    registry = PluginRegistry()
+    register_builtins(registry)
+    with pytest.raises(PluginBindingError):
+        registry.validate_binding(
+            "openai_compatible",
+            PluginKind.PROVIDER,
+            {"api_key_env": "OPENAI_API_KEY"},
+        )

@@ -14,7 +14,13 @@ from uai_forge.models import (
     RunRequest,
     RunStatus,
 )
-from uai_forge.ports import EventBusPort, EventStorePort, EventStreamPort, RepositoryPort
+from uai_forge.ports import (
+    ConfigurationPort,
+    EventBusPort,
+    EventStorePort,
+    EventStreamPort,
+    RepositoryPort,
+)
 from uai_forge.registry import PluginRegistry
 from uai_forge.run_manager import RunManager
 from uai_forge.runtime import AgentRuntime
@@ -122,6 +128,7 @@ def test_builtin_local_adapters_structurally_implement_owned_ports(tmp_path):
     event_bus = EventBroker(repository)
 
     assert isinstance(repository, RepositoryPort)
+    assert isinstance(repository, ConfigurationPort)
     assert isinstance(repository, EventStorePort)
     assert isinstance(event_bus, EventBusPort)
     assert isinstance(event_bus, EventStreamPort)

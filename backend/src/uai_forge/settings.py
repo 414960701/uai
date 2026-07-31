@@ -25,6 +25,12 @@ class Settings:
     control_api_key: Optional[str] = field(
         default_factory=lambda: os.environ.get("UAI_FORGE_CONTROL_API_KEY")
     )
+    # Bootstrap-only secret-manager reference used to encrypt/decrypt
+    # database-backed provider credentials.  It is never persisted in SQLite
+    # or returned by the control API.
+    credential_master_key: Optional[str] = field(
+        default_factory=lambda: os.environ.get("UAI_FORGE_CREDENTIAL_MASTER_KEY")
+    )
     allowed_origins: List[str] = field(
         default_factory=lambda: [
             item.strip()

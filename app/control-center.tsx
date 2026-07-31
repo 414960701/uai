@@ -91,7 +91,12 @@ type AgentSpec = {
   revision: number;
   enabled: boolean;
   system_prompt: string;
-  model: { provider: string; model: string; config?: Record<string, unknown> };
+  model: {
+    provider: string;
+    model: string;
+    profile_id?: string | null;
+    config?: Record<string, unknown>;
+  };
   tools: ToolBindingSpec[];
   children: ChildMount[];
   memory?: MemoryBindingSpec;
@@ -154,12 +159,40 @@ type PluginManifest = {
   source: string;
 };
 
+type CredentialProfile = {
+  id: string;
+  name: string;
+  provider: string;
+  masked_value: string;
+  enabled: boolean;
+  metadata?: Record<string, unknown>;
+};
+
+type ModelProfile = {
+  id: string;
+  name: string;
+  provider: string;
+  model: string;
+  credential_profile_id?: string | null;
+  base_url?: string | null;
+  config?: Record<string, unknown>;
+  enabled: boolean;
+};
+
+type RuntimeConfigEntry = {
+  key: string;
+  value: unknown;
+  version: number;
+  updated_at: string;
+};
+
 type AgentConfigurationForm = {
   name: string;
   description: string;
   systemPrompt: string;
   provider: string;
   model: string;
+  modelProfileId?: string;
   modelConfig: Record<string, unknown>;
   tools: ToolBindingSpec[];
   children: ChildMount[];
@@ -180,7 +213,9 @@ type ActivityItem = {
   icon: LucideIcon;
 };
 
-const DEMO_AGENTS: AgentSpec[] = [
+/* Legacy visual samples are intentionally disabled: the database is the only
+   source of Agent, instance, run and provider configuration. */
+/* const DEMO_AGENTS: AgentSpec[] = [
   {
     id: "agt_research_lead",
     name: "研究负责人 Agent",
@@ -425,6 +460,8 @@ const DEMO_PLUGINS: PluginManifest[] = [
   },
 ];
 
+*/
+
 const NAV_ITEMS: Array<{ id: View; label: string; icon: LucideIcon }> = [
   { id: "overview", label: "总览", icon: LayoutDashboard },
   { id: "agents", label: "Agent", icon: Bot },
@@ -578,10 +615,13 @@ export function ControlCenter() {
   const [mode, setMode] = useState<ConnectionMode>("connecting");
   const [apiBase, setApiBase] = useState(() => getDefaultApiBase());
   const [apiKey, setApiKey] = useState("");
-  const [agents, setAgents] = useState<AgentSpec[]>(DEMO_AGENTS);
-  const [instances, setInstances] = useState<AgentInstance[]>(DEMO_INSTANCES);
-  const [runs, setRuns] = useState<RunRecord[]>(DEMO_RUNS);
-  const [plugins, setPlugins] = useState<PluginManifest[]>(DEMO_PLUGINS);
+  const [agents, setAgents] = useState<AgentSpec[]>([]);
+  const [instances, setInstances] = useState<AgentInstance[]>([]);
+  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [plugins, setPlugins] = useState<PluginManifest[]>([]);
+  const [credentials, setCredentials] = useState<CredentialProfile[]>([]);
+  const [modelProfiles, setModelProfiles] = useState<ModelProfile[]>([]);
+  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigEntry[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<AgentSpec | null>(null);
   const [editingAgent, setEditingAgent] = useState<AgentSpec | null>(null);
   const [newAgentOpen, setNewAgentOpen] = useState(false);
@@ -607,36 +647,52 @@ export function ControlCenter() {
       setSyncing(true);
       if (mode === "connecting") setMode("connecting");
       try {
-        const [agentResponse, instanceResponse, runResponse, pluginResponse] =
+        const [agentResponse, instanceResponse, runResponse, pluginResponse,
+          credentialResponse, modelProfileResponse, runtimeConfigResponse] =
           await Promise.all([
             fetch(`${base}/agents`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
             fetch(`${base}/instances`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
             fetch(`${base}/runs?limit=100`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
             fetch(`${base}/plugins`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
+            fetch(`${base}/credentials`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
+            fetch(`${base}/model-profiles`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
+            fetch(`${base}/runtime-config`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
           ]);
-        if (![agentResponse, instanceResponse, runResponse, pluginResponse].every((item) => item.ok)) {
+        if (![agentResponse, instanceResponse, runResponse, pluginResponse,
+          credentialResponse, modelProfileResponse, runtimeConfigResponse].every((item) => item.ok)) {
           throw new Error("Control API unavailable");
         }
-        const [agentData, instanceData, runData, pluginData] = (await Promise.all([
+        const [agentData, instanceData, runData, pluginData, credentialData,
+          modelProfileData, runtimeConfigData] = (await Promise.all([
           agentResponse.json(),
           instanceResponse.json(),
           runResponse.json(),
           pluginResponse.json(),
-        ])) as [AgentSpec[], AgentInstance[], RunRecord[], PluginManifest[]];
+          credentialResponse.json(),
+          modelProfileResponse.json(),
+          runtimeConfigResponse.json(),
+        ])) as [AgentSpec[], AgentInstance[], RunRecord[], PluginManifest[],
+          CredentialProfile[], ModelProfile[], RuntimeConfigEntry[]];
         setAgents(agentData);
         setInstances(instanceData);
         setRuns(runData);
         setPlugins(pluginData);
+        setCredentials(credentialData);
+        setModelProfiles(modelProfileData);
+        setRuntimeConfig(runtimeConfigData);
         setApiBase(base);
         setMode("live");
         setNotice("已连接 Python 运行时");
         window.localStorage.setItem("uai-forge-api-base", base);
       } catch {
         setMode("demo");
-        setAgents(DEMO_AGENTS);
-        setInstances(DEMO_INSTANCES);
-        setRuns(DEMO_RUNS);
-        setPlugins(DEMO_PLUGINS);
+        setAgents([]);
+        setInstances([]);
+        setRuns([]);
+        setPlugins([]);
+        setCredentials([]);
+        setModelProfiles([]);
+        setRuntimeConfig([]);
       } finally {
         setSyncing(false);
       }
@@ -720,6 +776,7 @@ export function ControlCenter() {
       model: {
         provider: form.provider,
         model: form.model,
+        profile_id: form.modelProfileId || undefined,
         config: form.modelConfig,
       },
       tools: form.tools,
@@ -743,12 +800,7 @@ export function ControlCenter() {
       const created = (await response.json()) as AgentSpec;
       setAgents((current) => [...current, created]);
     } else {
-      const created: AgentSpec = {
-        ...(payload as unknown as AgentSpec),
-        id: `agt_${Date.now().toString(36)}`,
-        revision: 1,
-      };
-      setAgents((current) => [...current, created]);
+      throw new Error("请先连接 Python 控制面；Agent 配置只写入数据库");
     }
     setNotice(`${form.name} 已创建`);
     setNewAgentOpen(false);
@@ -766,6 +818,7 @@ export function ControlCenter() {
       model: {
         provider: form.provider,
         model: form.model,
+        profile_id: form.modelProfileId || undefined,
         config: form.modelConfig,
       },
       tools: form.tools,
@@ -785,20 +838,7 @@ export function ControlCenter() {
       if (!response.ok) throw new Error(await response.text());
       updated = (await response.json()) as AgentSpec;
     } else {
-      updated = {
-        ...agent,
-        name: form.name,
-        description: form.description,
-        system_prompt: form.systemPrompt,
-        model: payload.model,
-        tools: form.tools,
-        children: form.children,
-        memory: form.memory,
-        middlewares: form.middlewares,
-        policy: form.policy,
-        enabled: form.enabled,
-        revision: agent.revision + 1,
-      };
+      throw new Error("请先连接 Python 控制面；修订只写入数据库");
     }
     setAgents((current) =>
       current.map((item) => (item.id === updated.id ? updated : item)),
@@ -834,13 +874,7 @@ export function ControlCenter() {
       const created = (await response.json()) as AgentInstance;
       setInstances((current) => [...current, created]);
     } else {
-      setInstances((current) => [
-        ...current,
-        {
-          ...payload,
-          id: `ins_${Date.now().toString(36)}`,
-        },
-      ]);
+      throw new Error("请先连接 Python 控制面；实例配置只写入数据库");
     }
     setNotice(`${form.name} 实例已创建`);
     setNewInstanceOpen(false);
@@ -862,11 +896,7 @@ export function ControlCenter() {
         current.map((item) => (item.id === updated.id ? updated : item)),
       );
     } else {
-      setInstances((current) =>
-        current.map((item) =>
-          item.id === instance.id ? { ...item, status: nextStatus } : item,
-        ),
-      );
+      throw new Error("请先连接 Python 控制面；实例状态由数据库控制");
     }
     setNotice(`${instance.name} 已${nextStatus === "ready" ? "启用" : "停止"}`);
   }
@@ -900,26 +930,7 @@ export function ControlCenter() {
           if (["succeeded", "failed", "cancelled"].includes(latest.status)) break;
         }
       } else {
-        const agentId =
-          targetKind === "instance"
-            ? instances.find((item) => item.id === targetId)?.agent_id || agents[0]?.id
-            : targetId;
-        const created: RunRecord = {
-          id: `run_${Date.now().toString(36)}`,
-          agent_id: agentId,
-          instance_id: targetKind === "instance" ? targetId : undefined,
-          session_id: `ses_${Date.now().toString(36)}`,
-          status: "succeeded",
-          input,
-          output: "演示运行已完成。连接 Python 控制面后可查看真实事件流与调用链。",
-          created_at: new Date().toISOString(),
-          finished_at: new Date().toISOString(),
-          metrics: { steps: 4, tool_calls: 1, tokens: 1280 },
-        };
-        setRuns((current) => [created, ...current]);
-        setNotice("演示运行已完成");
-        setRunOpen(false);
-        setView("runs");
+        throw new Error("请先连接 Python 控制面；运行记录必须来自数据库");
       }
     } finally {
       setRunBusy(false);
@@ -1003,7 +1014,7 @@ export function ControlCenter() {
           <div className="runtime-card">
             <div className="runtime-card-top">
               <span className={`status-dot ${mode}`} />
-              <span>{mode === "live" ? "Python Runtime" : "演示运行时"}</span>
+              <span>{mode === "live" ? "Python Runtime" : "未连接"}</span>
               <span className="runtime-version">v0.1</span>
             </div>
             <div className="runtime-meter">
@@ -1046,7 +1057,7 @@ export function ControlCenter() {
               aria-label="查看运行时连接"
             >
               <span className={`status-dot ${mode}`} />
-              <span>{mode === "live" ? "实时连接" : mode === "connecting" ? "连接中" : "演示模式"}</span>
+              <span>{mode === "live" ? "实时连接" : mode === "connecting" ? "连接中" : "未连接"}</span>
             </button>
             <button
               className="icon-button"
@@ -1073,7 +1084,7 @@ export function ControlCenter() {
               <div>
                 <Cloud size={17} />
                 <span>
-                  当前展示可交互演示数据。启动 Python 控制面后，后台会自动切换到真实 Agent、实例与事件。
+                  当前未连接控制面，页面不生成本地配置或演示数据。连接 Python 控制面后，所有 Agent、凭据、模型和运行记录均来自数据库。
                 </span>
               </div>
               <button onClick={() => setView("settings")}>
@@ -1151,6 +1162,11 @@ export function ControlCenter() {
               apiKey={apiKey}
               mode={mode}
               syncing={syncing}
+              credentials={credentials}
+              modelProfiles={modelProfiles}
+              runtimeConfig={runtimeConfig}
+              requestHeaders={headers}
+              onConfigChanged={() => void refresh()}
               setApiBase={setApiBase}
               setApiKey={setApiKey}
               onConnect={() => void refresh(apiBase)}
@@ -1179,6 +1195,7 @@ export function ControlCenter() {
         <NewAgentModal
           agents={agents}
           plugins={plugins}
+          modelProfiles={modelProfiles}
           onClose={() => setNewAgentOpen(false)}
           onCreate={createAgent}
         />
@@ -1189,6 +1206,7 @@ export function ControlCenter() {
           agent={editingAgent}
           agents={agents}
           plugins={plugins}
+          modelProfiles={modelProfiles}
           onClose={() => setEditingAgent(null)}
           onSave={(form) => updateAgent(editingAgent, form)}
         />
@@ -2056,6 +2074,11 @@ function SettingsView({
   apiKey,
   mode,
   syncing,
+  credentials,
+  modelProfiles,
+  runtimeConfig,
+  requestHeaders,
+  onConfigChanged,
   setApiBase,
   setApiKey,
   onConnect,
@@ -2064,10 +2087,99 @@ function SettingsView({
   apiKey: string;
   mode: ConnectionMode;
   syncing: boolean;
+  credentials: CredentialProfile[];
+  modelProfiles: ModelProfile[];
+  runtimeConfig: RuntimeConfigEntry[];
+  requestHeaders: () => HeadersInit;
+  onConfigChanged: () => void;
   setApiBase: (value: string) => void;
   setApiKey: (value: string) => void;
   onConnect: () => void;
 }) {
+  const [credentialName, setCredentialName] = useState("");
+  const [credentialProvider, setCredentialProvider] = useState("openai_compatible");
+  const [credentialSecret, setCredentialSecret] = useState("");
+  const [modelProfileName, setModelProfileName] = useState("");
+  const [modelProfileProvider, setModelProfileProvider] = useState("openai_compatible");
+  const [modelProfileModel, setModelProfileModel] = useState("");
+  const [modelProfileCredential, setModelProfileCredential] = useState("");
+  const [modelProfileBaseUrl, setModelProfileBaseUrl] = useState("");
+  const [modelProfileConfig, setModelProfileConfig] = useState("{}");
+  const [runtimeKey, setRuntimeKey] = useState("");
+  const [runtimeValue, setRuntimeValue] = useState("{}");
+  const [configBusy, setConfigBusy] = useState(false);
+  const [configError, setConfigError] = useState("");
+
+  async function saveCredential(event: FormEvent) {
+    event.preventDefault();
+    setConfigBusy(true);
+    setConfigError("");
+    try {
+      const response = await fetch(`${apiBase}/credentials`, {
+        method: "POST",
+        headers: requestHeaders(),
+        body: JSON.stringify({ name: credentialName, provider: credentialProvider, secret: credentialSecret }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      setCredentialName("");
+      setCredentialSecret("");
+      onConfigChanged();
+    } catch (error) {
+      setConfigError(error instanceof Error ? error.message : "凭据保存失败");
+    } finally {
+      setConfigBusy(false);
+    }
+  }
+
+  async function saveModelProfile(event: FormEvent) {
+    event.preventDefault();
+    setConfigBusy(true);
+    setConfigError("");
+    try {
+      const response = await fetch(`${apiBase}/model-profiles`, {
+        method: "POST",
+        headers: requestHeaders(),
+        body: JSON.stringify({
+          name: modelProfileName,
+          provider: modelProfileProvider,
+          model: modelProfileModel,
+          credential_profile_id: modelProfileCredential || null,
+          base_url: modelProfileBaseUrl || null,
+          config: parseJsonObject(modelProfileConfig, "模型配置"),
+        }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      setModelProfileName("");
+      setModelProfileModel("");
+      onConfigChanged();
+    } catch (error) {
+      setConfigError(error instanceof Error ? error.message : "模型配置保存失败");
+    } finally {
+      setConfigBusy(false);
+    }
+  }
+
+  async function saveRuntimeConfig(event: FormEvent) {
+    event.preventDefault();
+    setConfigBusy(true);
+    setConfigError("");
+    try {
+      const response = await fetch(`${apiBase}/runtime-config`, {
+        method: "PATCH",
+        headers: requestHeaders(),
+        body: JSON.stringify({ key: runtimeKey, value: JSON.parse(runtimeValue || "null") }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      setRuntimeKey("");
+      setRuntimeValue("{}");
+      onConfigChanged();
+    } catch (error) {
+      setConfigError(error instanceof Error ? error.message : "运行配置保存失败");
+    } finally {
+      setConfigBusy(false);
+    }
+  }
+
   return (
     <div className="view-stack settings-stack">
       <div className="view-heading">
@@ -2101,6 +2213,35 @@ function SettingsView({
             {syncing ? "正在连接" : "测试并连接"}
           </button>
         </div>
+        <div className="panel settings-panel config-panel">
+          <div className="settings-panel-head">
+            <span className="settings-icon"><KeyRound size={19} /></span>
+            <div><h3>凭据库（多 AK）</h3><p>只返回脱敏信息，明文仅在提交时短暂驻留页面内存</p></div>
+          </div>
+          <form className="config-form" onSubmit={saveCredential}>
+            <div className="form-row"><label className="form-field"><span>名称</span><input required value={credentialName} onChange={(event) => setCredentialName(event.target.value)} placeholder="OpenAI 主账号" /></label><label className="form-field"><span>提供商</span><input required value={credentialProvider} onChange={(event) => setCredentialProvider(event.target.value)} /></label></div>
+            <label className="form-field"><span>AK / Secret</span><input required type="password" value={credentialSecret} onChange={(event) => setCredentialSecret(event.target.value)} autoComplete="new-password" placeholder="提交后不可回显" /></label>
+            <button className="button button-secondary" disabled={configBusy || mode !== "live"}>{configBusy ? "保存中" : "保存凭据"}</button>
+          </form>
+          <div className="config-list">{credentials.length ? credentials.map((item) => <div className="config-list-row" key={item.id}><span><strong>{item.name}</strong><small>{item.provider} · {item.masked_value}</small></span><span className={`status-badge ${item.enabled ? "ready" : "stopped"}`}>{item.enabled ? "启用" : "停用"}</span></div>) : <div className="empty-inline">数据库中暂无凭据</div>}</div>
+        </div>
+        <div className="panel settings-panel config-panel">
+          <div className="settings-panel-head"><span className="settings-icon"><Cpu size={19} /></span><div><h3>模型配置档</h3><p>Agent 只引用 profile_id；模型与凭据可复用</p></div></div>
+          <form className="config-form" onSubmit={saveModelProfile}>
+            <div className="form-row"><label className="form-field"><span>名称</span><input required value={modelProfileName} onChange={(event) => setModelProfileName(event.target.value)} placeholder="GPT-4o 主配置" /></label><label className="form-field"><span>提供商</span><input required value={modelProfileProvider} onChange={(event) => setModelProfileProvider(event.target.value)} /></label></div>
+            <div className="form-row"><label className="form-field"><span>模型</span><input required value={modelProfileModel} onChange={(event) => setModelProfileModel(event.target.value)} placeholder="gpt-4o-mini" /></label><label className="form-field"><span>凭据</span><select value={modelProfileCredential} onChange={(event) => setModelProfileCredential(event.target.value)}><option value="">无（仅离线 provider）</option>{credentials.filter((item) => item.enabled).map((item) => <option value={item.id} key={item.id}>{item.name} · {item.masked_value}</option>)}</select></label></div>
+            <label className="form-field"><span>Base URL（可选）</span><input value={modelProfileBaseUrl} onChange={(event) => setModelProfileBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" /></label>
+            <label className="form-field json-config-field"><span>扩展参数 JSON</span><textarea rows={3} value={modelProfileConfig} onChange={(event) => setModelProfileConfig(event.target.value)} spellCheck={false} /></label>
+            <button className="button button-secondary" disabled={configBusy || mode !== "live"}>{configBusy ? "保存中" : "保存模型配置"}</button>
+          </form>
+          <div className="config-list">{modelProfiles.length ? modelProfiles.map((item) => <div className="config-list-row" key={item.id}><span><strong>{item.name}</strong><small>{item.provider} / {item.model}{item.credential_profile_id ? " · 已绑定凭据" : " · 无凭据"}</small></span><span className={`status-badge ${item.enabled ? "ready" : "stopped"}`}>{item.enabled ? "启用" : "停用"}</span></div>) : <div className="empty-inline">数据库中暂无模型配置档</div>}</div>
+        </div>
+        <div className="panel settings-panel config-panel">
+          <div className="settings-panel-head"><span className="settings-icon"><Braces size={19} /></span><div><h3>运行配置</h3><p>非敏感业务开关和默认值，按版本写入数据库</p></div></div>
+          <form className="config-form" onSubmit={saveRuntimeConfig}><div className="form-row"><label className="form-field"><span>配置键</span><input required value={runtimeKey} onChange={(event) => setRuntimeKey(event.target.value)} placeholder="ui.page_size" /></label><label className="form-field"><span>JSON 值</span><input required value={runtimeValue} onChange={(event) => setRuntimeValue(event.target.value)} placeholder="50 或 {&quot;enabled&quot;:true}" /></label></div><button className="button button-secondary" disabled={configBusy || mode !== "live"}>{configBusy ? "保存中" : "保存运行配置"}</button></form>
+          <div className="config-list">{runtimeConfig.length ? runtimeConfig.map((item) => <div className="config-list-row" key={item.key}><span><strong>{item.key}</strong><small>{previewValue(item.value)} · v{item.version}</small></span><span>{formatTime(item.updated_at)}</span></div>) : <div className="empty-inline">数据库中暂无运行配置</div>}</div>
+        </div>
+        {configError && <div className="form-error"><OctagonAlert size={16} /> {configError}</div>}
         <div className="panel settings-panel">
           <div className="settings-panel-head">
             <span className="settings-icon"><ShieldCheck size={19} /></span>
@@ -2345,11 +2486,13 @@ function AgentDrawer({
 function NewAgentModal({
   agents,
   plugins,
+  modelProfiles,
   onClose,
   onCreate,
 }: {
   agents: AgentSpec[];
   plugins: PluginManifest[];
+  modelProfiles: ModelProfile[];
   onClose: () => void;
   onCreate: (form: NewAgentForm) => Promise<void>;
 }) {
@@ -2362,6 +2505,7 @@ function NewAgentModal({
   const [systemPrompt, setSystemPrompt] = useState("你是一个可靠、可审计的专业 Agent。");
   const [provider, setProvider] = useState(providers[0]?.id || "mock");
   const [model, setModel] = useState("deterministic");
+  const [modelProfileId, setModelProfileId] = useState(modelProfiles[0]?.id || "");
   const [modelConfigText, setModelConfigText] = useState("{}");
   const [children, setChildren] = useState<ChildMount[]>([]);
   const [tools, setTools] = useState<ToolBindingSpec[]>([]);
@@ -2412,6 +2556,7 @@ function NewAgentModal({
         systemPrompt,
         provider,
         model,
+        modelProfileId: modelProfileId || undefined,
         modelConfig: parseJsonObject(modelConfigText, "模型配置"),
         children,
         tools: configuredTools,
@@ -2442,10 +2587,10 @@ function NewAgentModal({
         <div className="modal-body">
           <div className="form-row">
             <label className="form-field"><span>名称</span><input required minLength={2} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：合规审查 Agent" /></label>
-            <label className="form-field"><span>模型提供商</span><select value={provider} onChange={(event) => { setProvider(event.target.value); setModel(event.target.value === "mock" ? "deterministic" : "gpt-4.1-mini"); }}>{providers.map((item) => <option value={item.id} key={item.id}>{item.display_name}</option>)}</select></label>
+            <label className="form-field"><span>模型配置档</span><select value={modelProfileId} onChange={(event) => { const profile = modelProfiles.find((item) => item.id === event.target.value); setModelProfileId(event.target.value); if (profile) { setProvider(profile.provider); setModel(profile.model); } }}><option value="">不使用配置档（仅离线默认）</option>{modelProfiles.filter((item) => item.enabled).map((item) => <option value={item.id} key={item.id}>{item.name} · {item.provider}/{item.model}</option>)}</select></label>
           </div>
           <label className="form-field"><span>描述</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="一句话说明职责边界" /></label>
-          <label className="form-field"><span>模型</span><input required value={model} onChange={(event) => setModel(event.target.value)} /></label>
+          {!modelProfileId && <div className="form-row"><label className="form-field"><span>模型提供商</span><select value={provider} onChange={(event) => { setProvider(event.target.value); setModel(event.target.value === "mock" ? "deterministic" : "gpt-4.1-mini"); }}>{providers.map((item) => <option value={item.id} key={item.id}>{item.display_name}</option>)}</select></label><label className="form-field"><span>模型</span><input required value={model} onChange={(event) => setModel(event.target.value)} /></label></div>}
           <label className="form-field json-config-field">
             <span>模型配置 JSON</span>
             <textarea
@@ -2454,7 +2599,7 @@ function NewAgentModal({
               onChange={(event) => setModelConfigText(event.target.value)}
               spellCheck={false}
             />
-            <small>可配置 base_url、api_key_env、timeout_seconds 等；密钥值本身会被后端拒绝。</small>
+            <small>{modelProfileId ? "模型参数与 AK 引用来自数据库配置档；此处仅用于扩展参数。" : "建议先在系统设置中创建模型配置档；此处不接受 AK 明文。"}</small>
           </label>
           <label className="form-field"><span>系统提示词</span><textarea required rows={4} value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} /></label>
           <fieldset className="child-picker tool-picker">
@@ -2845,12 +2990,14 @@ function EditAgentModal({
   agent,
   agents,
   plugins,
+  modelProfiles,
   onClose,
   onSave,
 }: {
   agent: AgentSpec;
   agents: AgentSpec[];
   plugins: PluginManifest[];
+  modelProfiles: ModelProfile[];
   onClose: () => void;
   onSave: (form: AgentConfigurationForm) => Promise<void>;
 }) {
@@ -2871,6 +3018,7 @@ function EditAgentModal({
   const [systemPrompt, setSystemPrompt] = useState(agent.system_prompt);
   const [provider, setProvider] = useState(agent.model.provider);
   const [model, setModel] = useState(agent.model.model);
+  const [modelProfileId, setModelProfileId] = useState(agent.model.profile_id || "");
   const [modelConfigText, setModelConfigText] = useState(
     JSON.stringify(agent.model.config || {}, null, 2),
   );
@@ -2926,6 +3074,7 @@ function EditAgentModal({
         systemPrompt,
         provider,
         model,
+        modelProfileId: modelProfileId || undefined,
         modelConfig: parseJsonObject(modelConfigText, "模型配置"),
         tools: configuredTools,
         children,
@@ -2982,17 +3131,10 @@ function EditAgentModal({
             <input value={description} onChange={(event) => setDescription(event.target.value)} />
           </label>
           <div className="form-row">
-            <label className="form-field">
-              <span>模型提供商</span>
-              <select value={provider} onChange={(event) => setProvider(event.target.value)}>
-                {providers.map((item) => <option value={item.id} key={item.id}>{item.display_name}</option>)}
-              </select>
-            </label>
-            <label className="form-field">
-              <span>模型</span>
-              <input required value={model} onChange={(event) => setModel(event.target.value)} />
-            </label>
+            <label className="form-field"><span>模型配置档</span><select value={modelProfileId} onChange={(event) => { const profile = modelProfiles.find((item) => item.id === event.target.value); setModelProfileId(event.target.value); if (profile) { setProvider(profile.provider); setModel(profile.model); } }}><option value="">不使用配置档（仅离线默认）</option>{modelProfiles.filter((item) => item.enabled).map((item) => <option value={item.id} key={item.id}>{item.name} · {item.provider}/{item.model}</option>)}</select></label>
+            {!modelProfileId && <label className="form-field"><span>模型提供商</span><select value={provider} onChange={(event) => setProvider(event.target.value)}>{providers.map((item) => <option value={item.id} key={item.id}>{item.display_name}</option>)}</select></label>}
           </div>
+          {!modelProfileId && <label className="form-field"><span>模型</span><input required value={model} onChange={(event) => setModel(event.target.value)} /></label>}
           <label className="form-field json-config-field">
             <span>模型配置 JSON</span>
             <textarea
@@ -3001,7 +3143,7 @@ function EditAgentModal({
               onChange={(event) => setModelConfigText(event.target.value)}
               spellCheck={false}
             />
-            <small>只保存配置与 Secret 引用；password、token、api_key 等明文键会被拒绝。</small>
+            <small>{modelProfileId ? "AK 与模型参数由数据库配置档提供；此处不读取或保存明文 AK。" : "只保存非敏感扩展参数；password、token、api_key 等明文键会被拒绝。"}</small>
           </label>
           <label className="form-field">
             <span>系统提示词</span>

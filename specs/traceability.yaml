@@ -218,6 +218,42 @@ requirements:
       - "specs/current/foundation/contracts/plugin-manifest.schema.json"
     verification:
       - "backend/tests/test_registry.py::test_incompatible_plugin_protocol_fails_closed"
+  - id: "CFG-001"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/storage.py"
+      - "backend/src/uai_forge/api.py"
+      - "app/control-center.tsx"
+    verification:
+      - "backend/tests/test_database_configuration.py::test_multiple_model_profiles_and_references_are_database_backed"
+  - id: "CFG-002"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/models.py"
+      - "backend/src/uai_forge/storage.py"
+    verification:
+      - "backend/tests/test_database_configuration.py::test_runtime_config_is_versioned_and_rejects_secrets"
+  - id: "SEC-008"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/secrets.py"
+      - "backend/src/uai_forge/providers.py"
+      - "backend/src/uai_forge/runtime.py"
+    verification:
+      - "backend/tests/test_database_configuration.py::test_credentials_are_encrypted_and_tenant_scoped"
+      - "backend/tests/test_database_configuration.py::test_openai_profiles_require_database_credentials"
+  - id: "CFG-003"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/models.py"
+      - "backend/src/uai_forge/ports.py"
+      - "backend/src/uai_forge/runtime.py"
+    verification:
+      - "backend/tests/test_core_ports.py::test_execution_core_accepts_non_sqlite_repository_and_event_bus_ports"
   - id: "EXT-002"
     status: "specified"
     target: "0.3"

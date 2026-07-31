@@ -313,13 +313,14 @@ session 数据，但 retention 等策略必须按每个 binding 生效，不得�
 状态：`Partial`，目标版本：`0.3`
 
 WHEN 模型、工具或插件需要凭据
-THE SYSTEM SHALL 持久化 SecretRef 或环境变量名，在受信任边界解析，并保证 Secret 值
+THE SYSTEM SHALL 持久化 CredentialProfile/SecretRef 引用，在受信任边界解析，并保证 Secret 值
 不进入配置响应、事件、日志、prompt、trace 或 HTML。
 
-当前 OpenAI-compatible provider 支持环境变量引用；Model、Tool、Memory、Middleware、
-Instance override 和 Run metadata 已递归拒绝常见明文 credential key；Agent/Instance
-PATCH 会重建完整模型以避免跳过校验。通用 SecretRef/CredentialResolver、插件自定义
-敏感字段和日志/异常/HTML 全输出泄露测试仍未完成。
+当前 provider 仅通过数据库 CredentialProfile/ModelProfile 解引用并在运行时短暂解析；
+缺少数据库 profile 或凭据时 fail closed。Model、Tool、Memory、Middleware、Instance
+override、Run metadata 和 RuntimeConfig 已递归拒绝常见明文 credential key；Agent/Instance
+PATCH 会重建完整模型以避免跳过校验。生产级 Secret Manager 轮换、插件自定义敏感字段和
+完整日志/异常/HTML 全输出泄露覆盖仍待后续版本。
 
 ### SEC-002 — 可信租户隔离
 

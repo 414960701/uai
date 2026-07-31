@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import uuid
 from typing import Any, Dict, List
@@ -35,7 +34,6 @@ OPENAI_COMPATIBLE_MANIFEST = PluginManifest(
         "type": "object",
         "properties": {
             "base_url": {"type": "string", "format": "uri"},
-            "api_key_env": {"type": "string"},
             "timeout_seconds": {"type": "number", "minimum": 1, "maximum": 600},
             "headers": {"type": "object", "additionalProperties": {"type": "string"}},
         },
@@ -130,8 +128,9 @@ class OpenAICompatibleProvider(ModelProvider):
         self.binding = binding
         self.base_url = str(binding.config.get("base_url", "https://api.openai.com/v1")).rstrip("/")
         self.timeout = float(binding.config.get("timeout_seconds", 120))
-        api_key_env = str(binding.config.get("api_key_env", "OPENAI_API_KEY"))
-        self.api_key = os.environ.get(api_key_env)
+        # Credentials are resolved from the tenant-scoped database profile by
+        # the runtime and attached only to this short-lived provider instance.
+        self.api_key = getattr(binding, "_runtime_credential", None)
         self.extra_headers = {
             str(key): str(value) for key, value in binding.config.get("headers", {}).items()
         }
@@ -159,8 +158,7 @@ class OpenAICompatibleProvider(ModelProvider):
 
     async def complete(self, request: ModelRequest) -> ModelOutput:
         if not self.api_key:
-            api_key_env = self.binding.config.get("api_key_env", "OPENAI_API_KEY")
-            raise RuntimeError(f"provider credential environment variable is not set: {api_key_env}")
+            raise RuntimeError("provider credential profile is unavailable")
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",

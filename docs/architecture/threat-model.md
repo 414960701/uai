@@ -44,7 +44,7 @@ last_reviewed: 2026-07-30
 | `SEC-THR-004` | prompt injection 诱导高影响工具 | 有 auto/confirm/deny，但不是完整 policy engine | 工具分级、参数级 policy、提议/执行分离、输出不自动提升为指令 |
 | `SEC-THR-005` | Python 插件在发现时执行任意代码 | entry point 会直接 `load()` | 仅管理员预安装可信包；导入前 manifest 检查；不可信插件隔离进程/容器/远程 |
 | `SEC-THR-006` | 插件绕过安全 hook | Middleware 可修改模型/工具数据 | 认证、tenant、permission、approval 由不可覆盖的核心 PolicyEngine 决定并 fail closed |
-| `SEC-THR-007` | Secret 进入配置、事件或日志 | provider 支持环境变量引用，但通用 config/payload 未全面检查 | SecretRef 类型、CredentialResolver、递归脱敏、schema 禁止敏感值、泄露测试 |
+| `SEC-THR-007` | Secret 进入配置、事件或日志 | CredentialProfile 密文存储、ModelProfile 引用、运行时短暂解密；provider 无数据库凭据时 fail closed | Secret Manager 轮换、插件自定义敏感字段、事件完整性和全输出泄露测试 |
 | `SEC-THR-008` | 模型或 MCP endpoint SSRF | OpenAI-compatible base URL 可配置；MCP 尚未实现 | endpoint allowlist、DNS/IP 重绑定防护、egress policy、代理和私网地址阻断 |
 | `SEC-THR-009` | 重试导致重复外部副作用 | 无 checkpoint/outbox/idempotency | intent/outbox、幂等键、fencing；不可幂等工具禁止自动重试 |
 | `SEC-THR-010` | 子 Agent 逃逸父预算或形成递归 | 有静态环、depth、共享 step/tool/token/并发限制 | 保持根预算；增加持久调用树、取消传播和租户总配额 |

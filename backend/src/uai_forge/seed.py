@@ -9,12 +9,33 @@ from .models import (
     ExecutionPolicy,
     MiddlewareBinding,
     ModelBinding,
+    ModelProfile,
     ToolBinding,
 )
 from .storage import SQLiteRepository
 
 
 async def seed_demo_data(repository: SQLiteRepository, tenant_id: str = "default") -> None:
+    # Seed only non-secret database configuration.  Real provider credentials
+    # are intentionally never generated or written by the demo seed.
+    if await repository.get_model_profile(tenant_id, "mdl_mock_default") is None:
+        await repository.save_model_profile(
+            tenant_id,
+            ModelProfile(
+                id="mdl_mock_default",
+                tenant_id=tenant_id,
+                name="离线确定性模型",
+                provider="mock",
+                model="deterministic",
+                config={},
+            ),
+        )
+    if await repository.get_runtime_config(tenant_id, "runtime.default_model_profile_id") is None:
+        await repository.save_runtime_config(
+            tenant_id,
+            "runtime.default_model_profile_id",
+            "mdl_mock_default",
+        )
     if await repository.count_agents(tenant_id):
         return
 
@@ -26,7 +47,9 @@ async def seed_demo_data(repository: SQLiteRepository, tenant_id: str = "default
         system_prompt=(
             "你是严谨的市场分析子 Agent。只输出可追踪结论，明确事实、推断与未知项。"
         ),
-        model=ModelBinding(provider="mock", model="deterministic"),
+        model=ModelBinding(
+            provider="mock", model="deterministic", profile_id="mdl_mock_default"
+        ),
         tools=[ToolBinding(plugin_id="tool.calculator", alias="calculator")],
         middlewares=[
             MiddlewareBinding(
@@ -45,7 +68,9 @@ async def seed_demo_data(repository: SQLiteRepository, tenant_id: str = "default
         system_prompt=(
             "你是事实校验子 Agent。标注证据等级、冲突点与仍需验证的内容，不虚构来源。"
         ),
-        model=ModelBinding(provider="mock", model="deterministic"),
+        model=ModelBinding(
+            provider="mock", model="deterministic", profile_id="mdl_mock_default"
+        ),
         tools=[ToolBinding(plugin_id="tool.utc_now", alias="utc_now")],
         policy=ExecutionPolicy(max_steps=6, max_depth=2, max_tool_calls=8),
         labels={"team": "research", "tier": "worker"},
@@ -62,7 +87,9 @@ async def seed_demo_data(repository: SQLiteRepository, tenant_id: str = "default
             "你是研究团队负责人。将合适的子任务委派给已挂载 Agent，"
             "遵守预算和深度限制，并清晰汇总结果。"
         ),
-        model=ModelBinding(provider="mock", model="deterministic"),
+        model=ModelBinding(
+            provider="mock", model="deterministic", profile_id="mdl_mock_default"
+        ),
         children=[
             ChildMount(
                 alias="analyst",

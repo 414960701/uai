@@ -2064,6 +2064,52 @@ a:focus-visible {
   padding: 20px;
 }
 
+.config-panel {
+  grid-column: 1 / -1;
+}
+
+.config-form {
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+}
+
+.config-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.config-list-row {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 9px 11px;
+}
+
+.config-list-row > span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.config-list-row strong {
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.config-list-row small,
+.config-list-row > span:last-child {
+  color: #73807c;
+  font-size: 8px;
+}
+
 .settings-panel-head {
   align-items: center;
   display: flex;

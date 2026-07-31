@@ -27,7 +27,10 @@ class Container:
 
     @classmethod
     def build(cls, settings: Settings) -> "Container":
-        storage = SQLiteRepository(settings.database_path)
+        storage = SQLiteRepository(
+            settings.database_path,
+            credential_master_key=settings.credential_master_key,
+        )
         registry = PluginRegistry()
         register_builtins(registry)
         registry.discover_entry_points()

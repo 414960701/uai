@@ -1,0 +1,30 @@
+change_id: CHG-0007
+requirements:
+  CFG-001:
+    implementation:
+      - backend/src/uai_forge/storage.py
+      - backend/src/uai_forge/api.py
+      - app/control-center.tsx
+    verification:
+      - backend/tests/test_database_configuration.py::test_multiple_model_profiles_and_references_are_database_backed
+  CFG-002:
+    implementation:
+      - backend/src/uai_forge/models.py
+      - backend/src/uai_forge/storage.py
+    verification:
+      - backend/tests/test_database_configuration.py::test_runtime_config_is_versioned_and_rejects_secrets
+  SEC-008:
+    implementation:
+      - backend/src/uai_forge/secrets.py
+      - backend/src/uai_forge/providers.py
+      - backend/src/uai_forge/runtime.py
+    verification:
+      - backend/tests/test_database_configuration.py::test_credentials_are_encrypted_and_tenant_scoped
+      - backend/tests/test_database_configuration.py::test_openai_profiles_require_database_credentials
+  CFG-003:
+    implementation:
+      - backend/src/uai_forge/models.py
+      - backend/src/uai_forge/ports.py
+      - backend/src/uai_forge/runtime.py
+    verification:
+      - backend/tests/test_core_ports.py::test_execution_core_accepts_non_sqlite_repository_and_event_bus_ports

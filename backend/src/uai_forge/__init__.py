@@ -8,11 +8,19 @@ from .models import (
     InstanceConfigOverrides,
     InstanceExecutionPolicyOverrides,
     ModelBinding,
+    ModelProfile,
+    CredentialProfile,
     PluginManifest,
     RunRequest,
     ToolBinding,
 )
-from .ports import EventBusPort, EventStorePort, EventStreamPort, RepositoryPort
+from .ports import (
+    ConfigurationPort,
+    EventBusPort,
+    EventStorePort,
+    EventStreamPort,
+    RepositoryPort,
+)
 from .registry import PluginRegistry
 from .runtime import AgentRuntime
 
@@ -28,6 +36,9 @@ __all__ = [
     "InstanceConfigOverrides",
     "InstanceExecutionPolicyOverrides",
     "ModelBinding",
+    "ModelProfile",
+    "CredentialProfile",
+    "ConfigurationPort",
     "PluginManifest",
     "PluginRegistry",
     "RepositoryPort",

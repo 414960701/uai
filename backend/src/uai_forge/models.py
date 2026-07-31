@@ -12,6 +12,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     field_validator,
     model_serializer,
     model_validator,
@@ -51,17 +52,16 @@ def reject_inline_secrets(value: Dict[str, Any]) -> Dict[str, Any]:
             for raw_key, nested in item.items():
                 key = str(raw_key).strip().lower().replace("-", "_")
                 is_reference = (
-                    key.endswith("_env")
-                    or key.endswith("_ref")
+                    key.endswith("_ref")
                     or "secret_ref" in key
                 )
-                is_sensitive = key in _INLINE_SECRET_KEYS or any(
+                is_sensitive = key in _INLINE_SECRET_KEYS or key.startswith("api_key_") or any(
                     key.endswith(f"_{suffix}") for suffix in _INLINE_SECRET_KEYS
                 )
                 if is_sensitive and not is_reference and nested not in (None, ""):
                     raise ValueError(
                         f"inline credential at {path}.{raw_key} is forbidden; "
-                        "use an *_env or *SecretRef field"
+                        "use a *Ref or *SecretRef field"
                     )
                 inspect(nested, f"{path}.{raw_key}")
         elif isinstance(item, list):
@@ -107,12 +107,160 @@ class PluginManifest(StrictModel):
 class ModelBinding(StrictModel):
     provider: str = "mock"
     model: str = "deterministic"
+    # A binding points at a database-backed model profile.  ``config`` remains
+    # an extension-specific, non-secret compatibility surface for 0.1.x.
+    profile_id: Optional[str] = None
     config: Dict[str, Any] = Field(default_factory=dict)
+    # Runtime-only value populated after resolving a credential profile.  A
+    # PrivateAttr is deliberately excluded from dumps, events and API output.
+    _runtime_credential: Optional[str] = PrivateAttr(default=None)
 
     @field_validator("config")
     @classmethod
     def reject_plaintext_credentials(cls, value: Dict[str, Any]) -> Dict[str, Any]:
         return reject_inline_secrets(value)
+
+
+class CredentialProfile(StrictModel):
+    """Non-secret view of a database-backed provider credential."""
+
+    id: str
+    tenant_id: str = "default"
+    name: str = Field(min_length=2, max_length=80)
+    provider: str = Field(min_length=1, max_length=80)
+    masked_value: str = ""
+    enabled: bool = True
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("metadata")
+    @classmethod
+    def reject_secret_metadata(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        return reject_inline_secrets(value)
+
+
+class CredentialProfileWrite(StrictModel):
+    """Create a credential.  The secret is accepted only on write."""
+
+    id: Optional[str] = None
+    name: str = Field(min_length=2, max_length=80)
+    provider: str = Field(min_length=1, max_length=80)
+    secret: Optional[str] = Field(default=None, min_length=1, max_length=20_000)
+    api_key: Optional[str] = Field(default=None, min_length=1, max_length=20_000)
+    enabled: bool = True
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("metadata")
+    @classmethod
+    def reject_secret_metadata(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        return reject_inline_secrets(value)
+
+    @model_validator(mode="after")
+    def require_secret(self) -> "CredentialProfileWrite":
+        if not (self.secret or self.api_key):
+            raise ValueError("credential secret is required")
+        return self
+
+    @property
+    def secret_value(self) -> str:
+        return self.secret or self.api_key or ""
+
+
+class CredentialProfilePatch(StrictModel):
+    name: Optional[str] = Field(default=None, min_length=2, max_length=80)
+    provider: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    secret: Optional[str] = Field(default=None, min_length=1, max_length=20_000)
+    api_key: Optional[str] = Field(default=None, min_length=1, max_length=20_000)
+    enabled: Optional[bool] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    @field_validator("metadata")
+    @classmethod
+    def reject_secret_metadata(cls, value: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        return reject_inline_secrets(value) if value is not None else value
+
+    @property
+    def secret_value(self) -> Optional[str]:
+        return self.secret or self.api_key
+
+
+class ModelProfile(StrictModel):
+    """Reusable non-secret model settings stored in the control database."""
+
+    id: str
+    tenant_id: str = "default"
+    name: str = Field(min_length=2, max_length=80)
+    provider: str = Field(min_length=1, max_length=80)
+    model: str = Field(min_length=1, max_length=200)
+    credential_profile_id: Optional[str] = None
+    base_url: Optional[str] = None
+    config: Dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("config")
+    @classmethod
+    def reject_plaintext_credentials(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        return reject_inline_secrets(value)
+
+
+class ModelProfileWrite(StrictModel):
+    id: Optional[str] = None
+    name: str = Field(min_length=2, max_length=80)
+    provider: str = Field(min_length=1, max_length=80)
+    model: str = Field(min_length=1, max_length=200)
+    credential_profile_id: Optional[str] = None
+    base_url: Optional[str] = None
+    config: Dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+
+    @field_validator("config")
+    @classmethod
+    def reject_plaintext_credentials(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        return reject_inline_secrets(value)
+
+
+class ModelProfilePatch(StrictModel):
+    name: Optional[str] = Field(default=None, min_length=2, max_length=80)
+    provider: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    model: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    credential_profile_id: Optional[str] = None
+    base_url: Optional[str] = None
+    config: Optional[Dict[str, Any]] = None
+    enabled: Optional[bool] = None
+
+    @field_validator("config")
+    @classmethod
+    def reject_plaintext_credentials(cls, value: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        return reject_inline_secrets(value) if value is not None else value
+
+
+class RuntimeConfigEntry(StrictModel):
+    """Versioned, non-secret business configuration from the database."""
+
+    tenant_id: str = "default"
+    key: str = Field(min_length=1, max_length=200)
+    value: Any = None
+    version: int = Field(default=1, ge=1)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("value")
+    @classmethod
+    def reject_plaintext_credentials(cls, value: Any) -> Any:
+        return reject_inline_secrets({"value": value})["value"]
+
+
+class RuntimeConfigPatch(StrictModel):
+    key: str = Field(min_length=1, max_length=200)
+    value: Any = None
+    expected_version: Optional[int] = Field(default=None, ge=1)
+
+    @field_validator("value")
+    @classmethod
+    def reject_plaintext_credentials(cls, value: Any) -> Any:
+        return reject_inline_secrets({"value": value})["value"]
 
 
 class ToolBinding(StrictModel):
