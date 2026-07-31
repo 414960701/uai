@@ -1,4 +1,5 @@
 change_id: CHG-0005
+historical_provider_assertion_superseded_by: CHG-0009
 requirements:
   DEP-002A:
     implementation:

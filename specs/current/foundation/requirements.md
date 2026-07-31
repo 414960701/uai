@@ -450,7 +450,8 @@ THE SYSTEM SHALL 保持单 worker、持久 SQLite volume、健康检查和不生
 并明确不支持水平扩 worker。
 
 可重复的 Compose 门禁构建两个生产镜像，启动并验证两个健康容器，运行后端 doctor，
-再通过 HTTP API 校验新数据库为空且 provider 注册表只有 `openai_compatible`。测试资源
+再通过 HTTP API 校验新数据库为空且 provider 注册表包含生产 `anthropic_messages` 与
+`openai_compatible`。测试资源
 按唯一 project/volume 和动态测试端口隔离，并在结束时验证
 容器、network 与 volume 均已清理。
 

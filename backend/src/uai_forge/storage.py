@@ -13,22 +13,37 @@ import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, List, Optional, TypeVar
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 from .models import (
     AgentInstance,
     AgentSpec,
     ModelConfig,
+    ModelConfigReference,
+    ModelConfigReferences,
+    ModelConfigVerification,
     RuntimeConfigEntry,
     RunEvent,
     RunRecord,
-    RunStatus,
     reject_inline_secrets,
     utc_now,
 )
 from .secrets import SecretDecryptionError, decrypt_secret, encrypt_secret, mask_secret
 
 T = TypeVar("T")
+
+SCHEMA_COMPONENT = "sqlite"
+CURRENT_SCHEMA_VERSION = 2
+LEGACY_CONFIGURATION_TABLES = {"credential_profiles", "model_profiles"}
+REQUIRED_TABLES = {
+    "agents",
+    "agent_revisions",
+    "instances",
+    "runs",
+    "run_events",
+    "model_configs",
+    "runtime_configs",
+}
 
 
 class RevisionConflictError(ValueError):
@@ -45,6 +60,15 @@ class ConfigurationConflictError(ValueError):
 
 class ConfigurationInUseError(ValueError):
     pass
+
+
+class SchemaCompatibilityError(RuntimeError):
+    """A database cannot be opened safely by this binary."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(message)
 
 
 class SQLiteRepository:
@@ -64,6 +88,18 @@ class SQLiteRepository:
         connection.execute("PRAGMA foreign_keys=ON")
         return connection
 
+    def _connect_read_only(self) -> sqlite3.Connection:
+        """Open an existing database without creating or mutating it."""
+
+        connection = sqlite3.connect(
+            f"file:{self.path}?mode=ro",
+            uri=True,
+            timeout=30,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys=ON")
+        return connection
+
     async def _read(self, operation: Callable[[sqlite3.Connection], T]) -> T:
         def runner() -> T:
             with self._connect() as connection:
@@ -75,17 +111,97 @@ class SQLiteRepository:
         async with self._write_lock:
             def runner() -> T:
                 with self._connect() as connection:
-                    result = operation(connection)
-                    connection.commit()
-                    return result
+                    # Start an explicit transaction before any DDL or DML.
+                    # SQLite's legacy implicit-transaction mode does not
+                    # reliably group ALTER TABLE with the following writes,
+                    # which could leave a failed migration half-applied.
+                    connection.execute("BEGIN")
+                    try:
+                        result = operation(connection)
+                        connection.commit()
+                        return result
+                    except BaseException:
+                        connection.rollback()
+                        raise
 
             return await asyncio.to_thread(runner)
 
-    async def initialize(self) -> None:
-        def operation(connection: sqlite3.Connection) -> None:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS agents (
+    @staticmethod
+    def _table_names(connection: sqlite3.Connection) -> set:
+        return {
+            str(row["name"])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+            if row["name"] != "sqlite_sequence"
+        }
+
+    @staticmethod
+    def _column_names(connection: sqlite3.Connection, table: str) -> set:
+        return {
+            str(row["name"])
+            for row in connection.execute(f'PRAGMA table_info("{table}")').fetchall()
+        }
+
+    @classmethod
+    def _inspect_compatibility(cls, connection: sqlite3.Connection) -> Dict[str, Any]:
+        tables = cls._table_names(connection)
+        legacy = sorted(tables.intersection(LEGACY_CONFIGURATION_TABLES))
+        if legacy:
+            raise SchemaCompatibilityError(
+                "schema.legacy_model_configuration",
+                "database contains pre-ADR-0007 CredentialProfile/ModelProfile tables; back up and rebuild configuration with ModelConfig",
+            )
+        if not tables:
+            return {"status": "new", "version": CURRENT_SCHEMA_VERSION, "tables": []}
+        meta_exists = "schema_meta" in tables
+        version = 1
+        if meta_exists:
+            row = connection.execute(
+                "SELECT version FROM schema_meta WHERE component = ?",
+                (SCHEMA_COMPONENT,),
+            ).fetchone()
+            if row is None:
+                raise SchemaCompatibilityError(
+                    "schema.version_missing",
+                    "schema_meta exists but has no sqlite component version; restore a backup or run doctor",
+                )
+            version = int(row["version"])
+        model_columns = cls._column_names(connection, "model_configs") if "model_configs" in tables else set()
+        if not meta_exists and {"version", "lifecycle", "verification_json"}.issubset(model_columns):
+            version = CURRENT_SCHEMA_VERSION
+        if version > CURRENT_SCHEMA_VERSION:
+            raise SchemaCompatibilityError(
+                "schema.version_too_new",
+                f"database schema version {version} is newer than supported version {CURRENT_SCHEMA_VERSION}; use a compatible binary or backup",
+            )
+        if version < 1:
+            raise SchemaCompatibilityError("schema.version_invalid", "database schema version is invalid")
+        missing = sorted(REQUIRED_TABLES.difference(tables))
+        if missing:
+            raise SchemaCompatibilityError(
+                "schema.required_table_missing",
+                "database is missing required tables: " + ", ".join(missing),
+            )
+        missing_model_columns = sorted(
+            {"version", "lifecycle", "verification_json"}.difference(model_columns)
+        )
+        if missing_model_columns and version >= CURRENT_SCHEMA_VERSION:
+            raise SchemaCompatibilityError(
+                "schema.required_column_missing",
+                "database is missing required ModelConfig columns: " + ", ".join(missing_model_columns),
+            )
+        return {
+            "status": "compatible" if version == CURRENT_SCHEMA_VERSION else "migratable",
+            "version": version,
+            "tables": sorted(tables),
+        }
+
+    @staticmethod
+    def _create_current_schema(connection: sqlite3.Connection) -> None:
+        connection.executescript(
+            """
+                CREATE TABLE agents (
                     tenant_id TEXT NOT NULL,
                     id TEXT NOT NULL,
                     revision INTEGER NOT NULL,
@@ -95,7 +211,7 @@ class SQLiteRepository:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (tenant_id, id)
                 );
-                CREATE TABLE IF NOT EXISTS agent_revisions (
+                CREATE TABLE agent_revisions (
                     tenant_id TEXT NOT NULL,
                     agent_id TEXT NOT NULL,
                     revision INTEGER NOT NULL,
@@ -103,7 +219,7 @@ class SQLiteRepository:
                     created_at TEXT NOT NULL,
                     PRIMARY KEY (tenant_id, agent_id, revision)
                 );
-                CREATE TABLE IF NOT EXISTS instances (
+                CREATE TABLE instances (
                     tenant_id TEXT NOT NULL,
                     id TEXT NOT NULL,
                     agent_id TEXT NOT NULL,
@@ -113,7 +229,7 @@ class SQLiteRepository:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (tenant_id, id)
                 );
-                CREATE TABLE IF NOT EXISTS runs (
+                CREATE TABLE runs (
                     tenant_id TEXT NOT NULL,
                     id TEXT NOT NULL,
                     agent_id TEXT NOT NULL,
@@ -127,7 +243,7 @@ class SQLiteRepository:
                 );
                 CREATE INDEX IF NOT EXISTS idx_runs_tenant_created
                     ON runs (tenant_id, created_at DESC);
-                CREATE TABLE IF NOT EXISTS run_events (
+                CREATE TABLE run_events (
                     tenant_id TEXT NOT NULL,
                     run_id TEXT NOT NULL,
                     sequence INTEGER NOT NULL,
@@ -136,7 +252,7 @@ class SQLiteRepository:
                     created_at TEXT NOT NULL,
                     PRIMARY KEY (tenant_id, run_id, sequence)
                 );
-                CREATE TABLE IF NOT EXISTS model_configs (
+                CREATE TABLE model_configs (
                     tenant_id TEXT NOT NULL,
                     id TEXT NOT NULL,
                     name TEXT NOT NULL,
@@ -149,13 +265,16 @@ class SQLiteRepository:
                     config_json TEXT NOT NULL DEFAULT '{}',
                     metadata_json TEXT NOT NULL DEFAULT '{}',
                     enabled INTEGER NOT NULL DEFAULT 1,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    lifecycle TEXT NOT NULL DEFAULT 'enabled',
+                    verification_json TEXT NOT NULL DEFAULT '{"status": "never"}',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (tenant_id, id)
                 );
                 CREATE INDEX IF NOT EXISTS idx_model_configs_tenant_name
                     ON model_configs (tenant_id, name COLLATE NOCASE);
-                CREATE TABLE IF NOT EXISTS runtime_configs (
+                CREATE TABLE runtime_configs (
                     tenant_id TEXT NOT NULL,
                     key TEXT NOT NULL,
                     value_json TEXT NOT NULL,
@@ -163,10 +282,89 @@ class SQLiteRepository:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (tenant_id, key)
                 );
+                CREATE TABLE schema_meta (
+                    component TEXT PRIMARY KEY,
+                    version INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 """
+        )
+        now = utc_now().isoformat()
+        connection.execute(
+            "INSERT INTO schema_meta (component, version, updated_at) VALUES (?, ?, ?)",
+            (SCHEMA_COMPONENT, CURRENT_SCHEMA_VERSION, now),
+        )
+
+    @staticmethod
+    def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
+        columns = SQLiteRepository._column_names(connection, "model_configs")
+        if "version" not in columns:
+            connection.execute("ALTER TABLE model_configs ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
+        if "lifecycle" not in columns:
+            connection.execute("ALTER TABLE model_configs ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'enabled'")
+        if "verification_json" not in columns:
+            connection.execute(
+                "ALTER TABLE model_configs ADD COLUMN verification_json TEXT NOT NULL DEFAULT '{\"status\": \"never\"}'"
             )
+        connection.execute(
+            "UPDATE model_configs SET lifecycle = CASE WHEN enabled = 1 THEN 'enabled' ELSE 'disabled' END WHERE lifecycle IS NULL OR lifecycle = ''"
+        )
+        connection.execute(
+            "UPDATE model_configs SET verification_json = '{\"status\": \"never\"}' WHERE verification_json IS NULL OR verification_json = ''"
+        )
+        now = utc_now().isoformat()
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS schema_meta (component TEXT PRIMARY KEY, version INTEGER NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO schema_meta (component, version, updated_at) VALUES (?, ?, ?) ON CONFLICT(component) DO UPDATE SET version=excluded.version, updated_at=excluded.updated_at",
+            (SCHEMA_COMPONENT, CURRENT_SCHEMA_VERSION, now),
+        )
+
+    async def initialize(self) -> None:
+        def operation(connection: sqlite3.Connection) -> None:
+            compatibility = self._inspect_compatibility(connection)
+            if compatibility["status"] == "new":
+                self._create_current_schema(connection)
+                return
+            if compatibility["version"] < CURRENT_SCHEMA_VERSION:
+                self._migrate_v1_to_v2(connection)
+                return
+            # A schema_meta-less v2 database is accepted only when it already
+            # exposes every v2 column; record the missing marker explicitly.
+            if "schema_meta" not in self._table_names(connection):
+                now = utc_now().isoformat()
+                connection.execute(
+                    "CREATE TABLE schema_meta (component TEXT PRIMARY KEY, version INTEGER NOT NULL, updated_at TEXT NOT NULL)"
+                )
+                connection.execute(
+                    "INSERT INTO schema_meta (component, version, updated_at) VALUES (?, ?, ?)",
+                    (SCHEMA_COMPONENT, CURRENT_SCHEMA_VERSION, now),
+                )
 
         await self._write(operation)
+
+    async def compatibility_status(self) -> Dict[str, Any]:
+        def operation() -> Dict[str, Any]:
+            if not Path(self.path).exists():
+                return {"status": "new", "version": CURRENT_SCHEMA_VERSION, "tables": []}
+            connection = self._connect_read_only()
+            try:
+                return self._inspect_compatibility(connection)
+            except SchemaCompatibilityError as exc:
+                return {
+                    "status": "incompatible",
+                    "code": exc.code,
+                    "message": exc.message,
+                    "remediation": {
+                        "action": "backup_and_rebuild",
+                        "target": "database",
+                    },
+                }
+            finally:
+                connection.close()
+
+        return await asyncio.to_thread(operation)
 
     async def count_agents(self, tenant_id: str) -> int:
         return await self._read(
@@ -392,6 +590,11 @@ class SQLiteRepository:
             config=json.loads(row["config_json"] or "{}"),
             metadata=json.loads(row["metadata_json"] or "{}"),
             enabled=bool(row["enabled"]),
+            version=int(row["version"]),
+            lifecycle=row["lifecycle"],
+            verification=ModelConfigVerification.model_validate_json(
+                row["verification_json"] or '{"status": "never"}'
+            ),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -417,15 +620,15 @@ class SQLiteRepository:
         return self._model_config_from_row(row) if row else None
 
     async def resolve_model_config_secret(
-        self, tenant_id: str, config_id: str
+        self, tenant_id: str, config_id: str, *, include_disabled: bool = False
     ) -> Optional[str]:
         row = await self._read(
             lambda connection: connection.execute(
-                "SELECT secret_ciphertext, enabled FROM model_configs WHERE tenant_id = ? AND id = ?",
+                "SELECT secret_ciphertext, enabled, lifecycle FROM model_configs WHERE tenant_id = ? AND id = ?",
                 (tenant_id, config_id),
             ).fetchone()
         )
-        if not row or not bool(row["enabled"]):
+        if not row or (not include_disabled and (row["lifecycle"] != "enabled" or not bool(row["enabled"]))):
             return None
         try:
             return decrypt_secret(self.credential_master_key, row["secret_ciphertext"])
@@ -437,66 +640,99 @@ class SQLiteRepository:
         tenant_id: str,
         config: ModelConfig,
         secret: Optional[str] = None,
+        *,
+        expected_version: Optional[int] = None,
+        secret_action: Optional[str] = None,
     ) -> ModelConfig:
         now = utc_now()
 
         def operation(connection: sqlite3.Connection) -> ModelConfig:
             current = connection.execute(
-                "SELECT created_at, secret_ciphertext, masked_secret FROM model_configs WHERE tenant_id = ? AND id = ?",
+                "SELECT created_at, secret_ciphertext, masked_secret, version FROM model_configs WHERE tenant_id = ? AND id = ?",
                 (tenant_id, config.id),
             ).fetchone()
+            if current and expected_version is None:
+                raise ConfigurationConflictError("expected model configuration version is required")
+            if current and int(current["version"]) != expected_version:
+                raise ConfigurationConflictError(
+                    f"expected version {expected_version}; current is {current['version']}"
+                )
             created_at = datetime.fromisoformat(current["created_at"]) if current else now
-            encrypted = (
-                encrypt_secret(self.credential_master_key, secret)
-                if secret is not None
-                else (current["secret_ciphertext"] if current else "")
-            )
-            masked = mask_secret(secret) if secret is not None else (current["masked_secret"] if current else "")
+            action = secret_action or ("replace" if secret is not None else "keep")
+            if action == "replace" and secret is None:
+                raise ConfigurationConflictError("secret is required for secret_action=replace")
+            if action == "replace":
+                encrypted = encrypt_secret(self.credential_master_key, secret or "")
+                masked = mask_secret(secret or "")
+            elif action == "clear":
+                encrypted = ""
+                masked = ""
+            else:
+                encrypted = current["secret_ciphertext"] if current else ""
+                masked = current["masked_secret"] if current else ""
+            next_version = int(current["version"]) + 1 if current else 1
             saved = config.model_copy(
                 update={
                     "tenant_id": tenant_id,
                     "masked_secret": masked,
+                    "version": next_version,
                     "created_at": created_at,
                     "updated_at": now,
                 }
             )
-            connection.execute(
-                """
-                INSERT INTO model_configs (
-                    tenant_id, id, name, provider, protocol, model, base_url,
-                    secret_ciphertext, masked_secret, config_json, metadata_json,
-                    enabled, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(tenant_id, id) DO UPDATE SET
-                    name=excluded.name,
-                    provider=excluded.provider,
-                    protocol=excluded.protocol,
-                    model=excluded.model,
-                    base_url=excluded.base_url,
-                    secret_ciphertext=excluded.secret_ciphertext,
-                    masked_secret=excluded.masked_secret,
-                    config_json=excluded.config_json,
-                    metadata_json=excluded.metadata_json,
-                    enabled=excluded.enabled,
-                    updated_at=excluded.updated_at
-                """,
-                (
-                    tenant_id,
-                    saved.id,
-                    saved.name,
-                    saved.provider,
-                    saved.protocol,
-                    saved.model,
-                    saved.base_url,
-                    encrypted,
-                    saved.masked_secret,
-                    json.dumps(saved.config, ensure_ascii=False),
-                    json.dumps(saved.metadata, ensure_ascii=False),
-                    int(saved.enabled),
-                    saved.created_at.isoformat(),
-                    saved.updated_at.isoformat(),
-                ),
+            values = (
+                saved.name,
+                saved.provider,
+                saved.protocol,
+                saved.model,
+                saved.base_url,
+                encrypted,
+                saved.masked_secret,
+                json.dumps(saved.config, ensure_ascii=False),
+                json.dumps(saved.metadata, ensure_ascii=False),
+                int(saved.enabled),
+                saved.version,
+                saved.lifecycle,
+                saved.verification.model_dump_json(),
+                saved.updated_at.isoformat(),
             )
+            if current:
+                # The row predicate is the actual CAS boundary.  The
+                # process-local lock remains useful for this adapter, but it
+                # must not be mistaken for concurrency correctness.
+                cursor = connection.execute(
+                    """
+                    UPDATE model_configs SET
+                        name=?, provider=?, protocol=?, model=?, base_url=?,
+                        secret_ciphertext=?, masked_secret=?, config_json=?,
+                        metadata_json=?, enabled=?, version=?, lifecycle=?,
+                        verification_json=?, updated_at=?
+                    WHERE tenant_id=? AND id=? AND version=?
+                    """,
+                    values + (tenant_id, saved.id, expected_version),
+                )
+                if cursor.rowcount != 1:
+                    raise ConfigurationConflictError(
+                        "model configuration changed while it was being updated"
+                    )
+            else:
+                if expected_version not in (None, 0):
+                    raise ConfigurationConflictError("model configuration does not exist")
+                connection.execute(
+                    """
+                    INSERT INTO model_configs (
+                        tenant_id, id, name, provider, protocol, model, base_url,
+                        secret_ciphertext, masked_secret, config_json, metadata_json,
+                        enabled, version, lifecycle, verification_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        tenant_id,
+                        saved.id,
+                        *values,
+                        saved.created_at.isoformat(),
+                    ),
+                )
             return saved
 
         return await self._write(operation)
@@ -511,15 +747,46 @@ class SQLiteRepository:
         )
 
     async def model_config_is_referenced(self, tenant_id: str, config_id: str) -> bool:
+        references = await self.list_model_config_references(tenant_id, config_id, limit=1)
+        return references.total > 0
+
+    async def list_model_config_references(
+        self,
+        tenant_id: str,
+        config_id: str,
+        *,
+        limit: int = 50,
+        cursor: Optional[str] = None,
+    ) -> ModelConfigReferences:
+        try:
+            offset = max(0, int(cursor or "0"))
+        except ValueError:
+            offset = 0
+        bounded_limit = min(max(limit, 1), 200)
+
         rows = await self._read(
             lambda connection: connection.execute(
-                "SELECT spec_json FROM agent_revisions WHERE tenant_id = ?",
+                "SELECT spec_json FROM agent_revisions WHERE tenant_id = ? ORDER BY agent_id, revision",
                 (tenant_id,),
             ).fetchall()
         )
-        return any(
-            AgentSpec.model_validate_json(row["spec_json"]).model.model_config_id == config_id
-            for row in rows
+        matches: List[ModelConfigReference] = []
+        for row in rows:
+            spec = AgentSpec.model_validate_json(row["spec_json"])
+            if spec.model.model_config_id == config_id:
+                matches.append(
+                    ModelConfigReference(
+                        agent_id=spec.id,
+                        agent_name=spec.name,
+                        revision=spec.revision,
+                    )
+                )
+        page = matches[offset : offset + bounded_limit]
+        next_cursor = str(offset + bounded_limit) if offset + bounded_limit < len(matches) else None
+        return ModelConfigReferences(
+            items=page,
+            total=len(matches),
+            next_cursor=next_cursor,
         )
 
     async def list_runtime_configs(self, tenant_id: str) -> List[RuntimeConfigEntry]:

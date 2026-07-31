@@ -3,7 +3,7 @@ kind: normative
 id: ARCH-TESTING
 status: accepted
 version: 1.0.0
-last_reviewed: 2026-07-31
+last_reviewed: 2026-08-01
 ---
 
 # 测试策略
@@ -26,13 +26,13 @@ last_reviewed: 2026-07-31
 | Unit | budget、图、工具、registry | `backend/tests/test_*.py` | Policy、checkpoint reducer、peer message |
 | Adapter contract | 所有实现遵守自有 Protocol | 部分 built-in 测试 | Storage/Bus/Provider/Workspace TCK |
 | Integration | API + SQLite + runtime + event | FastAPI TestClient、真实 SQLite | Postgres、queue、outbox、migration |
-| Frontend | SSR、类型、lint、真实连接状态 | Node SSR test、lint、typecheck | 浏览器交互与无障碍 E2E |
+| Frontend | SSR、类型、lint、真实连接状态 | Node SSR test、lint、typecheck；本轮隔离 fixture 手工旅程 | 浏览器交互与无障碍 E2E |
 | Deployment | 生产镜像、健康、无伪造数据的启动证据 | 隔离 Compose smoke、容器 doctor、空数据库与 provider 注册表 | 配置真实 provider 后的 API smoke、TLS/OIDC、备份恢复、多 worker chaos |
 | Recovery/chaos | 崩溃、重投、lease、取消 | 无 | kill worker、重复 delivery、网络分区 |
 | Security | tenant、Secret、policy、插件 | 基础 tenant 和协议拒绝 | OIDC/RBAC、approval、SSRF、泄露测试 |
 | Model eval | 任务质量和回归 | 无稳定套件 | nightly/release，和本地协议门禁分离 |
 
-## `0.1.0` 门禁
+## 当前单进程门禁
 
 ```bash
 .venv/bin/python -m pytest backend/tests -q
@@ -40,8 +40,14 @@ npm audit --omit=dev --audit-level=high
 npm run lint
 npm run typecheck
 npm test
+make verify
+docker compose config --quiet
 ./scripts/container-smoke.sh
 ```
+
+`make verify` 聚合后端、前端 lint/typecheck、SSR/source 测试和 Compose 配置校验，并生成
+机器可读的 `artifacts/evidence-summary.json`；容器 smoke 仍单独运行，因为它会构建镜像、
+启动隔离资源并清理本地 Docker 状态。
 
 production-only npm high/critical audit 是发布硬门禁；完整开发工具链 audit 仍需评审
 剩余项及修复代价。以上命令证明当前 Python、TypeScript、SSR、构建和单节点容器基线，
@@ -54,6 +60,8 @@ production-only npm high/critical audit 是发布硬门禁；完整开发工具�
 - 插件隔离；
 - 真实模型回答质量。
 - 公网 TLS、OIDC、备份恢复或多 worker 容错。
+- CHG-0010 的浏览器自动化首用、断线重连、重复事件、200% zoom/reduced-motion 和完整泄露矩阵；
+  本轮已用隔离 Provider fixture 手工检查首用、终态事件、URL 恢复、390px 和 Escape/焦点恢复。
 
 ## 关键不变量测试
 
@@ -120,6 +128,15 @@ worker、事件顺序可解释。
 - SSE 重连从 `after_sequence` 继续，不能重复交付已确认的 UI 事件。
 - 慢订阅者 queue 满时应断开并依靠持久日志追赶，不能让已持久化事件发布或 Run 失败。
 
+CHG-0010 的额外合同/兼容回归集中在：
+
+- `backend/tests/test_chg0010_operability.py`：SetupStatus、Readiness、ModelConfig CAS/Secret
+  生命周期、Problem Details 和空库首用前置条件；
+- `backend/tests/test_compatibility_and_endpoints.py`：endpoint policy、schema version、未知
+  高版本和 legacy profile fail-closed；
+- `specs/current/foundation/contracts/model-config-v2.schema.json`、`setup-status.schema.json`
+  和 `problem-details-v1.schema.json`：公开 DTO 形状。
+
 ## 前端验证
 
 - lint、typecheck、production build、SSR。
@@ -127,6 +144,11 @@ worker、事件顺序可解释。
 - API key 仅存在当前页面内存，输入为 password 类型。
 - Agent 创建、Run 发起、取消和终态轮询走真实 API fixture。
 - 键盘导航、焦点、label、颜色对比和窄屏布局。
+
+浏览器首用手工旅程可使用 `scripts/provider-fixture.py` 提供的本地 OpenAI-compatible
+fixture；它只支持隔离测试请求，不注册进生产 Provider catalog，也不记录请求头或请求体。
+fixture 同时提供 `/v1/models` 和 `/v1/chat/completions`，因此连接检查与真实 Run 都经过
+同一条 OpenAI-compatible 适配器边界。该旅程是补充证据，不替代尚未存在的浏览器自动化门禁。
 
 Sites 发布成功只证明前端制品可访问；仍需单独验证部署页面连接到目标 Python API。
 

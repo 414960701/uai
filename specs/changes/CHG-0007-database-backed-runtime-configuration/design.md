@@ -1,5 +1,8 @@
 # Design
 
+> 历史说明：本设计的 profile 结构已被 CHG-0009 supersede；当前实现只保留其密文边界、
+> tenant scope 和运行时短暂解析原则。
+
 ## Data flow
 
 ```mermaid

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uai-forge.local/schemas/capability-status/1.0",
+  "title": "UAI Forge CapabilityStatus v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "state", "summary", "limits", "evidence_refs"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "state": {"enum": ["implemented", "partial", "planned", "unavailable"]},
+    "summary": {"type": "string", "minLength": 1},
+    "limits": {"type": "array", "items": {"type": "string"}},
+    "evidence_refs": {"type": "array", "items": {"type": "string"}}
+  }
+}

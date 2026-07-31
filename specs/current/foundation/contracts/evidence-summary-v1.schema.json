@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uai-forge.dev/contracts/evidence-summary-v1.schema.json",
+  "title": "UAI Forge Evidence Summary v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "status",
+    "failure_count",
+    "repository",
+    "runtimes",
+    "commands",
+    "secret_policy"
+  ],
+  "properties": {
+    "schema_version": {"const": "uai-forge.evidence-summary/1.0"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["passed", "failed"]},
+    "failure_count": {"type": "integer", "minimum": 0},
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["branch", "commit", "dirty"],
+      "properties": {
+        "branch": {"type": ["string", "null"]},
+        "commit": {"type": ["string", "null"]},
+        "dirty": {"type": ["boolean", "null"]}
+      }
+    },
+    "runtimes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["python", "node", "npm"],
+      "properties": {
+        "python": {"type": ["string", "null"]},
+        "node": {"type": ["string", "null"]},
+        "npm": {"type": ["string", "null"]}
+      }
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "command", "exit_code", "status"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "command": {"type": "string", "minLength": 1},
+          "exit_code": {"type": "integer", "minimum": 0},
+          "status": {"enum": ["passed", "failed"]}
+        }
+      }
+    },
+    "secret_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command_output_embedded", "plaintext_credentials_embedded"],
+      "properties": {
+        "command_output_embedded": {"const": false},
+        "plaintext_credentials_embedded": {"const": false}
+      }
+    }
+  }
+}

@@ -42,7 +42,26 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ApiProblem,
+  apiRequest,
+  consumeEventStream,
+  headersFor,
+  problemMessage,
+} from "./control-center/api";
+import { useDialogAccessibility } from "./control-center/components/dialog";
+import { ProblemNotice } from "./control-center/components/problem-notice";
+import {
+  mergeRunEvents,
+  terminalStatusForEvent,
+  type RunEvent,
+} from "./control-center/features/runs/reducer";
+import {
+  PrerequisiteGate,
+  type ReadinessIssue,
+} from "./control-center/features/setup/prerequisite";
+import { markResourceError, type ResourceState } from "./control-center/resource-state";
 
 type View =
   | "overview"
@@ -54,6 +73,46 @@ type View =
   | "model-configs"
   | "settings";
 type ConnectionMode = "connecting" | "live" | "disconnected";
+
+type SetupAction =
+  | "connect"
+  | "create_model_config"
+  | "verify_model_config"
+  | "create_agent"
+  | "run_agent"
+  | "none";
+
+type SetupResourceSummary = {
+  total: number;
+  runnable: number;
+  verified_enabled: number;
+  active: number;
+  ready: number;
+  blocking_issues: ReadinessIssue[];
+  last_terminal_at?: string | null;
+};
+
+type SetupStatus = {
+  connection: "connected" | "unauthorized" | "incompatible" | "unavailable";
+  model_connections: SetupResourceSummary;
+  agents: SetupResourceSummary;
+  instances: SetupResourceSummary;
+  runs: SetupResourceSummary;
+  next_action: SetupAction;
+};
+
+type CapabilityStatus = {
+  id: string;
+  state: "implemented" | "partial" | "planned" | "unavailable";
+  summary: string;
+  limits: string[];
+  evidence_refs: string[];
+};
+
+function problemFromRefreshError(error: unknown): { message: string; problem?: { code?: string } } {
+  if (error instanceof ApiProblem) return error;
+  return { message: problemMessage(error, "资源暂时不可用") };
+}
 
 type ChildMount = {
   alias: string;
@@ -135,17 +194,6 @@ type RunRecord = {
   metrics?: Record<string, unknown>;
 };
 
-type RunEvent = {
-  run_id: string;
-  sequence: number;
-  type: string;
-  timestamp: string;
-  agent_id: string;
-  parent_agent_id?: string;
-  depth: number;
-  payload: Record<string, unknown>;
-};
-
 type PluginManifest = {
   id: string;
   kind: string;
@@ -166,6 +214,11 @@ type PluginManifest = {
   config_schema?: Record<string, unknown>;
   available: boolean;
   source: string;
+  connection_check?: "none" | "local" | "remote";
+  connection_schema_version?: string;
+  ui_hints?: Record<string, unknown>;
+  catalog_version?: string | null;
+  catalog_updated_at?: string | null;
 };
 
 type ModelConfig = {
@@ -180,6 +233,31 @@ type ModelConfig = {
   config?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   enabled: boolean;
+  version: number;
+  lifecycle: "draft" | "verified" | "enabled" | "disabled" | "error";
+  verification: {
+    status: "never" | "passed" | "failed";
+    checked_at?: string | null;
+    code?: string | null;
+    latency_ms?: number | null;
+    endpoint_summary?: string | null;
+  };
+};
+
+type ModelConnectionCheckResult = {
+  status: "passed" | "failed" | "partial";
+  code: string;
+  checked_at: string;
+  latency_ms?: number | null;
+  endpoint_summary?: string | null;
+  provider: string;
+  model: string;
+};
+
+type ModelConfigReferences = {
+  items: Array<{ agent_id: string; agent_name: string; revision: number; path: string }>;
+  total: number;
+  next_cursor?: string | null;
 };
 
 type RuntimeConfigEntry = {
@@ -754,8 +832,19 @@ function getDefaultApiBase(): string {
 }
 
 export function ControlCenter() {
-  const [view, setView] = useState<View>("overview");
+  const [view, setView] = useState<View>(() => {
+    if (typeof window === "undefined") return "overview";
+    const candidate = new URLSearchParams(window.location.search).get("view") as View | null;
+    return candidate && NAV_ITEMS.some((item) => item.id === candidate) ? candidate : "overview";
+  });
+  const [routeResourceId, setRouteResourceId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("resource");
+  });
   const [mobileNav, setMobileNav] = useState(false);
+  const mobileMenuRef = useRef<HTMLButtonElement>(null);
+  const mobileNavCloseRef = useRef<HTMLButtonElement>(null);
+  const mobileNavWasOpen = useRef(false);
   const [mode, setMode] = useState<ConnectionMode>("connecting");
   const [apiBase, setApiBase] = useState(() => getDefaultApiBase());
   const [apiKey, setApiKey] = useState("");
@@ -765,6 +854,9 @@ export function ControlCenter() {
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
   const [modelConfigs, setModelConfigs] = useState<ModelConfig[]>([]);
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigEntry[]>([]);
+  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
+  const [capabilities, setCapabilities] = useState<CapabilityStatus[]>([]);
+  const [resourceStates, setResourceStates] = useState<Record<string, ResourceState<unknown>>>({});
   const [selectedAgent, setSelectedAgent] = useState<AgentSpec | null>(null);
   const [editingAgent, setEditingAgent] = useState<AgentSpec | null>(null);
   const [newAgentOpen, setNewAgentOpen] = useState(false);
@@ -775,68 +867,96 @@ export function ControlCenter() {
   const [notice, setNotice] = useState<string | null>(null);
   const [agentQuery, setAgentQuery] = useState("");
 
-  const headers = useCallback((): HeadersInit => {
-    const result: Record<string, string> = {
-      "Content-Type": "application/json",
-      "X-Tenant-ID": "default",
+  useEffect(() => {
+    if (!mobileNav) {
+      if (mobileNavWasOpen.current) mobileMenuRef.current?.focus();
+      mobileNavWasOpen.current = false;
+      return undefined;
+    }
+
+    mobileNavWasOpen.current = true;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setMobileNav(false);
     };
-    if (apiKey) result.Authorization = `Bearer ${apiKey}`;
-    return result;
-  }, [apiKey]);
+    document.addEventListener("keydown", onKeyDown);
+    window.setTimeout(() => mobileNavCloseRef.current?.focus(), 0);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [mobileNav]);
+
+  const headers = useCallback((): HeadersInit => headersFor(apiKey, "default"), [apiKey]);
+
+  const navigate = useCallback((nextView: View, resourceId?: string | null) => {
+    setView(nextView);
+    setRouteResourceId(resourceId || null);
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      params.set("view", nextView);
+      if (resourceId) params.set("resource", resourceId);
+      else params.delete("resource");
+      window.history.pushState({}, "", `${window.location.pathname}?${params.toString()}`);
+    }
+  }, []);
+
+  useEffect(() => {
+    function onPopState() {
+      const params = new URLSearchParams(window.location.search);
+      const candidate = params.get("view") as View | null;
+      setView(candidate && NAV_ITEMS.some((item) => item.id === candidate) ? candidate : "overview");
+      setRouteResourceId(params.get("resource"));
+    }
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   const refresh = useCallback(
     async (candidateBase?: string) => {
       const base = (candidateBase || apiBase).replace(/\/$/, "");
       setSyncing(true);
-      if (mode === "connecting") setMode("connecting");
-      try {
-        const [agentResponse, instanceResponse, runResponse, pluginResponse,
-          modelConfigResponse, runtimeConfigResponse] =
-          await Promise.all([
-            fetch(`${base}/agents`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
-            fetch(`${base}/instances`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
-            fetch(`${base}/runs?limit=100`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
-            fetch(`${base}/plugins`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
-            fetch(`${base}/model-configs`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
-            fetch(`${base}/runtime-config`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
-          ]);
-        if (![agentResponse, instanceResponse, runResponse, pluginResponse,
-          modelConfigResponse, runtimeConfigResponse].every((item) => item.ok)) {
-          throw new Error("Control API unavailable");
+      const resourceRequests: Array<{
+        key: string;
+        request: Promise<unknown>;
+        apply: (value: unknown) => void;
+        empty: unknown;
+      }> = [
+        { key: "agents", request: apiRequest<AgentSpec[]>(`${base}/agents`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setAgents(value as AgentSpec[]), empty: [] },
+        { key: "instances", request: apiRequest<AgentInstance[]>(`${base}/instances`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setInstances(value as AgentInstance[]), empty: [] },
+        { key: "runs", request: apiRequest<RunRecord[]>(`${base}/runs?limit=100`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setRuns(value as RunRecord[]), empty: [] },
+        { key: "plugins", request: apiRequest<PluginManifest[]>(`${base}/plugins`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setPlugins(value as PluginManifest[]), empty: [] },
+        { key: "modelConfigs", request: apiRequest<ModelConfig[]>(`${base}/model-configs`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setModelConfigs(value as ModelConfig[]), empty: [] },
+        { key: "runtimeConfig", request: apiRequest<RuntimeConfigEntry[]>(`${base}/runtime-config`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setRuntimeConfig(value as RuntimeConfigEntry[]), empty: [] },
+        { key: "setup", request: apiRequest<SetupStatus>(`${base}/setup-status`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setSetupStatus(value as SetupStatus), empty: null },
+        { key: "capabilities", request: apiRequest<CapabilityStatus[]>(`${base}/capabilities`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setCapabilities(value as CapabilityStatus[]), empty: [] },
+      ];
+      const results = await Promise.allSettled(resourceRequests.map((item) => item.request));
+      let successes = 0;
+      results.forEach((result, index) => {
+        const item = resourceRequests[index];
+        if (result.status === "fulfilled") {
+          successes += 1;
+          item.apply(result.value);
+          setResourceStates((current) => ({
+            ...current,
+            [item.key]: { status: "ready", data: result.value },
+          }));
+        } else {
+          const problem = result.reason instanceof ApiProblem
+            ? result.reason
+            : problemFromRefreshError(result.reason);
+          setResourceStates((current) => {
+            const previous = current[item.key] || { status: "idle", data: item.empty };
+            return { ...current, [item.key]: markResourceError(previous, problem) };
+          });
         }
-        const [agentData, instanceData, runData, pluginData,
-          modelConfigData, runtimeConfigData] = (await Promise.all([
-          agentResponse.json(),
-          instanceResponse.json(),
-          runResponse.json(),
-          pluginResponse.json(),
-          modelConfigResponse.json(),
-          runtimeConfigResponse.json(),
-        ])) as [AgentSpec[], AgentInstance[], RunRecord[], PluginManifest[],
-          ModelConfig[], RuntimeConfigEntry[]];
-        setAgents(agentData);
-        setInstances(instanceData);
-        setRuns(runData);
-        setPlugins(pluginData);
-        setModelConfigs(modelConfigData);
-        setRuntimeConfig(runtimeConfigData);
-        setApiBase(base);
-        setMode("live");
-        setNotice("已连接 Python 运行时");
-        window.localStorage.setItem("uai-forge-api-base", base);
-      } catch {
-        setMode("disconnected");
-        setAgents([]);
-        setInstances([]);
-        setRuns([]);
-        setPlugins([]);
-        setModelConfigs([]);
-        setRuntimeConfig([]);
-      } finally {
-        setSyncing(false);
-      }
+      });
+      setApiBase(base);
+      setMode(successes > 0 ? "live" : "disconnected");
+      if (successes > 0) setNotice("控制面数据已同步，局部失败会标记为过期");
+      if (typeof window !== "undefined") window.localStorage.setItem("uai-forge-api-base", base);
+      setSyncing(false);
     },
-    [apiBase, headers, mode],
+    [apiBase, headers],
   );
 
   useEffect(() => {
@@ -854,6 +974,14 @@ export function ControlCenter() {
 
   const rootAgent =
     agents.find((agent) => agent.labels?.tier === "leader") || agents[0];
+  const urlSelectedAgent =
+    routeResourceId && view !== "runs" && view !== "model-configs"
+      ? agents.find((item) => item.id === routeResourceId) || null
+      : null;
+  const activeSelectedAgent = selectedAgent || urlSelectedAgent;
+  const degradedResourceCount = Object.values(resourceStates).filter(
+    (resource) => resource.status === "stale" || resource.status === "error",
+  ).length;
   const mountedAgents = rootAgent
     ? rootAgent.children
         .map((mount) => agents.find((agent) => agent.id === mount.agent_id))
@@ -907,6 +1035,89 @@ export function ControlCenter() {
     );
   }, [agentQuery, agents]);
 
+  function openNewAgent() {
+    if (mode !== "live") {
+      navigate("settings");
+      setNotice("请先连接控制面；Agent 会写入 Python 数据库");
+      return;
+    }
+    if (!setupStatus || setupStatus.model_connections.runnable === 0) {
+      navigate("model-configs");
+      setNotice("先保存并验证一条可运行的模型连接");
+      return;
+    }
+    setNewAgentOpen(true);
+  }
+
+  function openRun() {
+    if (mode !== "live") {
+      navigate("settings");
+      setNotice("请先连接控制面；运行记录只来自 Python 数据库");
+      return;
+    }
+    if (!setupStatus || setupStatus.agents.runnable === 0) {
+      if (setupStatus?.next_action === "verify_model_config") {
+        navigate("model-configs", setupStatus.model_connections.blocking_issues[0]?.resource_id);
+      } else {
+        navigate("agents");
+      }
+      setNotice("当前没有可运行 Agent，请按首用清单修复前置条件");
+      return;
+    }
+    setRunOpen(true);
+  }
+
+  function openRunReadinessFix() {
+    setRunOpen(false);
+    if (mode !== "live") {
+      navigate("settings");
+      return;
+    }
+    if (setupStatus?.next_action === "verify_model_config" || setupStatus?.next_action === "create_model_config") {
+      navigate("model-configs", setupStatus.next_action === "verify_model_config" ? setupStatus.model_connections.blocking_issues[0]?.resource_id : null);
+      return;
+    }
+    navigate("agents");
+  }
+
+  function openAgentDetails(agent: AgentSpec) {
+    setSelectedAgent(agent);
+    navigate(view, agent.id);
+  }
+
+  function closeAgentDetails() {
+    setSelectedAgent(null);
+    navigate(view, null);
+  }
+
+  function changeApiBase(value: string) {
+    setApiBase(value);
+    setMode("connecting");
+    setSetupStatus(null);
+    setCapabilities([]);
+    setAgents([]);
+    setInstances([]);
+    setRuns([]);
+    setPlugins([]);
+    setModelConfigs([]);
+    setRuntimeConfig([]);
+    setResourceStates({});
+  }
+
+  function changeApiKey(value: string) {
+    setApiKey(value);
+    setMode("connecting");
+    setSetupStatus(null);
+    setCapabilities([]);
+    setAgents([]);
+    setInstances([]);
+    setRuns([]);
+    setPlugins([]);
+    setModelConfigs([]);
+    setRuntimeConfig([]);
+    setResourceStates({});
+  }
+
   async function createAgent(form: NewAgentForm) {
     const payload = {
       name: form.name,
@@ -927,14 +1138,13 @@ export function ControlCenter() {
       enabled: form.enabled,
     };
     if (mode === "live") {
-      const response = await fetch(`${apiBase}/agents`, {
+      const created = await apiRequest<AgentSpec>(`${apiBase}/agents`, {
         method: "POST",
         headers: headers(),
         body: JSON.stringify(payload),
       });
-      if (!response.ok) throw new Error(await response.text());
-      const created = (await response.json()) as AgentSpec;
       setAgents((current) => [...current, created]);
+      await refresh();
     } else {
       throw new Error("请先连接 Python 控制面；Agent 配置只写入数据库");
     }
@@ -963,19 +1173,18 @@ export function ControlCenter() {
     };
     let updated: AgentSpec;
     if (mode === "live") {
-      const response = await fetch(`${apiBase}/agents/${agent.id}`, {
+      updated = await apiRequest<AgentSpec>(`${apiBase}/agents/${agent.id}`, {
         method: "PATCH",
         headers: headers(),
         body: JSON.stringify(payload),
       });
-      if (!response.ok) throw new Error(await response.text());
-      updated = (await response.json()) as AgentSpec;
     } else {
       throw new Error("请先连接 Python 控制面；修订只写入数据库");
     }
     setAgents((current) =>
       current.map((item) => (item.id === updated.id ? updated : item)),
     );
+    await refresh();
     setEditingAgent(null);
     setNotice(`${updated.name} rev ${updated.revision} 已发布`);
   }
@@ -985,25 +1194,41 @@ export function ControlCenter() {
     patch: Record<string, unknown>,
   ) {
     if (mode !== "live") throw new Error("请先连接 Python 控制面；模型配置只写入数据库");
-    const response = await fetch(`${apiBase}/model-configs/${config.id}`, {
+    const outgoing = {
+      ...patch,
+      expected_version: config.version,
+      secret_action: patch.secret ? "replace" : patch.secret_action || "keep",
+    };
+    const updated = await apiRequest<ModelConfig>(`${apiBase}/model-configs/${config.id}`, {
       method: "PATCH",
       headers: headers(),
-      body: JSON.stringify(patch),
+      body: JSON.stringify(outgoing),
     });
-    if (!response.ok) throw new Error(await response.text());
-    const updated = (await response.json()) as ModelConfig;
     setModelConfigs((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+    await refresh();
     setNotice(`${updated.name} 已更新`);
+  }
+
+  async function checkModelConfig(config: ModelConfig) {
+    if (mode !== "live") throw new Error("请先连接 Python 控制面");
+    const result = await apiRequest<ModelConnectionCheckResult>(`${apiBase}/model-configs/${config.id}/checks`, {
+      method: "POST",
+      headers: headers(),
+    });
+    await refresh();
+    if (result.status === "passed") setNotice("连接检查通过；现在可以启用模型连接");
+    else setNotice(`连接检查未通过：${result.code}`);
+    return result;
   }
 
   async function deleteModelConfig(config: ModelConfig) {
     if (mode !== "live") throw new Error("请先连接 Python 控制面");
-    const response = await fetch(`${apiBase}/model-configs/${config.id}`, {
+    await apiRequest<unknown>(`${apiBase}/model-configs/${config.id}`, {
       method: "DELETE",
       headers: headers(),
     });
-    if (!response.ok) throw new Error(await response.text());
     setModelConfigs((current) => current.filter((item) => item.id !== config.id));
+    await refresh();
     setNotice(`${config.name} 已删除`);
   }
 
@@ -1025,14 +1250,13 @@ export function ControlCenter() {
       config_overrides: {},
     };
     if (mode === "live") {
-      const response = await fetch(`${apiBase}/instances`, {
+      const created = await apiRequest<AgentInstance>(`${apiBase}/instances`, {
         method: "POST",
         headers: headers(),
         body: JSON.stringify(payload),
       });
-      if (!response.ok) throw new Error(await response.text());
-      const created = (await response.json()) as AgentInstance;
       setInstances((current) => [...current, created]);
+      await refresh();
     } else {
       throw new Error("请先连接 Python 控制面；实例配置只写入数据库");
     }
@@ -1045,16 +1269,15 @@ export function ControlCenter() {
     nextStatus: "ready" | "stopped",
   ) {
     if (mode === "live") {
-      const response = await fetch(`${apiBase}/instances/${instance.id}`, {
+      const updated = await apiRequest<AgentInstance>(`${apiBase}/instances/${instance.id}`, {
         method: "PATCH",
         headers: headers(),
         body: JSON.stringify({ status: nextStatus }),
       });
-      if (!response.ok) throw new Error(await response.text());
-      const updated = (await response.json()) as AgentInstance;
       setInstances((current) =>
         current.map((item) => (item.id === updated.id ? updated : item)),
       );
+      await refresh();
     } else {
       throw new Error("请先连接 Python 控制面；实例状态由数据库控制");
     }
@@ -1065,7 +1288,7 @@ export function ControlCenter() {
     setRunBusy(true);
     try {
       if (mode === "live") {
-        const response = await fetch(`${apiBase}/runs`, {
+        const created = await apiRequest<RunRecord>(`${apiBase}/runs`, {
           method: "POST",
           headers: headers(),
           body: JSON.stringify({
@@ -1073,22 +1296,10 @@ export function ControlCenter() {
             input,
           }),
         });
-        if (!response.ok) throw new Error(await response.text());
-        const created: RunRecord = await response.json();
         setRuns((current) => [created, ...current]);
         setNotice("运行已提交，事件流正在记录");
         setRunOpen(false);
-        setView("runs");
-        for (let attempt = 0; attempt < 30; attempt += 1) {
-          await new Promise((resolve) => window.setTimeout(resolve, 500));
-          const poll = await fetch(`${apiBase}/runs/${created.id}`, { headers: headers() });
-          if (!poll.ok) break;
-          const latest: RunRecord = await poll.json();
-          setRuns((current) =>
-            current.map((item) => (item.id === latest.id ? latest : item)),
-          );
-          if (["succeeded", "failed", "cancelled"].includes(latest.status)) break;
-        }
+        navigate("runs", created.id);
       } else {
         throw new Error("请先连接 Python 控制面；运行记录必须来自数据库");
       }
@@ -1099,22 +1310,20 @@ export function ControlCenter() {
 
   async function cancelRun(runId: string) {
     if (mode === "live") {
-      const response = await fetch(`${apiBase}/runs/${runId}/cancel`, {
+      const response = await apiRequest<{ accepted: boolean }>(`${apiBase}/runs/${runId}/cancel`, {
         method: "POST",
         headers: headers(),
       });
-      if (!response.ok) {
-        setNotice("该运行已进入终态，无法取消");
-        return;
-      }
+      if (!response.accepted) return;
+      setNotice("取消请求已发送，等待服务器确认");
     }
-    setRuns((current) =>
-      current.map((run) =>
-        run.id === runId ? { ...run, status: "cancelled" } : run,
-      ),
-    );
-    setNotice("取消请求已发送");
   }
+
+  const projectRun = useCallback((runId: string, patch: Partial<RunRecord>) => {
+    setRuns((current) => current.map((run) => (
+      run.id === runId ? { ...run, ...patch } : run
+    )));
+  }, []);
 
   return (
     <div className="forge-shell">
@@ -1128,6 +1337,7 @@ export function ControlCenter() {
             <div className="brand-subtitle">AGENT RUNTIME</div>
           </div>
           <button
+            ref={mobileNavCloseRef}
             className="icon-button sidebar-close"
             onClick={() => setMobileNav(false)}
             aria-label="关闭导航"
@@ -1143,7 +1353,7 @@ export function ControlCenter() {
               key={item.id}
               className={`nav-item ${view === item.id ? "active" : ""}`}
               onClick={() => {
-                setView(item.id);
+                navigate(item.id);
                 setMobileNav(false);
               }}
             >
@@ -1160,7 +1370,7 @@ export function ControlCenter() {
               key={item.id}
               className={`nav-item ${view === item.id ? "active" : ""}`}
               onClick={() => {
-                setView(item.id);
+                navigate(item.id);
                 setMobileNav(false);
               }}
             >
@@ -1177,16 +1387,16 @@ export function ControlCenter() {
               <span>{mode === "live" ? "Python Runtime" : "未连接"}</span>
               <span className="runtime-version">v0.1</span>
             </div>
-            <div className="runtime-meter">
-              <span style={{ width: mode === "live" ? "78%" : "48%" }} />
+            <div className="runtime-meter" aria-label="控制面连接状态">
+              <span style={{ width: mode === "live" ? "100%" : "24%" }} />
             </div>
             <p>{mode === "live" ? "控制面连接正常" : "连接本地 API 即可切换"}</p>
           </div>
           <div className="profile-row">
             <div className="profile-avatar">UA</div>
             <div className="profile-copy">
-              <strong>Workspace Admin</strong>
-              <span>default tenant</span>
+              <strong>本地操作者</strong>
+              <span>未认证 · default 数据分区</span>
             </div>
             <ChevronRight size={16} />
           </div>
@@ -1199,6 +1409,7 @@ export function ControlCenter() {
         <header className="topbar">
           <div className="topbar-left">
             <button
+              ref={mobileMenuRef}
               className="icon-button mobile-menu"
               onClick={() => setMobileNav(true)}
               aria-label="打开导航"
@@ -1206,14 +1417,14 @@ export function ControlCenter() {
               <Menu size={20} />
             </button>
             <div>
-              <span className="topbar-kicker">DEFAULT / CONTROL PLANE</span>
+              <span className="topbar-kicker">DEFAULT DATA PARTITION · UNAUTHENTICATED</span>
               <h1>{NAV_ITEMS.find((item) => item.id === view)?.label}</h1>
             </div>
           </div>
           <div className="topbar-actions">
             <button
               className="connection-pill"
-              onClick={() => setView("settings")}
+              onClick={() => navigate("settings")}
               aria-label="查看运行时连接"
             >
               <span className={`status-dot ${mode}`} />
@@ -1227,11 +1438,11 @@ export function ControlCenter() {
             >
               <RefreshCw size={18} className={syncing ? "spinning" : ""} />
             </button>
-            <button className="button button-secondary topbar-create" onClick={() => setNewAgentOpen(true)}>
+            <button className="button button-secondary topbar-create" onClick={openNewAgent}>
               <Plus size={17} />
               新建 Agent
             </button>
-            <button className="button button-primary" onClick={() => setRunOpen(true)}>
+            <button className="button button-primary" onClick={openRun}>
               <Play size={16} fill="currentColor" />
               发起运行
             </button>
@@ -1247,9 +1458,15 @@ export function ControlCenter() {
                   当前未连接控制面，页面不生成本地配置或业务数据。连接 Python 控制面后，所有 Agent、凭据、模型和运行记录均来自数据库。
                 </span>
               </div>
-              <button onClick={() => setView("settings")}>
+              <button onClick={() => navigate("settings")}>
                 配置连接 <ArrowRight size={15} />
               </button>
+            </div>
+          )}
+          {degradedResourceCount > 0 && mode === "live" && (
+            <div className="connection-banner connection-banner-warning" role="status">
+              <div><OctagonAlert size={17} /><span>{degradedResourceCount} 个资源暂时不可用或已过期，其余数据仍来自同一控制面。</span></div>
+              <button onClick={() => void refresh()} disabled={syncing}>重试 <RefreshCw size={15} /></button>
             </div>
           )}
 
@@ -1261,13 +1478,22 @@ export function ControlCenter() {
               instances={instances}
               runs={runs}
               plugins={plugins}
+              setupStatus={setupStatus}
+              capabilities={capabilities}
               activities={recentActivities}
               successfulRuns={successfulRuns}
               totalTokens={totalTokens}
-              onRun={() => setRunOpen(true)}
-              onAgent={(agent) => setSelectedAgent(agent)}
-              onViewRuns={() => setView("runs")}
-              onViewTopology={() => setView("topology")}
+              onRun={openRun}
+              onAgent={openAgentDetails}
+              onViewRuns={() => navigate("runs")}
+              onViewTopology={() => navigate("topology")}
+              onSetupAction={(action) => {
+                if (action === "connect") navigate("settings");
+                else if (action === "create_model_config") navigate("model-configs");
+                else if (action === "verify_model_config") navigate("model-configs", setupStatus?.model_connections.blocking_issues[0]?.resource_id);
+                else if (action === "create_agent") openNewAgent();
+                else if (action === "run_agent") openRun();
+              }}
             />
           )}
 
@@ -1276,8 +1502,8 @@ export function ControlCenter() {
               agents={filteredAgents}
               query={agentQuery}
               setQuery={setAgentQuery}
-              onCreate={() => setNewAgentOpen(true)}
-              onSelect={setSelectedAgent}
+              onCreate={openNewAgent}
+              onSelect={openAgentDetails}
             />
           )}
 
@@ -1289,7 +1515,7 @@ export function ControlCenter() {
               onStatusChange={(instance, status) =>
                 void setInstanceStatus(instance, status)
               }
-              onRun={() => setRunOpen(true)}
+              onRun={openRun}
             />
           )}
 
@@ -1298,19 +1524,23 @@ export function ControlCenter() {
               rootAgent={rootAgent}
               mountedAgents={mountedAgents}
               agents={agents}
-              onSelect={setSelectedAgent}
+              onSelect={openAgentDetails}
             />
           )}
 
           {view === "runs" && (
             <RunsView
+              key={`${apiBase}:${routeResourceId || "latest"}`}
               runs={runs}
               agents={agents}
-              onRun={() => setRunOpen(true)}
+              onRun={openRun}
               onCancel={(id) => void cancelRun(id)}
               apiBase={apiBase}
               mode={mode}
               requestHeaders={headers}
+              onRunProjection={projectRun}
+              resourceId={routeResourceId}
+              onResourceSelect={(resourceId) => navigate("runs", resourceId)}
             />
           )}
 
@@ -1318,14 +1548,18 @@ export function ControlCenter() {
 
           {view === "model-configs" && (
             <ModelConfigsView
+              key={`${apiBase}:${routeResourceId || "new"}:${routeResourceId && modelConfigs.some((item) => item.id === routeResourceId) ? "ready" : "loading"}`}
               apiBase={apiBase}
               mode={mode}
               syncing={syncing}
               plugins={plugins}
               modelConfigs={modelConfigs}
               requestHeaders={headers}
+              resourceId={routeResourceId}
+              onResourceSelect={(resourceId) => navigate("model-configs", resourceId)}
               onConfigChanged={() => void refresh()}
               onUpdate={(config, patch) => void updateModelConfig(config, patch)}
+              onCheck={(config) => checkModelConfig(config)}
               onDelete={(config) => void deleteModelConfig(config)}
             />
           )}
@@ -1337,25 +1571,26 @@ export function ControlCenter() {
               mode={mode}
               syncing={syncing}
               runtimeConfig={runtimeConfig}
+              capabilities={capabilities}
               requestHeaders={headers}
               onConfigChanged={() => void refresh()}
-              onOpenModelConfigs={() => setView("model-configs")}
-              setApiBase={setApiBase}
-              setApiKey={setApiKey}
+              onOpenModelConfigs={() => navigate("model-configs")}
+              setApiBase={changeApiBase}
+              setApiKey={changeApiKey}
               onConnect={() => void refresh(apiBase)}
             />
           )}
         </div>
       </main>
 
-      {selectedAgent && (
+      {activeSelectedAgent && (
         <AgentDrawer
-          agent={selectedAgent}
+          agent={activeSelectedAgent}
           agents={agents}
           modelConfigs={modelConfigs}
-          onClose={() => setSelectedAgent(null)}
+          onClose={closeAgentDetails}
           onEdit={() => {
-            setEditingAgent(selectedAgent);
+            setEditingAgent(activeSelectedAgent);
             setSelectedAgent(null);
           }}
           onRun={() => {
@@ -1398,8 +1633,10 @@ export function ControlCenter() {
         <RunModal
           agents={agents.filter((agent) => agent.enabled)}
           instances={instances.filter((instance) => instance.status === "ready")}
+          readinessIssues={setupStatus?.agents.blocking_issues || []}
           busy={runBusy}
           onClose={() => !runBusy && setRunOpen(false)}
+          onRepair={openRunReadinessFix}
           onLaunch={launchRun}
         />
       )}
@@ -1414,6 +1651,59 @@ export function ControlCenter() {
   );
 }
 
+function SetupChecklist({
+  setupStatus,
+  onAction,
+}: {
+  setupStatus: SetupStatus;
+  onAction: (action: SetupAction) => void;
+}) {
+  const steps: Array<{ action: SetupAction; title: string; detail: string; complete: boolean }> = [
+    {
+      action: "connect",
+      title: "连接控制面",
+      detail: setupStatus.connection === "connected" ? "已连接到当前 Python 控制面" : "先配置可访问的控制面",
+      complete: setupStatus.connection === "connected",
+    },
+    {
+      action: setupStatus.model_connections.total ? "verify_model_config" : "create_model_config",
+      title: setupStatus.model_connections.total ? "验证模型连接" : "创建模型连接",
+      detail: setupStatus.model_connections.runnable
+        ? `${setupStatus.model_connections.runnable} 条连接可运行`
+        : setupStatus.model_connections.total ? "没有可运行连接；先检查草稿并显式启用" : "先保存一条草稿；密钥只在提交时处理",
+      complete: setupStatus.model_connections.runnable > 0,
+    },
+    {
+      action: "create_agent",
+      title: "创建最小 Agent",
+      detail: setupStatus.agents.runnable
+        ? `${setupStatus.agents.runnable} 个 Agent 已通过 readiness`
+        : "选择模型连接并填写职责与提示词",
+      complete: setupStatus.agents.runnable > 0,
+    },
+    {
+      action: "run_agent",
+      title: "发起首个 Run",
+      detail: setupStatus.runs.total ? `${setupStatus.runs.total} 次运行已记录` : "Instance 可选；可直接运行 Agent",
+      complete: setupStatus.runs.total > 0,
+    },
+  ];
+  return (
+    <div className="setup-checklist" aria-label="首次运行清单">
+      {steps.map((step, index) => (
+        <div className={`setup-step ${step.complete ? "complete" : index === steps.findIndex((item) => item.action === setupStatus.next_action) ? "current" : ""}`} key={step.action}>
+          <span className="setup-step-number">{step.complete ? <Check size={15} /> : index + 1}</span>
+          <div><strong>{step.title}</strong><small>{step.detail}</small></div>
+          {!step.complete && step.action === setupStatus.next_action && (
+            <button className="button button-primary" onClick={() => onAction(step.action)}>开始</button>
+          )}
+          {step.complete && <span className="setup-step-done">已完成</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Overview({
   rootAgent,
   mountedAgents,
@@ -1421,6 +1711,8 @@ function Overview({
   instances,
   runs,
   plugins,
+  setupStatus,
+  capabilities,
   activities,
   successfulRuns,
   totalTokens,
@@ -1428,6 +1720,7 @@ function Overview({
   onAgent,
   onViewRuns,
   onViewTopology,
+  onSetupAction,
 }: {
   rootAgent?: AgentSpec;
   mountedAgents: AgentSpec[];
@@ -1435,6 +1728,8 @@ function Overview({
   instances: AgentInstance[];
   runs: RunRecord[];
   plugins: PluginManifest[];
+  setupStatus: SetupStatus | null;
+  capabilities: CapabilityStatus[];
   activities: ActivityItem[];
   successfulRuns: number;
   totalTokens: number;
@@ -1442,7 +1737,29 @@ function Overview({
   onAgent: (agent: AgentSpec) => void;
   onViewRuns: () => void;
   onViewTopology: () => void;
+  onSetupAction: (action: SetupAction) => void;
 }) {
+  if (!agents.length) {
+    return (
+      <div className="view-stack">
+        <section className="empty-setup panel">
+          <div className="eyebrow"><Sparkles size={15} /> 首次运行路径</div>
+          <h2>从真实连接开始，完成第一个 Run</h2>
+          <p>当前控制台不创建示例 Agent、伪造 Provider 或本地运行数据。每一步都由 Python 控制面返回的事实驱动。</p>
+          {setupStatus ? (
+            <SetupChecklist setupStatus={setupStatus} onAction={onSetupAction} />
+          ) : (
+            <div className="empty-inline">正在读取控制面 SetupStatus；如果持续没有响应，请检查系统设置中的 API 地址。</div>
+          )}
+          <div className="hero-proof">
+            <span><ShieldCheck size={15} /> 密钥只在控制面处理</span>
+            <span><Database size={15} /> 数据来自租户数据库</span>
+            <span><Activity size={15} /> Run 事件可续播</span>
+          </div>
+        </section>
+      </div>
+    );
+  }
   return (
     <div className="view-stack">
       <section className="hero-grid">
@@ -1462,7 +1779,7 @@ function Overview({
           <div className="hero-actions">
             <button className="button button-primary button-large" onClick={onRun}>
               <Play size={17} fill="currentColor" />
-              运行研究团队
+              发起一次真实运行
             </button>
             <button className="button button-ghost button-large" onClick={onViewTopology}>
               查看协作拓扑
@@ -1480,7 +1797,7 @@ function Overview({
           <div className="card-heading">
             <div>
               <span className="section-kicker">TEAM TOPOLOGY</span>
-              <h3>研究团队运行图</h3>
+              <h3>当前协作拓扑</h3>
             </div>
             <button className="card-link" onClick={onViewTopology}>展开</button>
           </div>
@@ -1490,9 +1807,9 @@ function Overview({
                 <span className="node-avatar lime">{agentInitials(rootAgent.name)}</span>
                 <span>
                   <strong>{rootAgent.name}</strong>
-                  <small>Leader · rev {rootAgent.revision}</small>
-                </span>
-                <span className="node-live" />
+                    <small>Agent definition · rev {rootAgent.revision}</small>
+                  </span>
+                <span className="node-live" aria-label="拓扑节点" />
               </button>
             )}
             <div className="topology-trunk">
@@ -1511,7 +1828,7 @@ function Overview({
                   </span>
                   <span>
                     <strong>{agent.name}</strong>
-                    <small>{agent.tools.length} tools · ready</small>
+                    <small>{agent.tools.length} tools · 已配置</small>
                   </span>
                 </button>
               ))}
@@ -1536,7 +1853,7 @@ function Overview({
               </span>
               <span className="metric-label">Token 预算</span>
             </div>
-            <div className="live-indicator"><span /> READY</div>
+            <div className="live-indicator"><span /> {setupStatus?.agents.runnable ? "可运行" : "需修复"}</div>
           </div>
         </div>
       </section>
@@ -1553,7 +1870,7 @@ function Overview({
           icon={Box}
           label="运行实例"
           value={String(instances.length).padStart(2, "0")}
-          note={`${instances.filter((item) => item.environment === "cloud").length} 个 cloud 环境标签`}
+          note="environment 仅是运行上下文标签"
           tone="blue"
         />
         <MetricCard
@@ -1592,8 +1909,8 @@ function Overview({
                   <small>{agent.description}</small>
                 </span>
                 <span className="agent-row-meta">
-                  <span className={`status-badge ${agent.enabled ? "ready" : "stopped"}`}>
-                    {agent.enabled ? "就绪" : "停用"}
+                  <span className={`status-badge ${agent.enabled ? "partial" : "stopped"}`}>
+                    {agent.enabled ? "已启用" : "停用"}
                   </span>
                   <small>rev {agent.revision}</small>
                 </span>
@@ -1634,21 +1951,16 @@ function Overview({
               <span className="section-kicker">GUARDRAILS</span>
               <h3>运行保护</h3>
             </div>
-            <span className="status-badge ready">全部生效</span>
+            <span className="status-badge partial">服务端能力状态</span>
           </div>
           <div className="guardrail-grid">
-            {[
-              { label: "递归深度", value: "4 层", note: "静态环 + 动态路径", icon: GitBranch },
-              { label: "并发闸门", value: "4", note: "Root / Mount 双层", icon: Workflow },
-              { label: "超时", value: "120s", note: "向子调用传播", icon: Clock3 },
-              { label: "权限", value: "Fail closed", note: "敏感工具需确认", icon: KeyRound },
-            ].map((item) => (
-              <div className="guardrail-item" key={item.label}>
-                <span><item.icon size={17} /></span>
+            {capabilities.slice(0, 4).map((capability) => (
+              <div className="guardrail-item" key={capability.id}>
+                <span><ShieldCheck size={17} /></span>
                 <div>
-                  <small>{item.label}</small>
-                  <strong>{item.value}</strong>
-                  <p>{item.note}</p>
+                  <small>{capability.id}</small>
+                  <strong>{capability.state}</strong>
+                  <p>{capability.summary}</p>
                 </div>
               </div>
             ))}
@@ -1733,9 +2045,9 @@ function AgentsView({
               <span className={`node-avatar large ${["lime", "blue", "violet", "amber"][index % 4]}`}>
                 {agentInitials(agent.name)}
               </span>
-              <span className={`status-badge ${agent.enabled ? "ready" : "stopped"}`}>
+              <span className={`status-badge ${agent.enabled ? "partial" : "stopped"}`}>
                 <span className="status-mini-dot" />
-                {agent.enabled ? "就绪" : "停用"}
+                {agent.enabled ? "已启用" : "停用"}
               </span>
             </div>
             <h3>{agent.name}</h3>
@@ -1969,71 +2281,187 @@ function TopologyView({
 function RunsView({
   runs,
   agents,
+  resourceId,
+  onResourceSelect,
   onRun,
   onCancel,
   apiBase,
   mode,
   requestHeaders,
+  onRunProjection,
 }: {
   runs: RunRecord[];
   agents: AgentSpec[];
+  resourceId?: string | null;
+  onResourceSelect: (resourceId: string | null) => void;
   onRun: () => void;
   onCancel: (id: string) => void;
   apiBase: string;
   mode: ConnectionMode;
   requestHeaders: () => HeadersInit;
+  onRunProjection: (id: string, patch: Partial<RunRecord>) => void;
 }) {
-  const [selectedId, setSelectedId] = useState<string>(runs[0]?.id || "");
+  const [selectedId, setSelectedId] = useState<string>(resourceId || runs[0]?.id || "");
   const [eventHistory, setEventHistory] = useState<{
     runId: string;
     events: RunEvent[];
     error: string;
-  }>({ runId: "", events: [], error: "" });
+    lastSequence: number;
+    status: "idle" | "loading" | "live" | "reconnecting" | "degraded" | "complete";
+  }>({ runId: "", events: [], error: "", lastSequence: 0, status: "idle" });
   const selected = runs.find((run) => run.id === selectedId) || runs[0] || null;
-  const historyMatchesSelection =
-    Boolean(selected) && eventHistory.runId === selected?.id;
-  const eventsLoading =
-    mode === "live" && Boolean(selected) && !historyMatchesSelection;
+  const selectedRunId = selected?.id || "";
+  const historyMatchesSelection = Boolean(selectedRunId) && eventHistory.runId === selectedRunId;
+  const eventsLoading = mode === "live" && Boolean(selectedRunId) && (
+    !historyMatchesSelection || eventHistory.status === "loading"
+  );
   const eventsError = historyMatchesSelection ? eventHistory.error : "";
-  const timelineEvents =
-    mode === "live" && historyMatchesSelection ? eventHistory.events : [];
+  const timelineEvents = mode === "live" && historyMatchesSelection ? eventHistory.events : [];
 
   useEffect(() => {
-    if (!selected || mode !== "live") return;
+    if (!selectedRunId || mode !== "live") return;
 
     const controller = new AbortController();
     let active = true;
-    void fetch(`${apiBase}/runs/${selected.id}/events/history`, {
-      headers: requestHeaders(),
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`事件请求失败 (${response.status})`);
-        return (await response.json()) as RunEvent[];
-      })
-      .then((history) => {
-        if (active) {
-          setEventHistory({ runId: selected.id, events: history, error: "" });
-        }
-      })
-      .catch((error: unknown) => {
-        if (
-          active &&
-          !(error instanceof DOMException && error.name === "AbortError")
-        ) {
-          setEventHistory({
-            runId: selected.id,
-            events: [],
-            error: error instanceof Error ? error.message : "事件暂不可用",
-          });
-        }
+    let cursor = 0;
+    let terminal = false;
+    const timers = new Set<number>();
+
+    const wait = (milliseconds: number) => new Promise<void>((resolve) => {
+      const timer = window.setTimeout(() => {
+        timers.delete(timer);
+        resolve();
+      }, milliseconds);
+      timers.add(timer);
+    });
+
+    const applyEvents = (incoming: RunEvent[]) => {
+      if (!active || !incoming.length) return;
+      cursor = Math.max(cursor, ...incoming.map((event) => event.sequence));
+      const terminalEvent = incoming.find((event) => Boolean(terminalStatusForEvent(event)) && event.type !== "run.started");
+      if (terminalEvent) {
+        terminal = true;
+        const status = terminalStatusForEvent(terminalEvent);
+        if (status) onRunProjection(selectedRunId, { status });
+      }
+      setEventHistory((current) => {
+        const previous = current.runId === selectedRunId ? current.events : [];
+        return {
+          runId: selectedRunId,
+          events: mergeRunEvents(previous, incoming),
+          error: "",
+          lastSequence: cursor,
+          status: terminal ? "complete" : "live",
+        };
       });
+    };
+
+    const loadHistory = async () => {
+      setEventHistory((current) => ({
+        runId: selectedRunId,
+        events: current.runId === selectedRunId ? current.events : [],
+        error: "",
+        lastSequence: current.runId === selectedRunId ? current.lastSequence : 0,
+        status: "loading",
+      }));
+      try {
+        const history = await apiRequest<RunEvent[]>(
+          `${apiBase}/runs/${selectedRunId}/events/history?after=0`,
+          { headers: requestHeaders(), signal: controller.signal },
+        );
+        applyEvents(history);
+        const run = await apiRequest<RunRecord>(`${apiBase}/runs/${selectedRunId}`, {
+          headers: requestHeaders(),
+          signal: controller.signal,
+        });
+        if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") {
+          terminal = true;
+          onRunProjection(selectedRunId, { status: run.status, output: run.output, error: run.error, finished_at: run.finished_at, metrics: run.metrics });
+          setEventHistory((current) => ({ ...current, status: "complete" }));
+        }
+      } catch (error) {
+        if (active && !(error instanceof DOMException && error.name === "AbortError")) {
+          setEventHistory((current) => ({
+            ...current,
+            runId: selectedRunId,
+            status: "reconnecting",
+            error: problemMessage(error, "事件历史暂不可用，正在尝试实时连接"),
+          }));
+        }
+      }
+    };
+
+    const pollUntilTerminal = async () => {
+      setEventHistory((current) => ({ ...current, status: "degraded", error: "实时事件暂不可用，正在进行有限校准" }));
+      for (let attempt = 0; active && attempt < 12 && !terminal; attempt += 1) {
+        try {
+          const run = await apiRequest<RunRecord>(`${apiBase}/runs/${selectedRunId}`, {
+            headers: requestHeaders(),
+            signal: controller.signal,
+          });
+          onRunProjection(selectedRunId, {
+            status: run.status,
+            output: run.output,
+            error: run.error,
+            finished_at: run.finished_at,
+            metrics: run.metrics,
+          });
+          const history = await apiRequest<RunEvent[]>(
+            `${apiBase}/runs/${selectedRunId}/events/history?after=${cursor}`,
+            { headers: requestHeaders(), signal: controller.signal },
+          );
+          applyEvents(history);
+          if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") {
+            terminal = true;
+            setEventHistory((current) => ({ ...current, status: "complete", error: "" }));
+            return;
+          }
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+          if (active) setEventHistory((current) => ({ ...current, error: problemMessage(error, "运行状态暂不可用") }));
+        }
+        if (active && !terminal) await wait(2_500);
+      }
+    };
+
+    const connect = async () => {
+      await loadHistory();
+      if (!active || terminal) return;
+      let attempts = 0;
+      while (active && !terminal && attempts < 3) {
+        try {
+          setEventHistory((current) => ({ ...current, runId: selectedRunId, status: attempts ? "reconnecting" : "live" }));
+          await consumeEventStream<RunEvent>(
+            `${apiBase}/runs/${selectedRunId}/events?after=${cursor}`,
+            { headers: requestHeaders(), signal: controller.signal },
+            ({ data }) => {
+              if (data.run_id === selectedRunId) applyEvents([data]);
+            },
+          );
+          if (!terminal) throw new Error("事件流已断开");
+        } catch (error) {
+          if (!active || (error instanceof DOMException && error.name === "AbortError")) return;
+          attempts += 1;
+          setEventHistory((current) => ({
+            ...current,
+            runId: selectedRunId,
+            status: attempts >= 3 ? "degraded" : "reconnecting",
+            error: problemMessage(error, "实时事件暂时中断"),
+          }));
+          if (attempts < 3) await wait(Math.min(4_000, attempts * 1_000));
+        }
+      }
+      if (active && !terminal) await pollUntilTerminal();
+    };
+
+    void connect();
 
     return () => {
       active = false;
       controller.abort();
+      for (const timer of timers) window.clearTimeout(timer);
     };
-  }, [apiBase, mode, requestHeaders, selected]);
+  }, [apiBase, mode, onRunProjection, requestHeaders, selectedRunId]);
 
   return (
     <div className="view-stack">
@@ -2057,7 +2485,10 @@ function RunsView({
               <button
                 className={`run-row ${selected?.id === run.id ? "selected" : ""}`}
                 key={run.id}
-                onClick={() => setSelectedId(run.id)}
+                onClick={() => {
+                  setSelectedId(run.id);
+                  onResourceSelect(run.id);
+                }}
               >
                 <span className={`run-status-icon ${run.status}`}>
                   {run.status === "running" ? <LoaderCircle size={16} className="spinning" /> :
@@ -2110,7 +2541,7 @@ function RunsView({
                     {eventsLoading
                       ? "正在读取持久事件"
                       : mode === "live"
-                        ? `${timelineEvents.length} 条 · 按 Run sequence`
+                        ? `${timelineEvents.length} 条 · seq ${eventHistory.lastSequence} · ${eventHistory.status === "degraded" ? "降级校准" : eventHistory.status === "reconnecting" ? "重连中" : "实时"}`
                         : "未连接控制面"}
                   </span>
                 </div>
@@ -2214,7 +2645,7 @@ type ModelConfigFormState = {
   maxTokens: string;
   temperature: string;
   advancedJson: string;
-  enabled: boolean;
+  secretAction: "keep" | "replace" | "clear";
 };
 
 function newModelConfigForm(plugins: PluginManifest[]): ModelConfigFormState {
@@ -2229,7 +2660,7 @@ function newModelConfigForm(plugins: PluginManifest[]): ModelConfigFormState {
     maxTokens: "4096",
     temperature: "0.7",
     advancedJson: "{}",
-    enabled: true,
+    secretAction: "replace",
   };
 }
 
@@ -2255,7 +2686,7 @@ function formFromModelConfig(
       null,
       2,
     ),
-    enabled: config.enabled,
+    secretAction: "keep",
   };
 }
 
@@ -2265,9 +2696,12 @@ function ModelConfigsView({
   syncing,
   plugins,
   modelConfigs,
+  resourceId,
+  onResourceSelect,
   requestHeaders,
   onConfigChanged,
   onUpdate,
+  onCheck,
   onDelete,
 }: {
   apiBase: string;
@@ -2275,24 +2709,57 @@ function ModelConfigsView({
   syncing: boolean;
   plugins: PluginManifest[];
   modelConfigs: ModelConfig[];
+  resourceId?: string | null;
+  onResourceSelect: (resourceId: string | null) => void;
   requestHeaders: () => HeadersInit;
   onConfigChanged: () => void;
   onUpdate: (config: ModelConfig, patch: Record<string, unknown>) => Promise<void> | void;
+  onCheck: (config: ModelConfig) => Promise<ModelConnectionCheckResult>;
   onDelete: (config: ModelConfig) => Promise<void> | void;
 }) {
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<ModelConfigFormState>(() => newModelConfigForm(plugins));
+  const initialConfig = resourceId ? modelConfigs.find((item) => item.id === resourceId) : undefined;
+  const [editingId, setEditingId] = useState<string | null>(initialConfig?.id || null);
+  const [form, setForm] = useState<ModelConfigFormState>(() => initialConfig ? formFromModelConfig(initialConfig) : newModelConfigForm(plugins));
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const [actionId, setActionId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<ModelConfig | null>(null);
+  const [referenceCounts, setReferenceCounts] = useState<Record<string, number>>({});
   const selectedProvider = providerOptionFor(form.provider, plugins);
 
+  useEffect(() => {
+    if (mode !== "live" || !modelConfigs.length) {
+      return;
+    }
+    let active = true;
+    void Promise.allSettled(modelConfigs.map(async (config) => {
+      const references = await apiRequest<ModelConfigReferences>(
+        `${apiBase}/model-configs/${config.id}/references?limit=1`,
+        { headers: requestHeaders() },
+      );
+      return [config.id, references.total] as const;
+    })).then((results) => {
+      if (!active) return;
+      const next: Record<string, number> = {};
+      for (const result of results) {
+        if (result.status === "fulfilled") next[result.value[0]] = result.value[1];
+      }
+      setReferenceCounts(next);
+    });
+    return () => {
+      active = false;
+    };
+  }, [apiBase, mode, modelConfigs, requestHeaders]);
+
   function startCreate() {
+    onResourceSelect(null);
     setEditingId(null);
     setForm(newModelConfigForm(plugins));
     setError("");
   }
 
   function startEdit(config: ModelConfig) {
+    onResourceSelect(config.id);
     setEditingId(config.id);
     setForm(formFromModelConfig(config));
     setError("");
@@ -2309,6 +2776,7 @@ function ModelConfigsView({
       provider,
       model: option.defaultModel || modelOptionsForProvider(provider, plugins)[0]?.value || "",
       baseUrl: option.defaultBaseUrl || (provider === "anthropic_messages" ? "https://api.anthropic.com" : ""),
+      secretAction: editingId ? "clear" : "replace",
     });
   }
 
@@ -2330,43 +2798,85 @@ function ModelConfigsView({
         model: form.model,
         base_url: form.baseUrl || null,
         config,
-        enabled: form.enabled,
+        enabled: false,
+        lifecycle: "draft",
       };
-      if (form.secret.trim()) payload.secret = form.secret.trim();
+      if (form.secret.trim()) {
+        payload.secret = form.secret.trim();
+        payload.secret_action = "replace";
+      } else if (editingId) {
+        payload.secret_action = form.secretAction;
+      } else {
+        payload.secret_action = "clear";
+      }
       if (mode !== "live") throw new Error("请先连接 Python 控制面；模型配置只写入数据库");
       if (editingId) {
         const current = modelConfigs.find((item) => item.id === editingId);
         if (!current) throw new Error("模型配置已不存在，请刷新后重试");
         await onUpdate(current, payload);
       } else {
-        const response = await fetch(`${apiBase}/model-configs`, {
+        await apiRequest<ModelConfig>(`${apiBase}/model-configs`, {
           method: "POST",
           headers: requestHeaders(),
           body: JSON.stringify(payload),
         });
-        if (!response.ok) throw new Error(await response.text());
         onConfigChanged();
       }
       setEditingId(null);
       setForm(newModelConfigForm(plugins));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "模型配置保存失败");
+      setError(caught);
     } finally {
       setBusy(false);
     }
   }
 
   async function remove(config: ModelConfig) {
-    if (!window.confirm(`确认删除“${config.name}”吗？已被 Agent 引用的配置不能删除。`)) return;
+    if (confirmDelete?.id !== config.id) {
+      setConfirmDelete(config);
+      return;
+    }
+    setActionId(`delete:${config.id}`);
     setBusy(true);
     setError("");
     try {
       await onDelete(config);
+      setConfirmDelete(null);
       if (editingId === config.id) startCreate();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "模型配置删除失败");
+      setError(caught);
     } finally {
+      setActionId(null);
       setBusy(false);
+    }
+  }
+
+  async function check(config: ModelConfig) {
+    setActionId(`check:${config.id}`);
+    setError("");
+    try {
+      const result = await onCheck(config);
+      if (result.status !== "passed") setError(`连接检查未通过：${result.code}`);
+    } catch (caught) {
+      setError(caught);
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function setLifecycle(config: ModelConfig, lifecycle: "enabled" | "disabled") {
+    setActionId(`${lifecycle}:${config.id}`);
+    setError("");
+    try {
+      await onUpdate(config, {
+        lifecycle,
+        enabled: lifecycle === "enabled",
+        secret_action: "keep",
+      });
+    } catch (caught) {
+      setError(caught);
+    } finally {
+      setActionId(null);
     }
   }
 
@@ -2398,7 +2908,8 @@ function ModelConfigsView({
           <EndpointChoiceField provider={form.provider} value={form.baseUrl} onChange={(baseUrl) => updateForm({ baseUrl })} />
         </div>
         <div className="form-row">
-          <label className="form-field"><span>{selectedProvider.requiresCredential === false ? "访问凭证（可选）" : "访问凭证"}</span><input type="password" value={form.secret} onChange={(event) => updateForm({ secret: event.target.value })} placeholder={editingId ? "留空表示沿用原密钥" : "粘贴 API Key，仅提交一次"} autoComplete="new-password" /><small>{selectedProvider.apiProtocol || "由 Provider manifest 决定协议"} · {selectedProvider.description}</small></label>
+          <label className="form-field"><span>{selectedProvider.requiresCredential === false ? "访问凭证（可选）" : "访问凭证"}</span><input type="password" value={form.secret} onChange={(event) => updateForm({ secret: event.target.value, secretAction: event.target.value ? "replace" : form.secretAction })} placeholder={editingId ? "留空表示沿用原密钥" : "粘贴 API Key，仅提交一次"} autoComplete="new-password" /><small>{selectedProvider.apiProtocol || "由 Provider manifest 决定协议"} · {selectedProvider.description}</small></label>
+          {editingId ? <label className="form-field"><span>密钥动作</span><select value={form.secretAction} onChange={(event) => updateForm({ secretAction: event.target.value as ModelConfigFormState["secretAction"] })}><option value="keep">沿用当前密钥</option><option value="replace">提交新密钥</option><option value="clear">清除当前密钥</option></select><small>清除只允许在 Provider 不要求凭证时提交。</small></label> : <div className="form-field form-field-note"><span>保存阶段</span><strong>先保存草稿，再检查并启用</strong><small>创建不会把未验证连接标为可运行。</small></div>}
           <label className="form-field"><span>请求超时</span><select value={form.timeoutSeconds} onChange={(event) => updateForm({ timeoutSeconds: event.target.value })}>{MODEL_TIMEOUT_OPTIONS.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label>
         </div>
         <div className="form-row">
@@ -2410,16 +2921,16 @@ function ModelConfigsView({
           <small>Provider 扩展参数 JSON：只填写非敏感参数，例如 top_p、headers 或 Anthropic 版本；不要粘贴 API Key。</small>
           <textarea className="json-config-field" value={form.advancedJson} onChange={(event) => updateForm({ advancedJson: event.target.value })} rows={5} spellCheck={false} />
         </details>
-        <label className="checkbox-field"><input type="checkbox" checked={form.enabled} onChange={(event) => updateForm({ enabled: event.target.checked })} /><span>启用此配置（停用后 Agent 无法启动）</span></label>
-        {error && <div className="form-error"><OctagonAlert size={16} /> {error}</div>}
+        <div className="run-policy-preview"><div><ShieldCheck size={16} /><span><strong>生命周期门</strong><small>保存为 draft；检查通过后才能显式启用，停用会让依赖 Agent readiness 失败。</small></span></div><span>draft → check → enable</span></div>
+        <ProblemNotice problem={error} />
         <div className="modal-actions"><button type="submit" className="button button-primary" disabled={busy || mode !== "live"}>{busy ? "保存中…" : editingId ? "保存修改" : "创建配置"}</button></div>
       </form>
 
       <div className="panel settings-panel">
         <div className="settings-panel-head"><span className="settings-icon"><Cpu size={19} /></span><div><h3>已保存配置</h3><p>{modelConfigs.length ? `${modelConfigs.length} 条租户连接 · Agent 只选择这里的配置` : "还没有配置，先创建一条模型连接"}</p></div></div>
         {modelConfigs.length ? <div className="config-list">{modelConfigs.map((config) => <div className="config-list-row" key={config.id}>
-          <span><strong>{config.name}</strong><small>{config.provider} · {config.model} · {config.protocol} · {config.masked_secret || "无凭证"}</small></span>
-          <span className="config-row-actions"><span className={`status-badge ${config.enabled ? "ready" : "stopped"}`}>{config.enabled ? "启用" : "停用"}</span><button className="button button-ghost" onClick={() => startEdit(config)} disabled={busy}>编辑</button><button className="button button-danger" onClick={() => void remove(config)} disabled={busy}>删除</button></span>
+          <span><strong>{config.name}</strong><small>{config.provider} · {config.model} · {config.protocol} · {config.masked_secret || "无凭证"}</small><small>生命周期：{config.lifecycle} · 检查：{config.verification.status}{config.verification.checked_at ? ` · ${formatTime(config.verification.checked_at)}` : ""} · 引用 Agent 修订：{referenceCounts[config.id] ?? "—"}</small></span>
+          <span className="config-row-actions"><span className={`status-badge ${config.lifecycle === "enabled" ? "ready" : config.lifecycle === "verified" ? "partial" : config.lifecycle === "error" ? "failed" : "stopped"}`}>{config.lifecycle}</span><button className="button button-secondary" onClick={() => void check(config)} disabled={busy || actionId !== null}>{actionId === `check:${config.id}` ? "检查中…" : "检查连接"}</button>{config.lifecycle === "verified" && <button className="button button-primary" onClick={() => void setLifecycle(config, "enabled")} disabled={busy || actionId !== null}>启用</button>}{config.lifecycle === "enabled" && <button className="button button-ghost" onClick={() => void setLifecycle(config, "disabled")} disabled={busy || actionId !== null}>停用</button>}<button className="button button-ghost" onClick={() => startEdit(config)} disabled={busy}>编辑</button><button className="button button-danger" onClick={() => void remove(config)} disabled={busy || actionId !== null}>{confirmDelete?.id === config.id ? "再次确认删除" : "删除"}</button>{confirmDelete?.id === config.id && <button className="button button-ghost" onClick={() => setConfirmDelete(null)} disabled={busy}>取消</button>}</span>
         </div>)}</div> : <div className="empty-state"><KeyRound size={24} /><strong>暂无模型连接</strong><span>创建后这里会显示脱敏凭证和协议类型。</span></div>}
       </div>
     </div>
@@ -2432,6 +2943,7 @@ function SettingsView({
   mode,
   syncing,
   runtimeConfig,
+  capabilities,
   requestHeaders,
   onConfigChanged,
   onOpenModelConfigs,
@@ -2444,6 +2956,7 @@ function SettingsView({
   mode: ConnectionMode;
   syncing: boolean;
   runtimeConfig: RuntimeConfigEntry[];
+  capabilities: CapabilityStatus[];
   requestHeaders: () => HeadersInit;
   onConfigChanged: () => void;
   onOpenModelConfigs: () => void;
@@ -2455,23 +2968,26 @@ function SettingsView({
   const [runtimeValue, setRuntimeValue] = useState("{}");
   const [configBusy, setConfigBusy] = useState(false);
   const [configError, setConfigError] = useState("");
+  const deploymentCapability = (id: string) => capabilities.find((item) => item.id === id);
+  const localDeployment = deploymentCapability("single_process_runtime");
+  const containerDeployment = deploymentCapability("single_node_container");
+  const cloudDeployment = deploymentCapability("durable_cloud");
 
   async function saveRuntimeConfig(event: FormEvent) {
     event.preventDefault();
     setConfigBusy(true);
     setConfigError("");
     try {
-      const response = await fetch(`${apiBase}/runtime-config`, {
+      await apiRequest<RuntimeConfigEntry>(`${apiBase}/runtime-config`, {
         method: "PATCH",
         headers: requestHeaders(),
         body: JSON.stringify({ key: runtimeKey, value: JSON.parse(runtimeValue || "null") }),
       });
-      if (!response.ok) throw new Error(await response.text());
       setRuntimeKey("");
       setRuntimeValue("{}");
       onConfigChanged();
     } catch (error) {
-      setConfigError(error instanceof Error ? error.message : "运行配置保存失败");
+      setConfigError(problemMessage(error, "运行配置保存失败"));
     } finally {
       setConfigBusy(false);
     }
@@ -2530,10 +3046,9 @@ function SettingsView({
             <div><h3>安全能力状态</h3><p>只读 · 由运行时策略强制执行</p></div>
           </div>
           <div className="toggle-list">
-            <CapabilityStatus title="阻止挂载环" note="运行前验证固定修订的 Agent 图" state="enforced" />
-            <CapabilityStatus title="confirm 工具默认拒绝" note="0.1 尚无服务端批准资源，保持 fail closed" state="enforced" />
-            <CapabilityStatus title="全链路事件脱敏" note="配置入口会拒绝常见明文凭据；模型输出与异常尚未统一净化" state="partial" />
-            <CapabilityStatus title="任意插件热加载" note="仅在进程启动时发现管理员预安装的 entry point" state="disabled" />
+            {capabilities.length ? capabilities.map((capability) => (
+              <CapabilityStatus capability={capability} key={capability.id} />
+            )) : <div className="empty-inline">正在读取服务端能力状态。</div>}
           </div>
         </div>
         <div className="panel settings-panel">
@@ -2556,18 +3071,18 @@ function SettingsView({
           <div className="deployment-options">
             <div className="deployment-option active">
               <Server size={18} />
-              <span><strong>Local</strong><small>0.1 已验证 · SQLite · in-process bus</small></span>
-              <span className="deployment-state current">当前</span>
+              <span><strong>Local</strong><small>{localDeployment?.summary || "等待服务端部署能力状态"}</small></span>
+              <span className={`deployment-state ${deploymentVisualState(localDeployment?.state)}`}>{localDeployment ? capabilityStateLabel(localDeployment.state) : "未知"}</span>
             </div>
             <div className="deployment-option">
               <Box size={18} />
-              <span><strong>单节点容器</strong><small>Docker / Compose 已通过 build、健康检查与空数据库注册表检查；Kubernetes 单副本清单已提供</small></span>
-              <span className="deployment-state verified">已验证</span>
+              <span><strong>单节点容器</strong><small>{containerDeployment?.summary || "等待服务端部署能力状态"}</small></span>
+              <span className={`deployment-state ${deploymentVisualState(containerDeployment?.state)}`}>{containerDeployment ? capabilityStateLabel(containerDeployment.state) : "未知"}</span>
             </div>
             <div className="deployment-option">
               <Cloud size={18} />
-              <span><strong>可恢复云集群</strong><small>0.2+ 规划 · PostgreSQL · durable bus · checkpoint</small></span>
-              <span className="deployment-state planned">规划</span>
+              <span><strong>可恢复云集群</strong><small>{cloudDeployment?.summary || "等待服务端部署能力状态"}</small></span>
+              <span className={`deployment-state ${deploymentVisualState(cloudDeployment?.state)}`}>{cloudDeployment ? capabilityStateLabel(cloudDeployment.state) : "未知"}</span>
             </div>
           </div>
         </div>
@@ -2577,32 +3092,43 @@ function SettingsView({
 }
 
 function CapabilityStatus({
-  title,
-  note,
-  state,
+  capability,
 }: {
-  title: string;
-  note: string;
-  state: "enforced" | "partial" | "disabled";
+  capability: CapabilityStatus;
 }) {
-  const stateLabel = state === "enforced"
-    ? "已强制"
-    : state === "partial"
-      ? "部分覆盖"
-      : "已关闭";
+  const visualState = capabilityVisualState(capability.state);
   return (
     <div className="setting-toggle capability-status">
-      <span><strong>{title}</strong><small>{note}</small></span>
-      <span className={`capability-state ${state}`}>
-        {state === "enforced"
+      <span><strong>{capability.id}</strong><small>{capability.summary}{capability.limits.length ? ` · 限制：${capability.limits.join("；")}` : ""}</small></span>
+      <span className={`capability-state ${visualState}`}>
+        {capability.state === "implemented"
           ? <CheckCircle2 size={13} />
-          : state === "partial"
+          : capability.state === "partial"
             ? <OctagonAlert size={13} />
             : <Square size={12} />}
-        {stateLabel}
+        {capabilityStateLabel(capability.state)}
       </span>
     </div>
   );
+}
+
+function capabilityVisualState(state: CapabilityStatus["state"]): string {
+  return state === "implemented" ? "enforced" : state === "unavailable" ? "disabled" : state;
+}
+
+function capabilityStateLabel(state: CapabilityStatus["state"]): string {
+  return state === "implemented"
+    ? "已实现"
+    : state === "partial"
+      ? "部分实现"
+      : state === "planned"
+        ? "规划"
+        : "不可用";
+}
+
+function deploymentVisualState(state: CapabilityStatus["state"] | undefined): string {
+  if (!state) return "unknown";
+  return state === "implemented" ? "verified" : state === "unavailable" ? "disabled" : state;
 }
 
 function MountToolScopeEditor({
@@ -2684,8 +3210,9 @@ function AgentDrawer({
   const modelConfig = modelConfigs.find(
     (item) => item.id === agent.model.model_config_id,
   );
+  const dialogRef = useDialogAccessibility(onClose);
   return (
-    <div className="drawer-layer" role="dialog" aria-modal="true" aria-label={`${agent.name} 配置`}>
+    <div ref={dialogRef} className="drawer-layer" role="dialog" aria-modal="true" aria-label={`${agent.name} 配置`}>
       <button className="modal-scrim" onClick={onClose} aria-label="关闭 Agent 详情" />
       <aside className="agent-drawer">
         <div className="drawer-head">
@@ -2696,7 +3223,7 @@ function AgentDrawer({
           <button className="icon-button" onClick={onClose} aria-label="关闭"><X size={19} /></button>
         </div>
         <div className="drawer-badges">
-          <span className={`status-badge ${agent.enabled ? "ready" : "stopped"}`}>{agent.enabled ? "就绪" : "停用"}</span>
+          <span className={`status-badge ${agent.enabled ? "partial" : "stopped"}`}>{agent.enabled ? "已启用" : "停用"}</span>
           <span>rev {agent.revision}</span>
           <span>{agent.labels?.team || "default"}</span>
         </div>
@@ -2787,10 +3314,11 @@ function NewAgentModal({
   const toolPlugins = plugins.filter((plugin) => plugin.kind === "tool" && plugin.available);
   const memoryPlugins = plugins.filter((plugin) => plugin.kind === "memory" && plugin.available);
   const middlewarePlugins = plugins.filter((plugin) => plugin.kind === "middleware" && plugin.available);
+  const availableModelConfigs = modelConfigs.filter((item) => item.enabled && item.lifecycle === "enabled");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("你是一个可靠、可审计的专业 Agent。");
-  const [modelConfigId, setModelConfigId] = useState(modelConfigs[0]?.id || "");
+  const [modelConfigId, setModelConfigId] = useState(availableModelConfigs[0]?.id || "");
   const [children, setChildren] = useState<ChildMount[]>([]);
   const [tools, setTools] = useState<ToolBindingSpec[]>([]);
   const [toolConfigTexts, setToolConfigTexts] = useState<string[]>([]);
@@ -2814,9 +3342,19 @@ function NewAgentModal({
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [step, setStep] = useState(0);
+  const wizardSteps = ["基础", "能力", "策略", "Review"];
+  const canAdvance = step === 0
+    ? Boolean(name.trim() && modelConfigId && systemPrompt.trim())
+    : true;
+  const dialogRef = useDialogAccessibility(onClose);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (step < wizardSteps.length - 1) {
+      if (canAdvance) setStep((current) => Math.min(wizardSteps.length - 1, current + 1));
+      return;
+    }
     setError("");
     setBusy(true);
     try {
@@ -2858,7 +3396,7 @@ function NewAgentModal({
   }
 
   return (
-    <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="new-agent-title">
+    <div ref={dialogRef} className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="new-agent-title">
       <button className="modal-scrim" onClick={onClose} aria-label="关闭新建 Agent" />
       <form className="modal-card new-agent-modal" onSubmit={submit}>
         <div className="modal-head">
@@ -2866,12 +3404,38 @@ function NewAgentModal({
           <button type="button" className="icon-button" onClick={onClose} aria-label="关闭"><X size={19} /></button>
         </div>
         <div className="modal-body">
-          <div className="form-row">
+          <nav className="wizard-steps" aria-label="Agent 创建步骤">
+            {wizardSteps.map((label, index) => (
+              <button
+                type="button"
+                key={label}
+                className={index === step ? "active" : index < step ? "complete" : ""}
+                aria-current={index === step ? "step" : undefined}
+                onClick={() => {
+                  if (index <= step || (index === step + 1 && canAdvance)) setStep(index);
+                }}
+              >
+                <span>{index + 1}</span>{label}
+              </button>
+            ))}
+          </nav>
+          {step === 0 && <section className="wizard-step" aria-labelledby="agent-step-basic">
+            <div className="wizard-step-heading">
+              <div><span className="section-kicker">STEP 1 / 4</span><h3 id="agent-step-basic">基础</h3></div>
+              <p>先定义职责和已验证的模型连接，后续步骤都可以返回修改。</p>
+            </div>
+            <div className="form-row">
             <label className="form-field"><span>名称</span><input required minLength={2} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：合规审查 Agent" /></label>
-            <label className="form-field"><span>模型配置</span><select required value={modelConfigId} onChange={(event) => setModelConfigId(event.target.value)}><option value="">请选择已启用的模型配置</option>{modelConfigs.filter((item) => item.enabled).map((item) => <option value={item.id} key={item.id}>{item.name} · {item.provider} / {item.model}</option>)}</select><small>模型、协议、端点和凭证都来自租户模型配置。</small></label>
-          </div>
-          <label className="form-field"><span>描述</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="一句话说明职责边界" /></label>
-          <label className="form-field"><span>系统提示词</span><textarea required rows={4} value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} /></label>
+            <label className="form-field"><span>模型配置</span><select required value={modelConfigId} onChange={(event) => setModelConfigId(event.target.value)}><option value="">请选择已验证并启用的模型配置</option>{availableModelConfigs.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.provider} / {item.model}</option>)}</select><small>模型、协议、端点和凭证都来自租户模型配置。</small></label>
+            </div>
+            <label className="form-field"><span>描述</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="一句话说明职责边界" /></label>
+            <label className="form-field"><span>系统提示词</span><textarea required rows={4} value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} /></label>
+          </section>}
+          {step === 1 && <section className="wizard-step wizard-step-abilities" aria-labelledby="agent-step-abilities">
+            <div className="wizard-step-heading">
+              <div><span className="section-kicker">STEP 2 / 4</span><h3 id="agent-step-abilities">能力</h3></div>
+              <p>工具、记忆、中间件和子 Agent 都按插件 ID 与策略范围保存。</p>
+            </div>
           <fieldset className="child-picker tool-picker">
             <legend>工具绑定 <span>可选</span></legend>
             <p>工具通过稳定插件 ID 绑定；可为每个绑定配置调用别名与权限策略。</p>
@@ -3205,9 +3769,15 @@ function NewAgentModal({
               </div>
             )}
           </fieldset>
+          </section>}
+          {step === 2 && <section className="wizard-step" aria-labelledby="agent-step-policy">
+            <div className="wizard-step-heading">
+              <div><span className="section-kicker">STEP 3 / 4</span><h3 id="agent-step-policy">策略</h3></div>
+              <p>这些限制会进入根预算账本，并传播到所有子 Agent 调用。</p>
+            </div>
           <fieldset className="child-picker policy-editor">
             <legend>运行策略</legend>
-            <p>这些限制会进入根预算账本，并传播到所有子 Agent 调用。</p>
+            <p>先用默认值即可；需要时再收紧深度、并发、超时和 token 上限。</p>
             <div className="policy-editor-grid">
               <label className="form-field">
                 <span>最大步数</span>
@@ -3242,13 +3812,31 @@ function NewAgentModal({
               </label>
             </div>
           </fieldset>
+          </section>}
+          {step === 3 && <section className="wizard-step wizard-review" aria-labelledby="agent-step-review">
+            <div className="wizard-step-heading">
+              <div><span className="section-kicker">STEP 4 / 4</span><h3 id="agent-step-review">Review</h3></div>
+              <p>提交后服务端仍会复验模型配置、插件 Schema、挂载图和预算边界。</p>
+            </div>
+            <div className="review-summary">
+              <div><span>名称</span><strong>{name || "未填写"}</strong></div>
+              <div><span>模型连接</span><strong>{availableModelConfigs.find((item) => item.id === modelConfigId)?.name || "未选择"}</strong></div>
+              <div><span>能力绑定</span><strong>{tools.length} 个工具 · {middlewares.length} 个中间件 · {children.length} 个子 Agent</strong></div>
+              <div><span>运行策略</span><strong>{policy.max_steps} 步 · {policy.timeout_seconds} 秒 · {compactNumber(policy.token_budget)} tokens</strong></div>
+            </div>
+            <div className="readiness-issue-list">
+              <div><CheckCircle2 size={16} /><strong>模型配置已限定为已验证并启用的连接</strong><span>Agent 不会保存 Provider SDK 对象或明文凭证。</span></div>
+              <div><ShieldCheck size={16} /><strong>创建后生成 revision 1</strong><span>后续编辑会发布新修订，已有 Instance 可继续钉住旧修订。</span></div>
+            </div>
+          </section>}
           {error && <div className="form-error"><OctagonAlert size={16} /> {error}</div>}
         </div>
         <div className="modal-actions">
           <button type="button" className="button button-ghost" onClick={onClose}>取消</button>
-          <button className="button button-primary" disabled={busy || !name.trim()}>
-            {busy ? <LoaderCircle size={16} className="spinning" /> : <Plus size={16} />}
-            创建 Agent
+          {step > 0 && <button type="button" className="button button-ghost" onClick={() => setStep((current) => Math.max(0, current - 1))} disabled={busy}>上一步</button>}
+          <button className="button button-primary" disabled={busy || (step === 0 && !canAdvance)}>
+            {busy ? <LoaderCircle size={16} className="spinning" /> : step === wizardSteps.length - 1 ? <Plus size={16} /> : <ArrowRight size={16} />}
+            {busy ? "创建中…" : step === wizardSteps.length - 1 ? "创建 Agent" : "下一步"}
           </button>
         </div>
       </form>
@@ -3310,6 +3898,7 @@ function EditAgentModal({
   const [policy, setPolicy] = useState<AgentSpec["policy"]>(agent.policy);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const dialogRef = useDialogAccessibility(onClose);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -3355,6 +3944,7 @@ function EditAgentModal({
 
   return (
     <div
+      ref={dialogRef}
       className="modal-layer"
       role="dialog"
       aria-modal="true"
@@ -3390,7 +3980,7 @@ function EditAgentModal({
             <input value={description} onChange={(event) => setDescription(event.target.value)} />
           </label>
           <div className="form-row">
-            <label className="form-field"><span>模型配置</span><select required value={modelConfigId} onChange={(event) => setModelConfigId(event.target.value)}><option value="">请选择已启用的模型配置</option>{modelConfigs.filter((item) => item.enabled).map((item) => <option value={item.id} key={item.id}>{item.name} · {item.provider} / {item.model}</option>)}</select><small>Agent 只引用租户模型配置；协议、端点和凭证不复制到 Agent。</small></label>
+            <label className="form-field"><span>模型配置</span><select required value={modelConfigId} onChange={(event) => setModelConfigId(event.target.value)}><option value="">请选择已验证并启用的模型配置</option>{modelConfigs.filter((item) => item.enabled && item.lifecycle === "enabled").map((item) => <option value={item.id} key={item.id}>{item.name} · {item.provider} / {item.model}</option>)}</select><small>Agent 只引用租户模型配置；协议、端点和凭证不复制到 Agent。</small></label>
           </div>
           <label className="form-field">
             <span>系统提示词</span>
@@ -3775,6 +4365,7 @@ function NewInstanceModal({
   const [maxConcurrency, setMaxConcurrency] = useState(4);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const dialogRef = useDialogAccessibility(onClose);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -3791,6 +4382,7 @@ function NewInstanceModal({
 
   return (
     <div
+      ref={dialogRef}
       className="modal-layer"
       role="dialog"
       aria-modal="true"
@@ -3886,14 +4478,18 @@ function NewInstanceModal({
 function RunModal({
   agents,
   instances,
+  readinessIssues,
   busy,
   onClose,
+  onRepair,
   onLaunch,
 }: {
   agents: AgentSpec[];
   instances: AgentInstance[];
+  readinessIssues: ReadinessIssue[];
   busy: boolean;
   onClose: () => void;
+  onRepair: () => void;
   onLaunch: (id: string, kind: "agent" | "instance", input: string) => Promise<void>;
 }) {
   const options = [
@@ -3903,8 +4499,9 @@ function RunModal({
   const [target, setTarget] = useState(options[0]?.id || "");
     const [input, setInput] = useState("请评估当前 Agent 框架的扩展边界与主要风险");
   const selected = options.find((item) => item.id === target);
+  const dialogRef = useDialogAccessibility(onClose);
   return (
-    <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="run-modal-title">
+    <div ref={dialogRef} className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="run-modal-title">
       <button className="modal-scrim" onClick={onClose} aria-label="关闭运行面板" />
       <form
         className="modal-card run-modal"
@@ -3918,24 +4515,31 @@ function RunModal({
           <button type="button" className="icon-button" onClick={onClose} aria-label="关闭"><X size={19} /></button>
         </div>
         <div className="modal-body">
-          <label className="form-field">
-            <span>运行目标</span>
-            <select value={target} onChange={(event) => setTarget(event.target.value)}>
-              {options.map((item) => <option value={item.id} key={item.id}>{item.label} · {item.note}</option>)}
-            </select>
-          </label>
-          <label className="form-field">
-            <span>任务输入</span>
-            <textarea value={input} onChange={(event) => setInput(event.target.value)} rows={6} required />
-          </label>
-          <div className="run-policy-preview">
-            <div><ShieldCheck size={16} /><span><strong>保护策略生效</strong><small>深度、调用、并发、超时与 token 共享预算</small></span></div>
-            <span>Fail closed</span>
-          </div>
+          {options.length ? <>
+            <label className="form-field">
+              <span>运行目标</span>
+              <select value={target} onChange={(event) => setTarget(event.target.value)}>
+                {options.map((item) => <option value={item.id} key={`${item.kind}:${item.id}`}>{item.label} · {item.note}</option>)}
+              </select>
+            </label>
+            <label className="form-field">
+              <span>任务输入</span>
+              <textarea value={input} onChange={(event) => setInput(event.target.value)} rows={6} required />
+            </label>
+            <div className="run-policy-preview">
+              <div><ShieldCheck size={16} /><span><strong>保护策略生效</strong><small>深度、调用、并发、超时与 token 共享预算</small></span></div>
+              <span>Fail closed</span>
+            </div>
+          </> : <PrerequisiteGate
+            title="先修复 Readiness，再发起 Run"
+            description="控制面没有返回可运行的 Agent 或 ready Instance；页面不会创建空目标或本地演示数据。"
+            issues={readinessIssues}
+            onRepair={onRepair}
+          />}
         </div>
         <div className="modal-actions">
           <button type="button" className="button button-ghost" onClick={onClose}>取消</button>
-          <button className="button button-primary" disabled={busy || !target || !input.trim()}>
+          <button className="button button-primary" disabled={busy || !options.length || !target || !input.trim()}>
             {busy ? <LoaderCircle size={16} className="spinning" /> : <Play size={16} fill="currentColor" />}
             {busy ? "运行中" : "开始运行"}
           </button>

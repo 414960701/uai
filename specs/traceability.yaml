@@ -1,6 +1,6 @@
 schema_version: "uai-forge.traceability/1.0"
 spec_id: "SPEC-FOUNDATION"
-reviewed_at: "2026-07-31"
+reviewed_at: "2026-08-01"
 status_definitions:
   implemented: "Current implementation and repeatable automated evidence exist."
   partial: "Some implementation exists, but one or more acceptance conditions are missing."
@@ -481,5 +481,148 @@ requirements:
       - "tests/rendered-html.test.mjs"
     verification:
       - "bash -n scripts/container-smoke.sh"
+      - "make verify"
       - "npm test"
       - "scripts/container-smoke.sh"
+  - id: "UI-003"
+    status: "partial"
+    target: "0.2"
+    contracts:
+      - "specs/changes/CHG-0010-control-center-productization-and-operability/requirements.md"
+      - "specs/changes/CHG-0010-control-center-productization-and-operability/design.md"
+    implementation:
+      - "backend/src/uai_forge/models.py::SetupStatus"
+      - "backend/src/uai_forge/api.py::setup_status"
+      - "app/control-center.tsx::SetupChecklist"
+      - "specs/current/foundation/contracts/setup-status.schema.json"
+    verification:
+      - "backend/tests/test_chg0010_operability.py::test_empty_setup_status_and_capability_maturity"
+      - "backend/tests/test_chg0010_operability.py::test_setup_readiness_references_and_problem_details"
+      - "tests/rendered-html.test.mjs::server-renders the UAI Forge control center"
+    evidence:
+      - "manual-browser-2026-08-01: isolated Provider fixture completed empty-db setup, ModelConfig lifecycle, Agent wizard, and first Run; not an automated browser gate"
+    gaps:
+      - "没有可复现的浏览器首用旅程证据"
+  - id: "UI-004"
+    status: "partial"
+    target: "0.2"
+    contracts:
+      - "specs/changes/CHG-0010-control-center-productization-and-operability/requirements.md"
+      - "specs/changes/CHG-0010-control-center-productization-and-operability/design.md"
+    implementation:
+      - "backend/src/uai_forge/models.py::CapabilityStatus"
+      - "backend/src/uai_forge/models.py::AgentReadiness"
+      - "backend/src/uai_forge/api.py::capabilities"
+      - "backend/src/uai_forge/api.py::agent_readiness"
+      - "app/control-center.tsx"
+      - "specs/current/foundation/contracts/capability-status-v1.schema.json"
+      - "specs/current/foundation/contracts/readiness-v1.schema.json"
+    verification:
+      - "backend/tests/test_chg0010_operability.py::test_empty_setup_status_and_capability_maturity"
+      - "backend/tests/test_chg0010_operability.py::test_setup_readiness_references_and_problem_details"
+      - "backend/tests/test_chg0010_operability.py::test_chg0010_public_contract_schemas_are_valid"
+      - "tests/rendered-html.test.mjs::keeps advanced Agent configuration and real event history wired"
+    evidence:
+      - "manual-browser-2026-08-01: connected capability/readiness projection observed through isolated control plane; not automated"
+    gaps:
+      - "0.1 tenant header 仍不是可信身份绑定"
+      - "没有浏览器级身份/能力/readiness 投射证据"
+  - id: "UI-005"
+    status: "partial"
+    target: "0.2"
+    contracts:
+      - "specs/changes/CHG-0010-control-center-productization-and-operability/design.md"
+      - "specs/changes/CHG-0010-control-center-productization-and-operability/test-plan.md"
+    implementation:
+      - "app/control-center.tsx"
+      - "app/control-center/api.ts"
+      - "app/control-center/resource-state.ts"
+      - "app/globals.css"
+    verification:
+      - "tests/rendered-html.test.mjs::keeps advanced Agent configuration and real event history wired"
+      - "npm run lint"
+      - "npm run typecheck"
+    evidence:
+      - "manual-browser-2026-08-01: URL restoration, 390px no-overflow, mobile/modal Escape, and focus restoration checked; 200% zoom/reduced-motion automation absent"
+    gaps:
+      - "缺少键盘、焦点圈闭、390px/200% zoom 的真实浏览器自动化证据"
+  - id: "RUN-009"
+    status: "partial"
+    target: "0.2"
+    contracts:
+      - "specs/changes/CHG-0010-control-center-productization-and-operability/requirements.md"
+      - "specs/changes/CHG-0010-control-center-productization-and-operability/design.md"
+    implementation:
+      - "backend/src/uai_forge/api.py::run_events"
+      - "backend/src/uai_forge/events.py"
+      - "app/control-center/api.ts::consumeEventStream"
+      - "app/control-center.tsx::RunsView"
+    verification:
+      - "backend/tests/test_api.py::test_control_plane_crud_and_capabilities"
+      - "backend/tests/test_runtime.py::test_subscriber_closes_replay_live_registration_window_without_loss"
+      - "tests/rendered-html.test.mjs::keeps advanced Agent configuration and real event history wired"
+    evidence:
+      - "manual-browser-2026-08-01: fixture-backed Run reached terminal success with seven ordered events and URL-restored history; reconnect/duplicate/degraded-polling E2E remains absent"
+    gaps:
+      - "缺少真实浏览器断线、重复事件、终态和降级轮询 E2E"
+  - id: "CFG-005"
+    status: "partial"
+    target: "0.2"
+    contracts:
+      - "specs/changes/CHG-0010-control-center-productization-and-operability/requirements.md"
+      - "specs/changes/CHG-0010-control-center-productization-and-operability/design.md"
+      - "specs/current/foundation/contracts/model-config-v2.schema.json"
+      - "specs/current/foundation/contracts/plugin-manifest.schema.json"
+    implementation:
+      - "backend/src/uai_forge/models.py::ModelConfig"
+      - "backend/src/uai_forge/ports.py::ModelProvider.check_connection"
+      - "backend/src/uai_forge/providers.py"
+      - "backend/src/uai_forge/storage.py::save_model_config"
+      - "backend/src/uai_forge/api.py"
+      - "app/control-center.tsx"
+    verification:
+      - "backend/tests/test_chg0010_operability.py::test_model_config_lifecycle_cas_and_secret_actions_are_explicit"
+      - "backend/tests/test_chg0010_operability.py::test_verified_credentialed_config_can_be_enabled_with_secret_keep"
+      - "backend/tests/test_chg0010_operability.py::test_connection_check_is_secret_free_and_unsupported_is_partial"
+      - "backend/tests/test_chg0010_operability.py::test_credential_provider_cannot_be_created_enabled_without_preflight"
+      - "backend/tests/test_database_configuration.py::test_model_config_delete_is_guarded_by_agent_revisions"
+    evidence:
+      - "scripts/provider-fixture.py: isolated OpenAI-compatible fixture supports /v1/models and /v1/chat/completions without logging headers or bodies"
+    gaps:
+      - "第三方 Provider TCK、真实网络失败注入和浏览器并发编辑 E2E 尚未加入"
+  - id: "CFG-006"
+    status: "partial"
+    target: "0.2"
+    contracts:
+      - "specs/changes/CHG-0010-control-center-productization-and-operability/requirements.md"
+      - "specs/changes/CHG-0010-control-center-productization-and-operability/design.md"
+    implementation:
+      - "backend/src/uai_forge/storage.py::compatibility_status"
+      - "backend/src/uai_forge/storage.py::initialize"
+      - "backend/src/uai_forge/cli.py::doctor"
+    verification:
+      - "backend/tests/test_compatibility_and_endpoints.py::test_new_database_records_schema_meta_before_business_use"
+      - "backend/tests/test_compatibility_and_endpoints.py::test_unknown_schema_version_fails_closed_and_doctor_path_is_read_only"
+      - "backend/tests/test_compatibility_and_endpoints.py::test_legacy_model_profile_database_is_not_silently_migrated"
+      - "docker compose config --quiet"
+    gaps:
+      - "没有失败 migration、dry-run、备份恢复和回滚演练证据"
+  - id: "PROTO-003"
+    status: "partial"
+    target: "0.2"
+    contracts:
+      - "specs/changes/CHG-0010-control-center-productization-and-operability/requirements.md"
+      - "specs/changes/CHG-0010-control-center-productization-and-operability/design.md"
+      - "specs/current/foundation/contracts/problem-details-v1.schema.json"
+    implementation:
+      - "backend/src/uai_forge/models.py::ProblemDetails"
+      - "backend/src/uai_forge/api.py::problem_response"
+      - "backend/src/uai_forge/api.py::unhandled_exception_handler"
+      - "app/control-center/api.ts::ApiProblem"
+      - "app/control-center.tsx"
+    verification:
+      - "backend/tests/test_chg0010_operability.py::test_setup_readiness_references_and_problem_details"
+      - "backend/tests/test_chg0010_operability.py::test_model_config_lifecycle_cas_and_secret_actions_are_explicit"
+      - "tests/rendered-html.test.mjs::keeps advanced Agent configuration and real event history wired"
+    gaps:
+      - "未知 code、完整错误合同和前端字段级映射尚无独立自动化测试"

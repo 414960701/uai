@@ -1,0 +1,33 @@
+change_id: CHG-0010
+status: proposed
+api:
+  additive:
+    - setup-status
+    - capabilities
+    - agent-readiness
+    - model-connection-checks
+    - model-config-references
+    - problem-details-v1
+  behavior_change:
+    - model-config updates require optimistic concurrency after a compatibility window
+    - secret updates use explicit keep/replace/clear semantics
+storage:
+  schema_change: true
+  additions:
+    - schema_meta
+    - model_configs.version
+    - model_configs.lifecycle
+    - model_configs.verification_json
+  legacy_policy: detect and fail closed; do not auto-migrate pre-ADR-0007 profiles
+frontend:
+  navigation_state_becomes_url_addressable: true
+  sse_replaces_short_polling_as_primary: true
+plugins:
+  manifest_change: additive
+  additions:
+    - connection_check
+    - ui_hints
+    - catalog_version
+rollback:
+  note: database schema version must be checked before rolling back binaries
+  automatic_legacy_restore: false

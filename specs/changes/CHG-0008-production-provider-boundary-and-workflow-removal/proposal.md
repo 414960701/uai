@@ -3,12 +3,17 @@ kind: change-proposal
 id: CHG-0008
 status: implemented
 target: 0.1.x
+superseded_by: CHG-0009
 requirements:
   - EXT-007
   - DEP-004
 ---
 
 # 移除产品 Mock 与仓库 Workflow
+
+> 历史说明：本变更的 provider catalog 断言在 CHG-0008 验收时成立；CHG-0009 后续以
+> additive 的 Anthropic Messages 生产适配器和统一 `ModelConfig` 合同更新了当前 catalog。
+> 本文保留当时移除 Mock/seed/workflow 的事实，不作为当前 provider 数量说明。
 
 ## 问题
 

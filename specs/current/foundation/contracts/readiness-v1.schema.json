@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uai-forge.local/schemas/readiness/1.0",
+  "title": "UAI Forge Agent Readiness v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "revision", "runnable", "issues"],
+  "properties": {
+    "agent_id": {"type": "string", "minLength": 1},
+    "revision": {"type": "integer", "minimum": 0},
+    "runnable": {"type": "boolean"},
+    "issues": {"type": "array", "items": {"$ref": "#/$defs/issue"}}
+  },
+  "$defs": {
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "resource_type", "resource_id", "path", "message", "remediation"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "resource_type": {"type": "string", "minLength": 1},
+        "resource_id": {"type": ["string", "null"]},
+        "path": {"type": ["string", "null"]},
+        "message": {"type": "string", "minLength": 1},
+        "remediation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "target"],
+          "properties": {
+            "action": {"type": "string", "minLength": 1},
+            "target": {"type": ["string", "null"]}
+          }
+        }
+      }
+    }
+  }
+}

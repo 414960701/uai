@@ -37,3 +37,8 @@ class Settings:
     )
     host: str = field(default_factory=lambda: os.environ.get("UAI_FORGE_HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: int(os.environ.get("UAI_FORGE_PORT", "8000")))
+    allow_local_provider_endpoints: bool = field(
+        default_factory=lambda: os.environ.get(
+            "UAI_FORGE_ALLOW_LOCAL_PROVIDER_ENDPOINTS", "0"
+        ).strip().lower() in {"1", "true", "yes"}
+    )

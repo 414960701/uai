@@ -1,5 +1,8 @@
 # Test plan
 
+> 本页记录 CHG-0007 时点的旧 profile 测试；当前统一配置合同和 provider catalog 以 CHG-0009
+> 及 current foundation spec 为准。
+
 | 场景 | 证据 |
 |---|---|
 | secret 不在 GET、数据库明文、Run 输出 | `backend/tests/test_database_configuration.py::test_credentials_are_encrypted_and_tenant_scoped` |

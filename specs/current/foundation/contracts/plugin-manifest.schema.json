@@ -80,6 +80,24 @@
         "entry_point",
         "remote"
       ]
+    },
+    "connection_check": {
+      "type": "string",
+      "enum": ["none", "local", "remote"]
+    },
+    "connection_schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ui_hints": {
+      "type": "object"
+    },
+    "catalog_version": {
+      "type": ["string", "null"]
+    },
+    "catalog_updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
     }
   },
   "examples": [

@@ -11,6 +11,8 @@ from .models import (
     AgentInstance,
     AgentSpec,
     ModelConfig,
+    ModelConnectionCheckRequest,
+    ModelConnectionCheckResult,
     RuntimeConfigEntry,
     PluginManifest,
     RunEvent,
@@ -67,7 +69,7 @@ class ConfigurationPort(Protocol):
         ...
 
     async def resolve_model_config_secret(
-        self, tenant_id: str, config_id: str
+        self, tenant_id: str, config_id: str, *, include_disabled: bool = False
     ) -> Optional[str]:
         ...
 
@@ -161,6 +163,44 @@ class ModelProvider(ABC):
     @abstractmethod
     async def complete(self, request: ModelRequest) -> ModelOutput:
         raise NotImplementedError
+
+    async def check_connection(
+        self,
+        request: ModelConnectionCheckRequest,
+    ) -> ModelConnectionCheckResult:
+        """Optional, low-cost provider preflight with a safe default."""
+
+        return ModelConnectionCheckResult(
+            status="partial",
+            code="provider.connection_check_unsupported",
+            provider=request.provider,
+            model=request.model,
+        )
+
+    async def check(
+        self,
+        request: ModelConnectionCheckRequest,
+    ) -> ModelConnectionCheckResult:
+        """Canonical UAI Forge connection-check entry point.
+
+        ``check_connection`` remains the adapter-facing compatibility hook so
+        existing providers can opt in without a breaking change.  The public
+        protocol uses this shorter verb and keeps the provider-specific
+        implementation behind the owned boundary.
+        """
+
+        return await self.check_connection(request)
+
+
+@runtime_checkable
+class ModelConnectionChecker(Protocol):
+    """Provider-edge preflight contract owned by UAI Forge."""
+
+    async def check(
+        self,
+        request: ModelConnectionCheckRequest,
+    ) -> ModelConnectionCheckResult:
+        ...
 
 
 class ToolPlugin(ABC):

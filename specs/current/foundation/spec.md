@@ -3,7 +3,7 @@ kind: normative
 id: SPEC-FOUNDATION
 status: active
 version: 1.0.0
-last_reviewed: 2026-07-31
+last_reviewed: 2026-08-01
 ---
 
 # Foundation capability
@@ -19,6 +19,11 @@ last_reviewed: 2026-07-31
 “当前规范”同时记录真实实现状态和已冻结的后续契约。只有标为 `Implemented` 且有自动化
 证据的能力可以对外宣称已经交付；`Partial`、`Specified`、`Planned` 不能被产品文案或
 部署说明写成已完成。
+
+CHG-0010 的控制面产品化能力已在当前工作树以 additive API、SQLite compatibility gate、
+类型化前端状态和 SSE projection 形式落地；其浏览器级首用、键盘/缩放和真实 Provider
+在线检查证据仍按 change acceptance 与全局追踪矩阵单独计状态。该 change 尚未把当前
+`0.1.x` 单进程基线升级成分布式恢复、可信多租户或生产级身份系统。
 
 ## 版本范围
 

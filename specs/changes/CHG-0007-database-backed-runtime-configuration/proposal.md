@@ -3,6 +3,7 @@ kind: change-proposal
 id: CHG-0007
 status: implemented
 target: 0.1.x
+superseded_by: CHG-0009
 requirements:
   - CFG-001
   - CFG-002
@@ -11,6 +12,9 @@ requirements:
 ---
 
 # 数据库驱动的运行时配置与多凭据
+
+> 历史说明：CHG-0009 已将本变更中的 `CredentialProfile`/`ModelProfile` 公共合同替换为
+> 统一 `ModelConfig`。本文保留当时的实现事实和安全边界，不作为当前 API 或数据模型说明。
 
 ## 问题
 

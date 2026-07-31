@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uai-forge.local/schemas/setup-status/1.0",
+  "title": "UAI Forge SetupStatus v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["connection", "model_connections", "agents", "instances", "runs", "next_action"],
+  "properties": {
+    "connection": {"enum": ["connected", "unauthorized", "incompatible", "unavailable"]},
+    "model_connections": {"$ref": "#/$defs/resource"},
+    "agents": {"$ref": "#/$defs/resource"},
+    "instances": {"$ref": "#/$defs/resource"},
+    "runs": {"$ref": "#/$defs/resource"},
+    "next_action": {"enum": ["connect", "create_model_config", "verify_model_config", "create_agent", "run_agent", "none"]}
+  },
+  "$defs": {
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "runnable", "verified_enabled", "active", "ready", "blocking_issues", "last_terminal_at"],
+      "properties": {
+        "total": {"type": "integer", "minimum": 0},
+        "runnable": {"type": "integer", "minimum": 0},
+        "verified_enabled": {"type": "integer", "minimum": 0},
+        "active": {"type": "integer", "minimum": 0},
+        "ready": {"type": "integer", "minimum": 0},
+        "blocking_issues": {"type": "array"},
+        "last_terminal_at": {"type": ["string", "null"], "format": "date-time"}
+      }
+    }
+  }
+}

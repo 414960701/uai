@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from typing import Any, Dict, List
 
 import httpx
 
-from .models import ModelBinding, ModelCatalogEntry, PluginKind, PluginManifest
+from .endpoints import endpoint_summary
+from .models import (
+    ModelBinding,
+    ModelCatalogEntry,
+    ModelConnectionCheckRequest,
+    ModelConnectionCheckResult,
+    PluginKind,
+    PluginManifest,
+    utc_now,
+)
 from .ports import ModelMessage, ModelOutput, ModelProvider, ModelRequest, TokenUsage, ToolCall
 
 
@@ -21,6 +31,17 @@ OPENAI_COMPATIBLE_MANIFEST = PluginManifest(
     capabilities=["tool_calling", "structured_messages", "usage_reporting"],
     api_protocol="openai_chat_completions",
     credential_required=True,
+    connection_check="remote",
+    connection_schema_version="1.0",
+    ui_hints={
+        "endpoint_presets": [
+            {"value": "https://api.openai.com/v1", "label": "OpenAI 官方"},
+            {"value": "https://api.deepseek.com/v1", "label": "DeepSeek 兼容接口"},
+        ],
+        "secret_label": "API Key",
+        "numeric_fields": ["timeout_seconds", "max_tokens", "temperature", "top_p"],
+    },
+    catalog_version="2026-08-01",
     homepage="https://platform.openai.com/docs/models",
     model_catalog=[
         ModelCatalogEntry(
@@ -300,6 +321,16 @@ ANTHROPIC_MESSAGES_MANIFEST = PluginManifest(
     capabilities=["tool_calling", "structured_messages", "usage_reporting", "system_messages"],
     api_protocol="anthropic_messages",
     credential_required=True,
+    connection_check="remote",
+    connection_schema_version="1.0",
+    ui_hints={
+        "endpoint_presets": [
+            {"value": "https://api.anthropic.com", "label": "Anthropic 官方"},
+        ],
+        "secret_label": "Anthropic API Key",
+        "numeric_fields": ["timeout_seconds", "max_tokens", "temperature", "top_p"],
+    },
+    catalog_version="2026-08-01",
     homepage="https://docs.anthropic.com/en/docs/about-claude/models/overview",
     model_catalog=[
         ModelCatalogEntry(
@@ -375,6 +406,87 @@ ANTHROPIC_MESSAGES_MANIFEST = PluginManifest(
 )
 
 
+async def _remote_connection_check(
+    request: ModelConnectionCheckRequest,
+    url: str,
+    headers: Dict[str, str],
+    timeout: float,
+) -> ModelConnectionCheckResult:
+    checked_at = utc_now()
+    started = time.monotonic()
+    summary = endpoint_summary(request.base_url or url)
+    if not request.credential:
+        return ModelConnectionCheckResult(
+            status="failed",
+            code="provider.credential_missing",
+            checked_at=checked_at,
+            endpoint_summary=summary,
+            provider=request.provider,
+            model=request.model,
+        )
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            response = await client.get(url, headers=headers)
+            # A preflight never needs to inspect a provider body.  Bound the
+            # response before discarding it so a broken endpoint cannot turn a
+            # connection check into an unbounded download.
+            if len(response.content) > 64 * 1024:
+                return ModelConnectionCheckResult(
+                    status="failed",
+                    code="provider.response_too_large",
+                    checked_at=checked_at,
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                    endpoint_summary=summary,
+                    provider=request.provider,
+                    model=request.model,
+                )
+            status_code = response.status_code
+            if 200 <= status_code < 300:
+                code = "provider.connection_ok"
+                status = "passed"
+            elif status_code in {401, 403}:
+                code = "provider.unauthorized"
+                status = "failed"
+            elif status_code == 429:
+                code = "provider.rate_limited"
+                status = "failed"
+            elif status_code == 404:
+                code = "provider.endpoint_not_found"
+                status = "failed"
+            else:
+                code = "provider.http_error"
+                status = "failed"
+            return ModelConnectionCheckResult(
+                status=status,
+                code=code,
+                checked_at=checked_at,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                endpoint_summary=summary,
+                provider=request.provider,
+                model=request.model,
+            )
+    except httpx.TimeoutException:
+        code = "provider.timeout"
+    except httpx.HTTPError:
+        code = "provider.network_error"
+    except ValueError:
+        code = "provider.endpoint_invalid"
+    except Exception:
+        # Adapter-specific exception text may contain a URL, credential hint,
+        # or provider response.  Normalize it at the owned boundary while
+        # allowing asyncio.CancelledError (a BaseException) to propagate.
+        code = "provider.connection_check_failed"
+    return ModelConnectionCheckResult(
+        status="failed",
+        code=code,
+        checked_at=checked_at,
+        latency_ms=int((time.monotonic() - started) * 1000),
+        endpoint_summary=summary,
+        provider=request.provider,
+        model=request.model,
+    )
+
+
 class OpenAICompatibleProvider(ModelProvider):
     manifest = OPENAI_COMPATIBLE_MANIFEST
 
@@ -388,6 +500,19 @@ class OpenAICompatibleProvider(ModelProvider):
         self.extra_headers = {
             str(key): str(value) for key, value in binding.config.get("headers", {}).items()
         }
+
+    async def check_connection(
+        self,
+        request: ModelConnectionCheckRequest,
+    ) -> ModelConnectionCheckResult:
+        base_url = str(request.base_url or self.base_url).rstrip("/")
+        url = f"{base_url}/models"
+        headers = {
+            "Authorization": f"Bearer {request.credential or self.api_key or ''}",
+            "Accept": "application/json",
+            **self.extra_headers,
+        }
+        return await _remote_connection_check(request, url, headers, self.timeout)
 
     @staticmethod
     def _message_payload(message: ModelMessage) -> Dict[str, Any]:
@@ -480,6 +605,20 @@ class AnthropicMessagesProvider(ModelProvider):
         self.extra_headers = {
             str(key): str(value) for key, value in binding.config.get("headers", {}).items()
         }
+
+    async def check_connection(
+        self,
+        request: ModelConnectionCheckRequest,
+    ) -> ModelConnectionCheckResult:
+        base_url = str(request.base_url or self.base_url).rstrip("/")
+        url = f"{base_url}/v1/models" if not base_url.endswith("/v1") else f"{base_url}/models"
+        headers = {
+            "x-api-key": request.credential or self.api_key or "",
+            "anthropic-version": self.anthropic_version,
+            "Accept": "application/json",
+            **self.extra_headers,
+        }
+        return await _remote_connection_check(request, url, headers, self.timeout)
 
     @staticmethod
     def _messages_payload(messages: List[ModelMessage]) -> tuple[str, List[Dict[str, Any]]]:

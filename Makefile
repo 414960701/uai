@@ -6,7 +6,7 @@ VENV_UAI := $(VENV)/bin/uai-forge
 .DEFAULT_GOAL := help
 
 .PHONY: help install install-backend install-frontend dev-backend dev-frontend \
-	doctor test test-backend test-frontend lint typecheck build compose-config \
+	doctor test test-backend test-frontend lint typecheck build verify compose-config \
 	compose-up compose-down compose-logs docker-build container-smoke clean
 
 help: ## Show available commands
@@ -40,6 +40,9 @@ test-backend: ## Run backend tests
 
 test-frontend: ## Build and run frontend rendering tests
 	npm test
+
+verify: ## Run the portable repository verification gate and write evidence-summary.json
+	./scripts/verify-evidence.sh
 
 lint: ## Lint the frontend
 	npm run lint

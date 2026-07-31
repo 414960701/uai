@@ -3,7 +3,7 @@ kind: normative
 id: ARCH-DEPLOYMENT
 status: accepted
 version: 1.0.0
-last_reviewed: 2026-07-31
+last_reviewed: 2026-08-01
 ---
 
 # 部署设计
@@ -33,8 +33,20 @@ flowchart LR
 - Web 通过可配置的 API base URL 访问 FastAPI。
 - 未连接时页面明确显示未连接状态；页面不生成 Agent、模型、凭据或运行事件数据。
 - SQLite 保存定义、修订、实例、Run 和 Run Event。
+- 启动先执行 schema compatibility gate：当前 SQLite schema version 为 `2`；未知更高版本、
+  缺失必需表/列和 CHG-0009 之前的 `CredentialProfile`/`ModelProfile` legacy 表会在业务写入前
+  fail closed。`uai-forge doctor` 输出只读兼容状态以及 backup/rebuild remediation。
 - Memory、Task、并发锁和 live fan-out 仍在 Python 进程内。
 - API key 为空时控制 API 无认证；设置后也只是单一共享控制密钥。
+
+控制台连接配置统一使用租户级 `ModelConfig`。凭证型连接先保存为 `draft`，连接检查只返回
+稳定 code、时间、延迟和脱敏 endpoint/provider/model 摘要；启用和修改分别受验证结果与
+`expected_version` CAS 保护，Secret 变更必须显式使用 `keep|replace|clear`。这些能力改善
+单进程控制面的可操作性，不构成 OIDC/RBAC、可信 tenant identity 或 Secret Manager。
+
+`/api/v1/setup-status`、`/api/v1/capabilities` 和 Agent readiness 是计算视图。Active Run
+通过 `/api/v1/runs/{id}/events` 按持久 sequence 续播；断线时前端从最后确认 sequence 重连，
+有限轮询只作为标记为 degraded 的降级路径。
 
 本地可重复验证命令：
 
@@ -65,7 +77,8 @@ flowchart LR
 
 `scripts/container-smoke.sh` 是可重复门禁：它以唯一 Compose project、动态 loopback
 端口和 volume 构建并启动两个生产镜像，等待 Web/API 健康，运行容器内 doctor，再通过
-HTTP API 验证空数据库与唯一生产 provider 注册表，验证 Web 运行镜像只保留 production graph，
+HTTP API 验证空数据库与完整生产 provider 注册表（`anthropic_messages`、
+`openai_compatible`），验证 Web 运行镜像只保留 production graph，
 镜像构建阶段对裁剪后的 graph 重复 production audit，最后断言本次容器、network 和
 volume 均已清理。需要验证真实模型调用时，应先在数据库配置凭据和模型档，再单独执行
 带有真实外部 provider 的 API smoke。
@@ -135,8 +148,12 @@ spec。provider/tool/plugin 配置覆盖、正式 deployment profile 和 Instanc
 
 ## 数据与迁移
 
-- SQLite 初始化目前使用幂等 `CREATE TABLE IF NOT EXISTS`，适合 `0.1.0`，不等于正式迁移。
-- 引入破坏性 schema 变化前建立递增迁移版本、备份、向前兼容窗口和回滚验证。
+- 当前 SQLite 使用 `schema_meta(component="sqlite", version=2, updated_at)` 作为兼容门。
+  新库先写入当前 schema marker；已知旧版本只执行显式事务迁移，未知更高版本、缺失必需
+  结构和 CHG-0009 之前的 legacy profile 表拒绝业务写入，不自动把旧 profile 转换为
+  `ModelConfig`。
+- 引入新的破坏性 schema 变化必须继续使用递增迁移版本、dry-run/备份提示、向前兼容窗口和
+  回滚/前滚验证；回滚二进制前先检查 schema 兼容性。
 - Agent Revision 和 Event 是审计记录，迁移不得原地重写业务语义。
 - 插件状态使用 `plugin_id / state_schema_version` 命名空间，迁移失败时插件 fail closed。
 - 每次部署记录 core、协议、插件和 schema 版本组合。
@@ -169,7 +186,8 @@ spec。provider/tool/plugin 配置覆盖、正式 deployment profile 和 Instanc
 - [x] 两个生产镜像构建并启动成功。
 - [x] 两个容器健康，后端 doctor 无插件错误。
 - [x] Web 运行镜像裁剪开发工具并通过镜像内 production audit。
-- [x] 新数据库只暴露 `openai_compatible` provider，且不自动写入 Agent、凭据、模型档或运行记录。
+- [x] 新数据库只暴露生产 `anthropic_messages` 与 `openai_compatible` provider，且不自动写入
+  Agent、凭据、ModelConfig 或运行记录。
 - [x] smoke 使用唯一 project/volume/image tag 和动态 loopback 端口，并验证容器、
   network、volume 与临时 image tag 清理。
 

@@ -3,9 +3,14 @@ kind: design-delta
 id: CHG-0008-DESIGN
 status: accepted
 target: 0.1.x
+superseded_by: CHG-0009
 ---
 
 # Design delta
+
+> 历史说明：下方“只注册 `openai_compatible`”描述的是 CHG-0008 的验收时点。CHG-0009
+> 后续增加了 `anthropic_messages`，并将旧 profile 合同替换为统一 `ModelConfig`；当前
+> provider catalog 以 current spec、部署文档和 CHG-0009 为准。
 
 `register_builtins()` 只注册 `openai_compatible` provider。生产 `ModelBinding` 默认指向
 该 provider，但实际 Agent 仍必须引用数据库中的 ModelProfile/CredentialProfile；缺失

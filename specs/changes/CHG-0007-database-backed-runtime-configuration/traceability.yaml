@@ -1,4 +1,5 @@
 change_id: CHG-0007
+superseded_by: CHG-0009
 requirements:
   CFG-001:
     implementation:

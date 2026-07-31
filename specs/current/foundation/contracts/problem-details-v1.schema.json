@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uai-forge.local/schemas/problem-details/1.0",
+  "title": "UAI Forge Problem Details v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "code", "message", "field_errors", "resource", "retryable", "remediation", "correlation_id"],
+  "properties": {
+    "type": {"const": "uai-forge.problem/1.0"},
+    "code": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]+$"},
+    "message": {"type": "string", "minLength": 1},
+    "field_errors": {"type": "array", "items": {"$ref": "#/$defs/field_error"}},
+    "resource": {"anyOf": [{"$ref": "#/$defs/resource"}, {"type": "null"}]},
+    "retryable": {"type": "boolean"},
+    "remediation": {"anyOf": [{"$ref": "#/$defs/remediation"}, {"type": "null"}]},
+    "correlation_id": {"type": "string", "minLength": 1}
+  },
+  "$defs": {
+    "field_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "code", "message"],
+      "properties": {"field": {"type": "string"}, "code": {"type": "string"}, "message": {"type": "string"}}
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {"type": {"type": "string"}, "id": {"type": ["string", "null"]}}
+    },
+    "remediation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "target"],
+      "properties": {"action": {"type": "string"}, "target": {"type": ["string", "null"]}}
+    }
+  }
+}

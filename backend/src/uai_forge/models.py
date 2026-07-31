@@ -108,6 +108,11 @@ class PluginManifest(StrictModel):
     homepage: Optional[str] = None
     available: bool = True
     source: Literal["builtin", "entry_point", "remote"] = "builtin"
+    connection_check: Literal["none", "local", "remote"] = "none"
+    connection_schema_version: str = "1.0"
+    ui_hints: Dict[str, Any] = Field(default_factory=dict)
+    catalog_version: Optional[str] = None
+    catalog_updated_at: Optional[datetime] = None
 
     @field_validator("id")
     @classmethod
@@ -159,6 +164,14 @@ class ModelBinding(StrictModel):
         return reject_inline_secrets(value)
 
 
+class ModelConfigVerification(StrictModel):
+    status: Literal["never", "passed", "failed"] = "never"
+    checked_at: Optional[datetime] = None
+    code: Optional[str] = None
+    latency_ms: Optional[int] = Field(default=None, ge=0)
+    endpoint_summary: Optional[str] = None
+
+
 class ModelConfig(StrictModel):
     """Tenant-owned reusable model connection with a masked secret view."""
 
@@ -173,6 +186,9 @@ class ModelConfig(StrictModel):
     config: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
+    version: int = Field(default=1, ge=1)
+    lifecycle: Literal["draft", "verified", "enabled", "disabled", "error"] = "enabled"
+    verification: "ModelConfigVerification" = Field(default_factory=lambda: ModelConfigVerification())
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -181,6 +197,22 @@ class ModelConfig(StrictModel):
     def reject_plaintext_credentials(cls, value: Dict[str, Any]) -> Dict[str, Any]:
         return reject_inline_secrets(value)
 
+    @model_validator(mode="after")
+    def normalize_lifecycle(self) -> "ModelConfig":
+        # ``enabled`` remains an additive compatibility view for 0.1 clients;
+        # lifecycle is the source of truth for new writes.
+        if not self.enabled and self.lifecycle == "enabled":
+            self.lifecycle = "disabled"
+        if self.lifecycle in {"draft", "verified"}:
+            self.enabled = False
+        elif self.lifecycle in {"disabled", "error"}:
+            self.enabled = False
+        elif self.lifecycle == "enabled":
+            self.enabled = True
+        elif not self.enabled:
+            self.lifecycle = "disabled"
+        return self
+
 
 class ModelConfigWrite(StrictModel):
     id: Optional[str] = None
@@ -188,10 +220,12 @@ class ModelConfigWrite(StrictModel):
     provider: str = Field(min_length=1, max_length=80)
     model: str = Field(min_length=1, max_length=200)
     secret: Optional[str] = Field(default=None, min_length=1, max_length=20_000)
+    secret_action: Optional[Literal["replace", "clear"]] = None
     base_url: Optional[str] = None
     config: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
+    lifecycle: Optional[Literal["draft", "verified", "enabled", "disabled", "error"]] = None
 
     @field_validator("config", "metadata")
     @classmethod
@@ -200,19 +234,139 @@ class ModelConfigWrite(StrictModel):
 
 
 class ModelConfigPatch(StrictModel):
+    expected_version: Optional[int] = Field(default=None, ge=1)
     name: Optional[str] = Field(default=None, min_length=2, max_length=80)
     provider: Optional[str] = Field(default=None, min_length=1, max_length=80)
     model: Optional[str] = Field(default=None, min_length=1, max_length=200)
     secret: Optional[str] = Field(default=None, min_length=1, max_length=20_000)
+    secret_action: Literal["keep", "replace", "clear"] = "keep"
     base_url: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     enabled: Optional[bool] = None
+    lifecycle: Optional[Literal["draft", "verified", "enabled", "disabled", "error"]] = None
 
     @field_validator("config", "metadata")
     @classmethod
     def reject_plaintext_credentials(cls, value: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         return reject_inline_secrets(value) if value is not None else value
+
+    @model_validator(mode="after")
+    def validate_secret_action(self) -> "ModelConfigPatch":
+        if self.secret_action == "replace" and self.secret is None:
+            raise ValueError("secret is required when secret_action is replace")
+        if self.secret_action != "replace" and self.secret is not None:
+            raise ValueError("secret is only accepted with secret_action replace")
+        return self
+
+
+class ModelConnectionCheckRequest(StrictModel):
+    provider: str
+    protocol: str
+    model: str
+    base_url: Optional[str] = None
+    config: Dict[str, Any] = Field(default_factory=dict)
+    credential: Optional[str] = None
+
+
+class ModelConnectionCheckResult(StrictModel):
+    status: Literal["passed", "failed", "partial"]
+    code: str
+    checked_at: datetime = Field(default_factory=utc_now)
+    latency_ms: Optional[int] = Field(default=None, ge=0)
+    endpoint_summary: Optional[str] = None
+    provider: str
+    model: str
+
+
+class SetupResourceSummary(StrictModel):
+    total: int = Field(default=0, ge=0)
+    runnable: int = Field(default=0, ge=0)
+    verified_enabled: int = Field(default=0, ge=0)
+    active: int = Field(default=0, ge=0)
+    ready: int = Field(default=0, ge=0)
+    blocking_issues: List["ReadinessIssue"] = Field(default_factory=list)
+    last_terminal_at: Optional[datetime] = None
+
+
+class SetupStatus(StrictModel):
+    connection: Literal["connected", "unauthorized", "incompatible", "unavailable"]
+    model_connections: SetupResourceSummary = Field(default_factory=SetupResourceSummary)
+    agents: SetupResourceSummary = Field(default_factory=SetupResourceSummary)
+    instances: SetupResourceSummary = Field(default_factory=SetupResourceSummary)
+    runs: SetupResourceSummary = Field(default_factory=SetupResourceSummary)
+    next_action: Literal[
+        "connect",
+        "create_model_config",
+        "verify_model_config",
+        "create_agent",
+        "run_agent",
+        "none",
+    ]
+
+
+class CapabilityStatus(StrictModel):
+    id: str
+    state: Literal["implemented", "partial", "planned", "unavailable"]
+    summary: str
+    limits: List[str] = Field(default_factory=list)
+    evidence_refs: List[str] = Field(default_factory=list)
+
+
+class Remediation(StrictModel):
+    action: str
+    target: Optional[str] = None
+
+
+class ReadinessIssue(StrictModel):
+    code: str
+    resource_type: str
+    resource_id: Optional[str] = None
+    path: Optional[str] = None
+    message: str
+    remediation: Remediation
+
+
+class AgentReadiness(StrictModel):
+    agent_id: str
+    revision: int
+    runnable: bool
+    issues: List[ReadinessIssue] = Field(default_factory=list)
+
+
+class ProblemFieldError(StrictModel):
+    field: str
+    code: str
+    message: str
+
+
+class ProblemResource(StrictModel):
+    type: str
+    id: Optional[str] = None
+
+
+class ProblemDetails(StrictModel):
+    type: str = "uai-forge.problem/1.0"
+    code: str
+    message: str
+    field_errors: List[ProblemFieldError] = Field(default_factory=list)
+    resource: Optional[ProblemResource] = None
+    retryable: bool = False
+    remediation: Optional[Remediation] = None
+    correlation_id: str
+
+
+class ModelConfigReference(StrictModel):
+    agent_id: str
+    agent_name: str
+    revision: int
+    path: str = "model.model_config_id"
+
+
+class ModelConfigReferences(StrictModel):
+    items: List[ModelConfigReference] = Field(default_factory=list)
+    total: int = Field(default=0, ge=0)
+    next_cursor: Optional[str] = None
 
 
 class RuntimeConfigEntry(StrictModel):

@@ -5,7 +5,7 @@ UAI Forge 是一个以扩展契约为中心的 Python Agent 框架和多 Agent �
 使同一套领域逻辑可在本地单进程运行，并提供经过可重复 smoke 验证的单节点容器制品。
 当前环境字段只是运行上下文标签，不会自动创建容器或云资源。
 
-当前版本是可运行的 `0.1.0` 基线，包含：
+当前版本是可运行的 `0.1.0` 单进程基线，包含：
 
 - Python 3.9+ 异步 Agent 运行时与 FastAPI 控制 API。
 - Agent 配置修订、乐观并发控制与多个运行实例。
@@ -15,9 +15,10 @@ UAI Forge 是一个以扩展契约为中心的 Python Agent 框架和多 Agent �
 - Provider、Tool、Memory、Middleware、Storage、Event Bus、Scheduler、UI
   八类扩展清单和 PyPA entry-point 发现。
 - 核心只依赖自有 Repository/Event Port；SQLite 与进程内 EventBroker 是可替换的内置适配器。
-- OpenAI-compatible 模型适配器；没有内置演示或伪造模型。
+- OpenAI-compatible Chat Completions 与 Anthropic Messages 模型适配器；没有内置演示或伪造模型。
 - SQLite 持久化、按 Run 单调排序的事件和可重连 SSE。
-- 数据库驱动的多凭据、多模型配置档和版本化运行配置；provider AK 加密存储，控制台仅展示脱敏信息。
+- 租户级统一 `ModelConfig`（provider、protocol、model、endpoint 与加密凭证）；支持草稿、连接检查、版本/CAS、启用/停用和显式 Secret `keep|replace|clear`，控制台仅展示脱敏信息。
+- SetupStatus、CapabilityStatus、Agent Readiness、Problem Details 与 schema compatibility doctor，帮助空库沿真实前置条件完成首个任务。
 - React/TypeScript 管理后台：可发布 Agent 修订，配置模型、工具权限、记忆、中间件、
   子 Agent 固定修订/并发/输入模板，管理多个实例，并查看真实运行事件。
 - Docker、本地命令、Kubernetes 单副本示例、规格、ADR、威胁模型与需求追踪。
@@ -106,6 +107,12 @@ docker compose up --build
 make container-smoke
 ```
 
+只运行与平台无关的代码、合同和 Compose 配置门禁：
+
+```bash
+make verify
+```
+
 ## 测试
 
 ```bash
@@ -114,12 +121,14 @@ npm audit --omit=dev --audit-level=high
 npm run lint
 npm run typecheck
 npm test
+make verify
 make container-smoke
 ```
 
-2026-07-31 当前基线在 Python 3.9.6 上为后端 `73 passed`；前端 lint、typecheck、
-production build 与 SSR/source 合同测试全部通过。单节点 Compose smoke 还验证了双镜像
-构建、双容器健康、容器内 doctor、空数据库、唯一 provider 注册和 Web 运行镜像的开发
+2026-08-01 当前工作树的验证结果以 `artifacts/evidence-summary.json` 为准；最近一次后端
+门禁为 `113 passed`，前端 lint、typecheck、production build 与 SSR/source 合同测试全部通过。
+单节点 Compose smoke 还验证了双镜像
+构建、双容器健康、容器内 doctor、空数据库、生产 provider 注册和 Web 运行镜像的开发
 工具裁剪与 production-only audit。完整开发工具链 audit 会
 单独审查，不能用未经验证的破坏性主版本升级静默消除。
 
@@ -143,9 +152,16 @@ production build 与 SSR/source 合同测试全部通过。单节点 Compose smo
 | `PORT` | `3000` | production Web 容器内端口 |
 
 模型 AK 通过“凭证&模型配置”写入数据库 `ModelConfig` 的密文列；Agent 只引用
-`model_config_id`，API 只返回脱敏 mask，运行时短暂解密。OpenAI-compatible 和 Claude
-provider 没有数据库凭据时都会 fail closed。
+`model_config_id`，API 只返回脱敏 mask，运行时短暂解密。凭证型 Provider 默认先保存为
+`draft`，必须完成不含 prompt 的连接检查后才能启用；OpenAI-compatible 和 Claude
+provider 没有数据库凭据时都会 fail closed。更新使用 `expected_version`，Secret 变更必须
+明确选择 `keep`、`replace` 或 `clear`。
 不要把 AK 写入 Agent 配置、环境文件、浏览器持久化或版本库。
+
+控制台的 `/api/v1/setup-status`、`/api/v1/capabilities` 和
+`/api/v1/agents/{id}/readiness` 都是服务端计算视图，不是第二套业务事实源。Active Run
+以 `/api/v1/runs/{id}/events` 的持久 `sequence` 为 SSE 游标；断线从最后确认位置续播，
+轮询只作为有界降级并标记 degraded。当前仍是单进程事件流，不代表分布式恢复。
 
 OpenAI Sites 的 `.openai/hosting.json` 同样只保存在部署者本机；公开源码提供
 `.openai/hosting.example.json`，干净 checkout 没有真实 hosting 文件也可直接构建。

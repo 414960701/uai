@@ -1,0 +1,140 @@
+change_id: CHG-0010
+status: proposed
+implementation_status: partial
+requirements:
+  UI-003:
+    contracts:
+      - requirements.md
+      - design.md#31-setupstatus
+    planned_tests:
+      - test-plan.md#浏览器关键旅程
+    implementation:
+      - specs/current/foundation/contracts/setup-status.schema.json
+      - backend/src/uai_forge/api.py
+      - app/control-center.tsx
+    verification:
+      - backend/tests/test_chg0010_operability.py::test_empty_setup_status_and_capability_maturity
+      - tests/rendered-html.test.mjs
+    evidence:
+      - "manual-browser-2026-08-01: isolated Provider fixture completed the empty-db setup checklist, ModelConfig lifecycle, Agent wizard, and first Run; this is not an automated browser gate"
+    gaps:
+      - browser first-use journey is not automated
+  UI-004:
+    contracts:
+      - requirements.md
+      - design.md#32-capabilitystatus
+      - design.md#33-readinessissue
+    planned_tests:
+      - test-plan.md#合同与后端
+    implementation:
+      - specs/current/foundation/contracts/setup-status.schema.json
+      - specs/current/foundation/contracts/capability-status-v1.schema.json
+      - specs/current/foundation/contracts/readiness-v1.schema.json
+      - specs/current/foundation/contracts/problem-details-v1.schema.json
+      - backend/src/uai_forge/api.py
+      - app/control-center.tsx
+    verification:
+      - backend/tests/test_chg0010_operability.py::test_empty_setup_status_and_capability_maturity
+      - backend/tests/test_chg0010_operability.py::test_setup_readiness_references_and_problem_details
+      - backend/tests/test_chg0010_operability.py::test_chg0010_public_contract_schemas_are_valid
+    evidence:
+      - "manual-browser-2026-08-01: connected setup status and Agent readiness were observed through the isolated control plane; identity and capability projection are not automated"
+    gaps:
+      - browser identity/capability/readiness projection is not automated
+  UI-005:
+    contracts:
+      - requirements.md
+      - design.md#8-url焦点与响应式
+    planned_tests:
+      - test-plan.md#前端组件与集成
+      - test-plan.md#浏览器关键旅程
+    implementation:
+      - app/control-center.tsx
+      - app/control-center/api.ts
+      - app/control-center/resource-state.ts
+      - app/globals.css
+    verification:
+      - tests/rendered-html.test.mjs
+      - npm run lint
+      - npm run typecheck
+    evidence:
+      - "manual-browser-2026-08-01: URL restoration, 390px no-overflow, mobile Escape, modal Escape, and focus restoration were checked; 200% zoom/reduced-motion automation is still absent"
+    gaps:
+      - browser keyboard, focus, zoom, and responsive evidence is not automated
+  RUN-009:
+    contracts:
+      - requirements.md
+      - design.md#65-run
+    planned_tests:
+      - test-plan.md#失败注入
+    implementation:
+      - backend/src/uai_forge/api.py
+      - backend/src/uai_forge/events.py
+      - app/control-center/api.ts
+      - app/control-center.tsx
+    verification:
+      - backend/tests/test_api.py::test_control_plane_crud_and_capabilities
+      - backend/tests/test_runtime.py::test_subscriber_closes_replay_live_registration_window_without_loss
+      - tests/rendered-html.test.mjs
+    evidence:
+      - "manual-browser-2026-08-01: a fixture-backed Run produced terminal success, seven ordered events, and URL-restored history; reconnect/duplicate/degraded-polling behavior remains unautomated"
+    gaps:
+      - browser reconnect, duplicate event, and degraded polling evidence is not automated
+  CFG-005:
+    contracts:
+      - requirements.md
+      - design.md#34-modelconfig-v2-additive-fields
+      - design.md#41-provider-manifestprotocol-delta
+    planned_tests:
+      - test-plan.md#合同与后端
+    implementation:
+      - specs/current/foundation/contracts/model-config-v2.schema.json
+      - specs/current/foundation/contracts/plugin-manifest.schema.json
+      - backend/src/uai_forge/models.py
+      - backend/src/uai_forge/ports.py
+      - backend/src/uai_forge/providers.py
+      - backend/src/uai_forge/storage.py
+      - backend/src/uai_forge/api.py
+      - app/control-center.tsx
+    verification:
+      - backend/tests/test_chg0010_operability.py::test_model_config_lifecycle_cas_and_secret_actions_are_explicit
+      - backend/tests/test_chg0010_operability.py::test_verified_credentialed_config_can_be_enabled_with_secret_keep
+      - backend/tests/test_chg0010_operability.py::test_connection_check_is_secret_free_and_unsupported_is_partial
+      - backend/tests/test_chg0010_operability.py::test_credential_provider_cannot_be_created_enabled_without_preflight
+    evidence:
+      - "scripts/provider-fixture.py: isolated OpenAI-compatible fixture supports both /v1/models and /v1/chat/completions without logging request headers or bodies"
+    gaps:
+      - third-party adapter TCK and browser concurrent-edit evidence are not automated
+  CFG-006:
+    contracts:
+      - requirements.md
+      - design.md#51-schema-compatibility-gate
+    planned_tests:
+      - test-plan.md#发布与回归
+    implementation:
+      - backend/src/uai_forge/storage.py
+      - backend/src/uai_forge/cli.py
+    verification:
+      - backend/tests/test_compatibility_and_endpoints.py::test_new_database_records_schema_meta_before_business_use
+      - backend/tests/test_compatibility_and_endpoints.py::test_unknown_schema_version_fails_closed_and_doctor_path_is_read_only
+      - backend/tests/test_compatibility_and_endpoints.py::test_legacy_model_profile_database_is_not_silently_migrated
+    gaps:
+      - migration failure, backup/restore, and rollback rehearsal are not automated
+  PROTO-003:
+    contracts:
+      - requirements.md
+      - design.md#35-problem-details
+    planned_tests:
+      - test-plan.md#合同与后端
+    implementation:
+      - specs/current/foundation/contracts/problem-details-v1.schema.json
+      - backend/src/uai_forge/models.py
+      - backend/src/uai_forge/api.py
+      - app/control-center/api.ts
+      - app/control-center.tsx
+    verification:
+      - backend/tests/test_chg0010_operability.py::test_setup_readiness_references_and_problem_details
+      - backend/tests/test_chg0010_operability.py::test_model_config_lifecycle_cas_and_secret_actions_are_explicit
+      - tests/rendered-html.test.mjs
+    gaps:
+      - unknown-code and complete secret-leak matrix are not automated

@@ -2412,6 +2412,18 @@ a:focus-visible {
   color: #74807b;
 }
 
+.deployment-state.partial {
+  background: var(--amber-soft);
+  border-color: #ead9bd;
+  color: var(--amber);
+}
+
+.deployment-state.disabled,
+.deployment-state.unknown {
+  background: #f0f3f1;
+  color: #74807b;
+}
+
 .modal-layer,
 .drawer-layer {
   inset: 0;
@@ -3197,6 +3209,143 @@ a:focus-visible {
   }
 }
 
+/* CHG-0010: preserve readable controls at narrow widths and browser zoom. */
+body,
+p,
+label,
+button,
+input,
+textarea,
+select {
+  font-size: 14px;
+}
+
+small,
+.section-kicker,
+.topbar-kicker,
+.nav-section-label,
+.form-field small,
+.empty-inline,
+.form-error,
+.status-badge,
+.config-row-actions .button,
+.metric-label,
+.toolbar-count,
+.run-row-time time,
+.timeline-row time {
+  font-size: 12px !important;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+  outline: 3px solid #4f8f73;
+  outline-offset: 3px;
+}
+
+.connection-banner-warning {
+  background: #fff8eb;
+  border-color: #ead6ad;
+  color: #765a26;
+}
+
+.connection-banner-warning button {
+  color: inherit;
+}
+
+.prerequisite-panel {
+  background: var(--panel-strong);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.prerequisite-panel h3,
+.prerequisite-panel p {
+  margin: 0;
+}
+
+.prerequisite-panel p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.readiness-issue-list {
+  display: grid;
+  gap: 8px;
+}
+
+.readiness-issue-list > div {
+  background: var(--panel);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+}
+
+.readiness-issue-list span {
+  color: var(--muted);
+}
+
+.form-field-note {
+  background: var(--panel-strong);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+}
+
+.form-field-note strong {
+  color: var(--lime);
+}
+
+.status-badge.partial {
+  background: var(--amber-soft);
+  border-color: #ead8b8;
+  color: var(--amber);
+}
+
+.modal-layer,
+.drawer-layer {
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 520px) {
+  .content-stage {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .config-list-row,
+  .config-row-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .config-row-actions {
+    display: flex;
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  .config-row-actions .button {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .modal-card {
+    max-height: calc(100dvh - 12px);
+    width: calc(100vw - 12px);
+  }
+}
+
 @media (max-width: 460px) {
   .topbar-actions > .icon-button {
     display: none;
@@ -3763,5 +3912,190 @@ a:focus-visible {
 
   .instance-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* CHG-0010: visible, keyboard-friendly Agent creation steps. */
+.wizard-steps {
+  border-bottom: 1px solid var(--line-soft);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 12px 20px;
+}
+
+.wizard-steps button {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 14px;
+  gap: 7px;
+  justify-content: center;
+  min-height: 40px;
+  padding: 6px 8px;
+}
+
+.wizard-steps button span {
+  align-items: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  display: inline-flex;
+  font-size: 12px;
+  height: 24px;
+  justify-content: center;
+  width: 24px;
+}
+
+.wizard-steps button.active {
+  background: var(--lime-soft);
+  border-color: #c9ddd4;
+  color: var(--lime);
+  font-weight: 650;
+}
+
+.wizard-steps button.complete {
+  color: var(--lime);
+}
+
+.wizard-step {
+  display: grid;
+  gap: 14px;
+}
+
+.wizard-step-heading {
+  align-items: end;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+}
+
+.wizard-step-heading h3 {
+  font-size: 20px;
+  margin: 4px 0 0;
+}
+
+.wizard-step-heading p {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+  margin: 0;
+  max-width: 420px;
+  text-align: right;
+}
+
+.wizard-review .readiness-issue-list > div {
+  align-items: start;
+  grid-template-columns: auto 1fr;
+}
+
+.wizard-review .readiness-issue-list > div > span {
+  grid-column: 2;
+}
+
+.review-summary {
+  background: var(--panel-strong);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+}
+
+.review-summary > div {
+  align-items: center;
+  background: var(--panel);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 46px;
+  padding: 8px 12px;
+}
+
+.review-summary span {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.review-summary strong {
+  font-size: 14px;
+  font-weight: 620;
+  text-align: right;
+}
+
+/* Keep labels, helper text, and controls usable at narrow widths and 200% zoom. */
+.form-field > span,
+.child-picker legend,
+.drawer-section-title {
+  font-size: 14px;
+}
+
+.form-field small,
+.child-picker > p,
+.child-picker button small,
+.binding-editor-title small,
+.run-policy-preview small,
+.settings-panel-head p,
+.setting-toggle small,
+.deployment-option small {
+  font-size: 12px !important;
+}
+
+.form-field input,
+.form-field textarea,
+.form-field select {
+  font-size: 14px;
+}
+
+.form-error > span {
+  display: grid;
+  gap: 3px;
+}
+
+.problem-code {
+  color: var(--muted);
+  font-family: var(--font-geist-mono), monospace;
+}
+
+.problem-fields {
+  color: var(--red);
+  display: grid;
+  gap: 2px;
+}
+
+@media (max-width: 720px) {
+  .wizard-steps {
+    gap: 4px;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .wizard-steps button {
+    font-size: 12px;
+    padding-left: 3px;
+    padding-right: 3px;
+  }
+
+  .wizard-step-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .wizard-step-heading p {
+    max-width: none;
+    text-align: left;
+  }
+
+  .review-summary > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .review-summary strong {
+    text-align: left;
   }
 }
