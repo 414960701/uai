@@ -26,7 +26,7 @@ last_reviewed: 2026-07-31
   需求：`RUN-002`
 - [x] `TASK-007` 插件能力目录与协议主版本拒绝。
   需求：`EXT-001`
-- [x] `TASK-008` Web live/demo 明示、构建、SSR、lint 和 typecheck。
+- [x] `TASK-008` Web live/disconnected 明示、构建、SSR、lint 和 typecheck。
   需求：`UI-002`
 - [x] `TASK-009` 将 Instance overrides 通过 Schema allowlist 真正应用到 Runtime。
   需求：`CORE-003`
@@ -49,15 +49,18 @@ last_reviewed: 2026-07-31
 - [x] `TASK-018` 实现插件 config、工具/委派 arguments 的 JSON Schema fail-closed
   边界，并修复 memory binding 启用与独立策略语义。
   需求：`EXT-006`
-- [x] `TASK-019` 增加隔离的单节点容器 build/start/health/doctor/真实委派 smoke，
-  接入 CI 并同步部署状态。
+- [x] `TASK-019` 增加隔离的单节点容器 build/start/health/doctor/空数据库 smoke，
+  接入 Makefile 并同步部署状态。
   需求：`DEP-002`
-- [x] `TASK-020` 锁定公开发布 Web 依赖，在 CI 和裁剪后的 Web 运行镜像加入
+- [x] `TASK-020` 锁定公开发布 Web 依赖，在本地发布门禁和裁剪后的 Web 运行镜像加入
   production-only high/critical audit 门禁，审查完整开发工具链 audit 并复跑兼容性门禁。
   需求：`SEC-006`
 - [x] `TASK-021` 将个人 Sites 元数据移出公开源码和 Docker context，提供中性示例与
   缺省构建路径，并增加仓库卫生测试和发布扫描。
   需求：`SEC-007`
+- [x] `TASK-022` 统一租户 ModelConfig、Claude Messages 协议、Provider 模型目录和
+  “凭证&模型配置”控制台入口；Agent 只保存 `model_config_id`。
+  需求：`CFG-001`, `SEC-001`, `EXT-007`, `UI-001`
 
 ## Wave 1：可恢复执行 `0.2`
 

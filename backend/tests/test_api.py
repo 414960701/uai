@@ -1,3 +1,4 @@
+import asyncio
 import time
 from pathlib import Path
 
@@ -5,18 +6,31 @@ from fastapi.testclient import TestClient
 
 from uai_forge.api import create_app
 from uai_forge.settings import Settings
+from test_support import register_test_provider, seed_test_topology
 
 
 def make_settings(tmp_path: Path) -> Settings:
     return Settings(
         database_path=str(tmp_path / "api.db"),
         allowed_origins=["http://localhost:3000"],
-        seed_demo=True,
     )
 
 
+def make_app(tmp_path: Path):
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    app = create_app(make_settings(tmp_path))
+    register_test_provider(app.state.container.registry)
+    asyncio.run(app.state.container.repository.initialize())
+    asyncio.run(seed_test_topology(app.state.container.repository))
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    return app
+
+
 def test_control_plane_crud_and_capabilities(tmp_path):
-    with TestClient(create_app(make_settings(tmp_path))) as client:
+    with TestClient(make_app(tmp_path)) as client:
         assert client.get("/health").json()["status"] == "ok"
         plugins = client.get("/api/v1/plugins").json()
         assert {plugin["kind"] for plugin in plugins} >= {
@@ -56,7 +70,7 @@ def test_control_plane_crud_and_capabilities(tmp_path):
 
 
 def test_run_lifecycle_from_instance(tmp_path):
-    with TestClient(create_app(make_settings(tmp_path))) as client:
+    with TestClient(make_app(tmp_path)) as client:
         response = client.post(
             "/api/v1/runs",
             json={
@@ -110,7 +124,7 @@ def test_run_lifecycle_from_instance(tmp_path):
 
 
 def test_patch_and_run_metadata_reject_inline_secrets_without_persisting(tmp_path):
-    with TestClient(create_app(make_settings(tmp_path))) as client:
+    with TestClient(make_app(tmp_path)) as client:
         instance_id = "ins_research_local"
         original_instance = client.get(f"/api/v1/instances/{instance_id}").json()
         original_run_ids = {
@@ -147,7 +161,7 @@ def test_patch_and_run_metadata_reject_inline_secrets_without_persisting(tmp_pat
 
 
 def test_agent_patch_revalidates_tool_and_mount_name_collisions(tmp_path):
-    with TestClient(create_app(make_settings(tmp_path))) as client:
+    with TestClient(make_app(tmp_path)) as client:
         agent_id = "agt_research_lead"
         original = client.get(f"/api/v1/agents/{agent_id}").json()
 
@@ -169,7 +183,7 @@ def test_agent_patch_revalidates_tool_and_mount_name_collisions(tmp_path):
 
 
 def test_instance_override_contract_is_explicit_and_fail_closed(tmp_path):
-    with TestClient(create_app(make_settings(tmp_path))) as client:
+    with TestClient(make_app(tmp_path)) as client:
         schemas = client.get("/openapi.json").json()["components"]["schemas"]
         override_schema = schemas["InstanceConfigOverrides"]
         policy_schema = schemas["InstanceExecutionPolicyOverrides"]
@@ -242,7 +256,7 @@ def test_instance_override_contract_is_explicit_and_fail_closed(tmp_path):
 
 
 def test_child_mount_tool_allowlist_is_explicit_and_fail_closed(tmp_path):
-    with TestClient(create_app(make_settings(tmp_path))) as client:
+    with TestClient(make_app(tmp_path)) as client:
         schemas = client.get("/openapi.json").json()["components"]["schemas"]
         allowed_tools = schemas["ChildMount"]["properties"]["allowed_tools"]
         assert "null" in str(allowed_tools).lower()
@@ -254,6 +268,9 @@ def test_child_mount_tool_allowlist_is_explicit_and_fail_closed(tmp_path):
                 "id": "agt_scoped_parent",
                 "name": "Scoped Parent",
                 "system_prompt": "Delegate with a bounded tool scope.",
+                "model": {
+                    "model_config_id": "mdl_test_default",
+                },
                 "children": [
                     {
                         "alias": "analyst",

@@ -9,6 +9,7 @@ from uai_forge.models import (
     AgentInstance,
     AgentSpec,
     EventType,
+    ModelConfig,
     RunEvent,
     RunRecord,
     RunRequest,
@@ -25,6 +26,7 @@ from uai_forge.registry import PluginRegistry
 from uai_forge.run_manager import RunManager
 from uai_forge.runtime import AgentRuntime
 from uai_forge.storage import SQLiteRepository
+from test_support import register_test_provider
 
 
 class InMemoryCoreRepository:
@@ -39,6 +41,17 @@ class InMemoryCoreRepository:
         }
         self._instances: Dict[Tuple[str, str], AgentInstance] = {}
         self._runs: Dict[Tuple[str, str], RunRecord] = {}
+        self._configs = {
+            (agent.tenant_id, agent.model.model_config_id): ModelConfig(
+                id=agent.model.model_config_id,
+                tenant_id=agent.tenant_id,
+                name="Portable test connection",
+                provider="test.deterministic",
+                protocol="test",
+                model="deterministic",
+            )
+            for agent in agents
+        }
 
     async def get_agent(
         self,
@@ -68,6 +81,12 @@ class InMemoryCoreRepository:
     async def get_run(self, tenant_id: str, run_id: str) -> Optional[RunRecord]:
         return self._runs.get((tenant_id, run_id))
 
+    async def get_model_config(self, tenant_id: str, config_id: str):
+        return self._configs.get((tenant_id, config_id))
+
+    async def resolve_model_config_secret(self, tenant_id: str, config_id: str):
+        return "test-only-secret"
+
 
 class RecordingEventBus:
     def __init__(self) -> None:
@@ -94,6 +113,8 @@ async def test_execution_core_accepts_non_sqlite_repository_and_event_bus_ports(
     event_bus = RecordingEventBus()
     registry = PluginRegistry()
     register_builtins(registry)
+    register_test_provider(registry)
+    register_test_provider(registry, "openai_compatible")
 
     assert isinstance(repository, RepositoryPort)
     assert isinstance(event_bus, EventBusPort)

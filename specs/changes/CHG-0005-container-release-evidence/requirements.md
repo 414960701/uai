@@ -13,12 +13,11 @@ WHEN 发布门禁在支持 Docker Engine 与 Compose 的环境执行
 THE SYSTEM SHALL 从版本化 Dockerfile 构建 Web 与 Python Runtime 镜像，以单副本启动，
 使用独立 SQLite volume，并等待两个部署单元通过健康检查。
 
-### DEP-002B — 容器内真实委派
+### DEP-002B — 容器内配置与 provider 注册检查
 
 WHEN 单节点容器栈健康
-THE SYSTEM SHALL 通过公开 HTTP API 对已装载 Instance 发起 bounded child 委派，等待
-Run 成功，并验证事件 sequence 连续且包含 `run.started`、`delegation.started`、
-`delegation.completed` 和 `run.completed`。
+THE SYSTEM SHALL 通过公开 HTTP API 验证新数据库不包含 Agent、Instance、凭据、模型档或
+运行配置，并验证 provider 注册表只包含生产 `openai_compatible` 适配器。
 
 ### DEP-002C — 隔离、清理与准确声明
 

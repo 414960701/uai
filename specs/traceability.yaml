@@ -200,7 +200,6 @@ requirements:
     implementation:
       - "backend/src/uai_forge/models.py::ChildMount"
       - "backend/src/uai_forge/runtime.py"
-      - "backend/src/uai_forge/seed.py"
     verification:
       - "backend/tests/test_api.py::test_child_mount_tool_allowlist_is_explicit_and_fail_closed"
       - "backend/tests/test_multi_agent_policy.py::test_mount_allowlist_null_is_compatible_and_empty_denies_all_tools"
@@ -218,6 +217,16 @@ requirements:
       - "specs/current/foundation/contracts/plugin-manifest.schema.json"
     verification:
       - "backend/tests/test_registry.py::test_incompatible_plugin_protocol_fails_closed"
+  - id: "EXT-007"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "backend/src/uai_forge/builtins.py"
+      - "backend/src/uai_forge/providers.py"
+      - "backend/tests/test_providers.py"
+    verification:
+      - "backend/tests/test_registry.py::test_builtin_provider_catalog_excludes_test_adapters"
+      - "scripts/container-smoke.sh"
   - id: "CFG-001"
     status: "implemented"
     target: "0.1"
@@ -226,7 +235,8 @@ requirements:
       - "backend/src/uai_forge/api.py"
       - "app/control-center.tsx"
     verification:
-      - "backend/tests/test_database_configuration.py::test_multiple_model_profiles_and_references_are_database_backed"
+      - "backend/tests/test_database_configuration.py::test_agents_require_enabled_model_config"
+      - "backend/tests/test_database_configuration.py::test_model_config_delete_is_guarded_by_agent_revisions"
   - id: "CFG-002"
     status: "implemented"
     target: "0.1"
@@ -243,8 +253,8 @@ requirements:
       - "backend/src/uai_forge/providers.py"
       - "backend/src/uai_forge/runtime.py"
     verification:
-      - "backend/tests/test_database_configuration.py::test_credentials_are_encrypted_and_tenant_scoped"
-      - "backend/tests/test_database_configuration.py::test_openai_profiles_require_database_credentials"
+      - "backend/tests/test_database_configuration.py::test_model_configs_are_encrypted_and_tenant_scoped"
+      - "backend/tests/test_database_configuration.py::test_openai_model_configs_require_database_credentials"
   - id: "CFG-003"
     status: "implemented"
     target: "0.1"
@@ -254,6 +264,16 @@ requirements:
       - "backend/src/uai_forge/runtime.py"
     verification:
       - "backend/tests/test_core_ports.py::test_execution_core_accepts_non_sqlite_repository_and_event_bus_ports"
+  - id: "CFG-004"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "app/control-center.tsx"
+      - "app/globals.css"
+    verification:
+      - "tests/rendered-html.test.mjs::keeps advanced Agent configuration and real event history wired"
+    evidence:
+      - "Provider、OpenAI/Claude、国内常用模型、兼容服务地址和请求超时提供枚举选项；高级 provider 参数保持折叠 JSON 扩展入口"
   - id: "EXT-002"
     status: "specified"
     target: "0.3"
@@ -323,7 +343,7 @@ requirements:
       - "backend/src/uai_forge/api.py"
       - "backend/src/uai_forge/providers.py"
     verification:
-      - "backend/tests/test_registry.py::test_binding_configs_reject_plaintext_credentials_and_accept_references"
+      - "backend/tests/test_registry.py::test_binding_configs_reject_plaintext_credentials_and_unknown_provider_keys"
       - "backend/tests/test_api.py::test_patch_and_run_metadata_reject_inline_secrets_without_persisting"
     gaps:
       - "No generic SecretRef or CredentialResolver"
@@ -368,7 +388,6 @@ requirements:
       - "package-lock.json"
       - "Dockerfile"
       - "scripts/start-web.mjs"
-      - ".github/workflows/ci.yml"
     verification:
       - "npm ci"
       - "npm ls --all"
@@ -389,7 +408,6 @@ requirements:
       - ".openai/hosting.example.json"
       - "vite.config.ts"
       - "Dockerfile"
-      - ".github/workflows/ci.yml"
     verification:
       - "tests/rendered-html.test.mjs::keeps account-specific hosting metadata out of portable source"
       - "npm run lint"
@@ -447,12 +465,21 @@ requirements:
       - "docker-compose.yml"
       - "deploy/kubernetes"
       - "scripts/container-smoke.sh"
-      - ".github/workflows/ci.yml"
     verification:
       - "scripts/container-smoke.sh"
-      - ".github/workflows/ci.yml::containers"
   - id: "DEP-003"
     status: "planned"
     target: "0.3"
     gaps:
       - "No PostgreSQL, durable bus, multi-worker lease, or chaos evidence"
+  - id: "DEP-004"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - "Makefile"
+      - "scripts/container-smoke.sh"
+      - "tests/rendered-html.test.mjs"
+    verification:
+      - "bash -n scripts/container-smoke.sh"
+      - "npm test"
+      - "scripts/container-smoke.sh"

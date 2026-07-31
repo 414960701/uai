@@ -3,7 +3,7 @@ kind: normative
 id: ARCH-DEPLOYMENT
 status: accepted
 version: 1.0.0
-last_reviewed: 2026-07-30
+last_reviewed: 2026-07-31
 ---
 
 # 部署设计
@@ -25,13 +25,13 @@ flowchart LR
   Browser --> API["FastAPI<br/>localhost:8000"]
   API --> Runtime["Runtime + asyncio Tasks"]
   Runtime --> DB[("SQLite WAL")]
-  Runtime --> Provider["Mock 或 OpenAI-compatible"]
+  Runtime --> Provider["Provider adapter"]
 ```
 
 特征：
 
 - Web 通过可配置的 API base URL 访问 FastAPI。
-- 未连接时页面明确显示 demo mode；演示数据不能作为后端健康证据。
+- 未连接时页面明确显示未连接状态；页面不生成 Agent、模型、凭据或运行事件数据。
 - SQLite 保存定义、修订、实例、Run 和 Run Event。
 - Memory、Task、并发锁和 live fan-out 仍在 Python 进程内。
 - API key 为空时控制 API 无认证；设置后也只是单一共享控制密钥。
@@ -65,11 +65,10 @@ flowchart LR
 
 `scripts/container-smoke.sh` 是可重复门禁：它以唯一 Compose project、动态 loopback
 端口和 volume 构建并启动两个生产镜像，等待 Web/API 健康，运行容器内 doctor，再通过
-HTTP API 完成
-真实 bounded child 委派并验证连续终态事件。Web 运行镜像只保留 production graph，
+HTTP API 验证空数据库与唯一生产 provider 注册表，验证 Web 运行镜像只保留 production graph，
 镜像构建阶段对裁剪后的 graph 重复 production audit，最后断言本次容器、network 和
-volume 均已清理。
-2026-07-30 在 Linux/arm64 Docker Engine 上通过；CI 对公开提交重复执行同一脚本。
+volume 均已清理。需要验证真实模型调用时，应先在数据库配置凭据和模型档，再单独执行
+带有真实外部 provider 的 API smoke。
 
 ## 模式 C：可恢复云部署（`Specified` / `Planned`）
 
@@ -124,11 +123,11 @@ Sites 可托管控制后台，但 Python Runtime 必须部署到可由浏览器�
 
 1. 版本化默认值。
 2. 部署环境配置。
-3. 数据库中的租户 RuntimeConfig、CredentialProfile 和 ModelProfile。
+3. 数据库中的租户 RuntimeConfig 和统一 ModelConfig。
 4. Agent Instance 允许范围内的覆盖。
 5. 单次 Run 非敏感参数。
 
-CredentialProfile secret 不参与普通覆盖合并，只在 provider 适配器边界短暂解析。Instance
+ModelConfig secret 不参与普通覆盖合并，只在 provider 适配器边界短暂解析。Instance
 override 必须经过显式 Schema 和 allowlist；
 `0.1.x` 当前只允许收紧 execution policy，并为本次 Run 构造不写回 revision 的 effective
 spec。provider/tool/plugin 配置覆盖、正式 deployment profile 和 Instance capacity 热更新
@@ -159,7 +158,7 @@ spec。provider/tool/plugin 配置覆盖、正式 deployment profile 和 Instanc
 - [ ] 后端、前端、合同和迁移测试通过。
 - [ ] Secret 扫描和生产配置审查通过。
 - [ ] CORS、TLS、身份与 tenant 绑定已验证。
-- [ ] 真实 API smoke test，不依赖 demo 数据。
+- [ ] 已配置真实 provider 的 API smoke test；容器 smoke 不创建或伪造业务数据。
 - [ ] Run 取消和进程终止行为已验证。
 - [ ] 数据备份与恢复演练完成。
 - [ ] 若多 worker：重复投递、lease 过期和 worker kill 测试完成。
@@ -170,7 +169,7 @@ spec。provider/tool/plugin 配置覆盖、正式 deployment profile 和 Instanc
 - [x] 两个生产镜像构建并启动成功。
 - [x] 两个容器健康，后端 doctor 无插件错误。
 - [x] Web 运行镜像裁剪开发工具并通过镜像内 production audit。
-- [x] 确定性 provider 的真实 bounded delegation 成功并产生连续终态事件。
+- [x] 新数据库只暴露 `openai_compatible` provider，且不自动写入 Agent、凭据、模型档或运行记录。
 - [x] smoke 使用唯一 project/volume/image tag 和动态 loopback 端口，并验证容器、
   network、volume 与临时 image tag 清理。
 

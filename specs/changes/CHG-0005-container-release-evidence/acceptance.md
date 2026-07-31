@@ -8,9 +8,9 @@ status: passed
 
 - [x] 两个生产镜像从版本化 Dockerfile 构建成功。
 - [x] 后端与前端容器健康，容器内 doctor 通过。
-- [x] 真实 bounded delegation Run 成功并产生连续终态事件。
+- [x] 新数据库启动成功，未自动生成 Agent、凭据、模型档或运行记录。
 - [x] smoke 对开发者现有 Compose 资源无破坏性影响且完成清理。
-- [x] CI、UI、current spec 与追踪共同反映单节点已验证、分布式仍规划。
+- [x] UI、current spec 与追踪共同反映单节点已验证、分布式仍规划。
 - [x] production-only npm high/critical audit 为零，完整开发链 audit 已审查并记录。
 - [x] 后端、前端、合同与容器门禁全部通过。
 
@@ -28,9 +28,9 @@ status: passed
   变更中未经兼容验收强制执行。
 - 合同：9 个 JSON、18 个 YAML（21 documents）均可解析；34 份 change Markdown
   frontmatter/ID 与 9 份 change YAML 的 `change_id` 一致。
-- 容器：`run_f01ba3ea036e44d1` succeeded，事件 sequence 1–17 连续并含
-  `run.started`、`delegation.started`、`delegation.completed`、`run.completed`；
-  doctor 为 `status=ok`、3 Agents、11 Plugins、0 plugin errors。
+- 容器：doctor 为 `status=ok`、0 Agents、11 Plugins、provider 仅为
+  `openai_compatible`、0 plugin errors；控制 API 返回空的 Agent、Instance、凭据、模型档
+  和运行配置集合。
 - 隔离与清理：预先存在的同名 volume 被 fail-closed 拒绝且保持完好；host ports
   仅绑定 `127.0.0.1`；smoke 的两个容器、Compose network、SQLite volume 和两个
   临时 image tag 均已删除。

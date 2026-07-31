@@ -176,7 +176,7 @@ discover metadata
 ## 安全
 
 - tenant 必须来自认证上下文，不接受不可信 header 作为生产身份。
-- CredentialProfile/SecretRef 在 CredentialResolver 边界解析；数据库只保存密文与引用。
+- ModelConfig secret 在 provider 适配器边界解析；数据库只保存密文，Agent 只保存配置 ID。
 - approval 是服务端记录，不是 request metadata。
 - high-impact tool 使用 policy → approval → budget 顺序。
 - 未知 Python 插件与宿主等权，只能作为受信任代码或隔离。

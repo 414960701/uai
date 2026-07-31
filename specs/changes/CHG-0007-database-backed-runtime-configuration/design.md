@@ -20,6 +20,6 @@ mask 存库，master key 只来自启动 bootstrap；`ModelBinding._runtime_cred
 
 ## Migration boundary
 
-`api_key_env` 和 provider 环境变量取 AK 路径不再支持。非 mock Agent 必须在运行前绑定
-数据库 ModelProfile；ModelProfile 再引用启用的 CredentialProfile。迁移脚本/未来 SQL
+`api_key_env` 和 provider 环境变量取 AK 路径不再支持。Agent 必须在运行前绑定数据库
+ModelProfile；ModelProfile 再引用启用的 CredentialProfile。迁移脚本/未来 SQL
 适配器必须实现相同的仓储方法和脱敏响应合同。

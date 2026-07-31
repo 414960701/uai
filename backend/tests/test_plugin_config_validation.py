@@ -23,11 +23,14 @@ from uai_forge.run_manager import RunManager
 from uai_forge.runtime import AgentRuntime
 from uai_forge.settings import Settings
 from uai_forge.storage import SQLiteRepository
+from test_support import register_test_provider
 
 
 def make_registry() -> PluginRegistry:
     registry = PluginRegistry()
     register_builtins(registry)
+    register_test_provider(registry)
+    register_test_provider(registry, "openai_compatible")
     return registry
 
 
@@ -39,11 +42,11 @@ def make_registry() -> PluginRegistry:
                 name="Invalid Provider",
                 system_prompt="provider config",
                 model=ModelBinding(
-                    provider="mock",
+                    model_config_id="openai_compatible",
                     config={"unknown": True},
                 ),
             ),
-            "mock",
+            "openai_compatible",
             PluginKind.PROVIDER,
             "additionalProperties",
         ),
@@ -98,7 +101,10 @@ def test_every_runtime_binding_kind_uses_its_manifest_schema(
     registry = make_registry()
 
     with pytest.raises(PluginBindingError) as raised:
-        registry.validate_agent_spec(spec)
+        if kind == PluginKind.PROVIDER:
+            registry.validate_binding(plugin_id, kind, spec.model.config)
+        else:
+            registry.validate_agent_spec(spec)
 
     assert raised.value.as_detail() == {
         "code": "plugin.config_invalid",
@@ -171,10 +177,10 @@ def test_invalid_plugin_schema_unknown_plugin_and_kind_mismatch_are_stable():
     assert unknown.value.as_detail()["code"] == "plugin.not_found"
 
     with pytest.raises(PluginBindingError) as mismatch:
-        registry.validate_binding("mock", PluginKind.TOOL, {})
+        registry.validate_binding("openai_compatible", PluginKind.TOOL, {})
     assert mismatch.value.as_detail() == {
         "code": "plugin.kind_mismatch",
-        "plugin_id": "mock",
+        "plugin_id": "openai_compatible",
         "expected_kind": "tool",
         "path": "/",
         "registered_kinds": ["provider"],
@@ -214,10 +220,20 @@ def test_save_boundary_rejects_calculator_unknown_config_without_persisting(
         Settings(
             database_path=str(tmp_path / "save-boundary.db"),
             allowed_origins=["http://localhost:3000"],
-            seed_demo=False,
         )
     )
+    register_test_provider(app.state.container.registry)
     with TestClient(app) as client:
+        config = client.post(
+            "/api/v1/model-configs",
+            json={
+                "id": "mdl_test_default",
+                "name": "Test connection",
+                "provider": "test.deterministic",
+                "model": "deterministic",
+            },
+        )
+        assert config.status_code == 201
         response = client.post(
             "/api/v1/agents",
             json={
@@ -252,6 +268,7 @@ def test_save_boundary_rejects_calculator_unknown_config_without_persisting(
                 "id": "agt_calculator_patch_target",
                 "name": "Calculator Patch Target",
                 "system_prompt": "Start with a valid calculator binding.",
+                "model": {"model_config_id": "mdl_test_default"},
                 "tools": [{"plugin_id": "tool.calculator"}],
             },
         )
@@ -280,7 +297,7 @@ def test_save_boundary_rejects_calculator_unknown_config_without_persisting(
     ("plugin_id", "code"),
     [
         ("tool.missing", "plugin.not_found"),
-        ("mock", "plugin.kind_mismatch"),
+        ("openai_compatible", "plugin.kind_mismatch"),
     ],
 )
 def test_api_returns_stable_unknown_and_kind_mismatch_errors(
@@ -292,9 +309,9 @@ def test_api_returns_stable_unknown_and_kind_mismatch_errors(
         Settings(
             database_path=str(tmp_path / f"{code}.db"),
             allowed_origins=["http://localhost:3000"],
-            seed_demo=False,
         )
     )
+    register_test_provider(app.state.container.registry)
     with TestClient(app) as client:
         response = client.post(
             "/api/v1/agents",
@@ -317,9 +334,9 @@ def test_save_boundary_uses_dynamically_registered_plugin_schema(tmp_path: Path)
         Settings(
             database_path=str(tmp_path / "dynamic-plugin.db"),
             allowed_origins=["http://localhost:3000"],
-            seed_demo=False,
         )
     )
+    register_test_provider(app.state.container.registry)
     app.state.container.registry.register_tool(
         PluginManifest(
             id="tool.dynamic_schema",
@@ -336,12 +353,23 @@ def test_save_boundary_uses_dynamically_registered_plugin_schema(tmp_path: Path)
         lambda binding: object(),
     )
     with TestClient(app) as client:
+        config = client.post(
+            "/api/v1/model-configs",
+            json={
+                "id": "mdl_dynamic_schema",
+                "name": "Dynamic test connection",
+                "provider": "test.deterministic",
+                "model": "deterministic",
+            },
+        )
+        assert config.status_code == 201
         accepted = client.post(
             "/api/v1/agents",
             json={
                 "id": "agt_dynamic_schema_valid",
                 "name": "Dynamic Schema Valid",
                 "system_prompt": "Use a dynamically registered schema.",
+                "model": {"model_config_id": "mdl_dynamic_schema"},
                 "tools": [
                     {
                         "plugin_id": "tool.dynamic_schema",

@@ -10,8 +10,7 @@ from pydantic import Field
 from .models import (
     AgentInstance,
     AgentSpec,
-    CredentialProfile,
-    ModelProfile,
+    ModelConfig,
     RuntimeConfigEntry,
     PluginManifest,
     RunEvent,
@@ -60,20 +59,15 @@ class RepositoryPort(Protocol):
 
 @runtime_checkable
 class ConfigurationPort(Protocol):
-    """Optional control-plane surface for database-backed runtime profiles."""
+    """Optional control-plane surface for database-backed model configs."""
 
-    async def get_model_profile(
-        self, tenant_id: str, profile_id: str
-    ) -> Optional[ModelProfile]:
+    async def get_model_config(
+        self, tenant_id: str, config_id: str
+    ) -> Optional[ModelConfig]:
         ...
 
-    async def get_credential(
-        self, tenant_id: str, credential_id: str
-    ) -> Optional[CredentialProfile]:
-        ...
-
-    async def resolve_credential(
-        self, tenant_id: str, credential_id: str
+    async def resolve_model_config_secret(
+        self, tenant_id: str, config_id: str
     ) -> Optional[str]:
         ...
 

@@ -14,5 +14,5 @@ status: accepted
 | malformed 本地配置被静默吞掉 | 只对 `ENOENT` 降级；JSON 或读取错误继续失败 |
 | 为隐藏非 Secret ID 破坏性重写公开历史 | 记录历史存在，当前树清理；发现真实 Secret 时才要求轮换和历史清除 |
 
-仍接受的风险：Git 历史保留曾公开的非 Secret Sites 项目 ID；GitHub Actions 上游 action
-可能产生与本项目源码无关的弃用提示。
+仍接受的风险：Git 历史保留曾公开的非 Secret Sites 项目 ID；维护者需要自行安排发布门禁
+和依赖更新的执行计划。

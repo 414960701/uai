@@ -3,7 +3,7 @@ kind: normative
 id: ARCH-TESTING
 status: accepted
 version: 1.0.0
-last_reviewed: 2026-07-30
+last_reviewed: 2026-07-31
 ---
 
 # 测试策略
@@ -11,10 +11,12 @@ last_reviewed: 2026-07-30
 ## 原则
 
 1. 需求、协议和状态不变量优先于代码覆盖率。
-2. 主 CI 使用 deterministic provider 和受控工具，不把 LLM 文本质量当单测。
-3. 每个 `SHALL` 至少映射一个可重复的自动化证据。
-4. 恢复、幂等、取消、权限和租户边界必须有负向及故障测试。
-5. 同一个实现不能同时生成规范和唯一验收测试后自证正确。
+2. 测试在 `backend/tests` 内注册隔离的 test-only provider 和受控工具；产品 registry 不暴露测试 provider，也不把 LLM 文本质量当单测。
+3. Provider 协议转换必须使用 HTTP 边界 mock 覆盖；当前同时验证 OpenAI-compatible Chat
+   Completions 与 Anthropic Claude Messages 的 header、tool block 和 usage 映射。
+4. 每个 `SHALL` 至少映射一个可重复的自动化证据。
+5. 恢复、幂等、取消、权限和租户边界必须有负向及故障测试。
+6. 同一个实现不能同时生成规范和唯一验收测试后自证正确。
 
 ## 分层
 
@@ -25,10 +27,10 @@ last_reviewed: 2026-07-30
 | Adapter contract | 所有实现遵守自有 Protocol | 部分 built-in 测试 | Storage/Bus/Provider/Workspace TCK |
 | Integration | API + SQLite + runtime + event | FastAPI TestClient、真实 SQLite | Postgres、queue、outbox、migration |
 | Frontend | SSR、类型、lint、真实连接状态 | Node SSR test、lint、typecheck | 浏览器交互与无障碍 E2E |
-| Deployment | 生产镜像、健康、真实 API 委派 | 隔离 Compose smoke、容器 doctor、有序事件 | TLS/OIDC、备份恢复、多 worker chaos |
+| Deployment | 生产镜像、健康、无伪造数据的启动证据 | 隔离 Compose smoke、容器 doctor、空数据库与 provider 注册表 | 配置真实 provider 后的 API smoke、TLS/OIDC、备份恢复、多 worker chaos |
 | Recovery/chaos | 崩溃、重投、lease、取消 | 无 | kill worker、重复 delivery、网络分区 |
 | Security | tenant、Secret、policy、插件 | 基础 tenant 和协议拒绝 | OIDC/RBAC、approval、SSRF、泄露测试 |
-| Model eval | 任务质量和回归 | 无稳定套件 | nightly/release，和确定性 CI 分离 |
+| Model eval | 任务质量和回归 | 无稳定套件 | nightly/release，和本地协议门禁分离 |
 
 ## `0.1.0` 门禁
 
@@ -121,7 +123,7 @@ worker、事件顺序可解释。
 ## 前端验证
 
 - lint、typecheck、production build、SSR。
-- Live/demo/connecting 三种状态可区分，API 错误不能伪装成 live。
+- Live/disconnected/connecting 三种状态可区分，API 错误不能伪装成 live。
 - API key 仅存在当前页面内存，输入为 password 类型。
 - Agent 创建、Run 发起、取消和终态轮询走真实 API fixture。
 - 键盘导航、焦点、label、颜色对比和窄屏布局。

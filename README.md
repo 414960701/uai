@@ -15,12 +15,12 @@ UAI Forge 是一个以扩展契约为中心的 Python Agent 框架和多 Agent �
 - Provider、Tool、Memory、Middleware、Storage、Event Bus、Scheduler、UI
   八类扩展清单和 PyPA entry-point 发现。
 - 核心只依赖自有 Repository/Event Port；SQLite 与进程内 EventBroker 是可替换的内置适配器。
-- OpenAI-compatible 与确定性离线模型适配器。
+- OpenAI-compatible 模型适配器；没有内置演示或伪造模型。
 - SQLite 持久化、按 Run 单调排序的事件和可重连 SSE。
 - 数据库驱动的多凭据、多模型配置档和版本化运行配置；provider AK 加密存储，控制台仅展示脱敏信息。
 - React/TypeScript 管理后台：可发布 Agent 修订，配置模型、工具权限、记忆、中间件、
   子 Agent 固定修订/并发/输入模板，管理多个实例，并查看真实运行事件。
-- Docker、本地命令、Kubernetes 单副本示例、CI、规格、ADR、威胁模型与需求追踪。
+- Docker、本地命令、Kubernetes 单副本示例、规格、ADR、威胁模型与需求追踪。
 
 ## 架构
 
@@ -77,16 +77,16 @@ npm run dev
 打开 `http://localhost:3000`。页面会自动连接
 `http://localhost:8000/api/v1`；如果控制面不在线，会明确显示未连接空状态，不生成本地业务数据。
 
-业务配置全部由控制面数据库提供。首次接入真实模型时，请在“系统设置”创建凭据和模型
-配置档，再在 Agent 编辑器选择 `profile_id`；AK 不会写入 Agent JSON、浏览器持久化或事件。
+业务配置全部由控制面数据库提供。首次接入真实模型时，请在“凭证&模型配置”侧边栏创建
+一条统一连接，再在 Agent 编辑器选择 `model_config_id`；AK 不会写入 Agent JSON、浏览器
+持久化或事件。内置协议包括 OpenAI-compatible Chat Completions 和 Anthropic Claude
+Messages；DeepSeek、通义千问、Kimi、智谱、豆包、混元、MiniMax、百川、零一万物、阶跃
+星辰等常见国内模型均可从目录选择，也可以填写自定义模型 ID。
 本地/云端部署都应注入高熵 `UAI_FORGE_CREDENTIAL_MASTER_KEY`（由 Secret Manager 提供），
 不要依赖仅用于开发测试的默认 master key。
 
-离线模型可以直接验证多 Agent 委派：
-
-```text
-delegate:analyst 评估当前框架的扩展边界
-```
+首次运行不会写入示例 Agent 或运行记录；请先在“凭证&模型配置”创建数据库模型连接，再
+通过后台创建 Agent 和 Instance。真实模型调用只会使用已启用且已配置凭证的连接。
 
 ## Docker
 
@@ -99,8 +99,8 @@ docker compose up --build
 `127.0.0.1`；需要远程访问时，必须先配置控制密钥、可信 CORS/TLS，再显式把
 `UAI_FORGE_BIND_ADDRESS` 设为所需接口。
 
-完整的隔离容器验收会构建镜像、等待健康、运行 doctor、发起真实子 Agent 委派，
-并清理本次测试资源：
+完整的隔离容器验收会构建镜像、等待健康、运行 doctor、核对全新的数据库与 provider
+注册表，并清理本次测试资源：
 
 ```bash
 make container-smoke
@@ -117,11 +117,10 @@ npm test
 make container-smoke
 ```
 
-2026-07-31 当前基线在 Python 3.9.6 上为后端 `69 passed`；前端 lint、typecheck、
-production build 与 3 项 SSR/source 合同测试全部通过。真实浏览器委派 Run 产生
-17 条连续持久事件，并可通过 SSE `Last-Event-ID` 续播终态。单节点 Compose smoke
-还验证了双镜像构建、双容器健康、容器内 doctor、Web 运行镜像的开发工具裁剪与
-production-only audit、连续真实委派事件和隔离资源清理。完整开发工具链 audit 会
+2026-07-31 当前基线在 Python 3.9.6 上为后端 `73 passed`；前端 lint、typecheck、
+production build 与 SSR/source 合同测试全部通过。单节点 Compose smoke 还验证了双镜像
+构建、双容器健康、容器内 doctor、空数据库、唯一 provider 注册和 Web 运行镜像的开发
+工具裁剪与 production-only audit。完整开发工具链 audit 会
 单独审查，不能用未经验证的破坏性主版本升级静默消除。
 
 测试覆盖版本冲突、跨租户数据隔离、挂载环、子 Agent 委派、共享预算、
@@ -137,15 +136,15 @@ production-only audit、连续真实委派事件和隔离资源清理。完整�
 | `UAI_FORGE_CONTROL_API_KEY` | 空 | 设置后所有 `/api/v1` 请求必须携带密钥 |
 | `UAI_FORGE_CREDENTIAL_MASTER_KEY` | 空（仅开发回退） | 数据库凭据加密主密钥；部署必须由 Secret Manager 注入 |
 | `UAI_FORGE_ALLOWED_ORIGINS` | 本地后台地址 | 逗号分隔 CORS 来源 |
-| `UAI_FORGE_SEED_DEMO` | `true` | 空数据库是否写入研究团队示例 |
 | `UAI_FORGE_HOST` | `0.0.0.0` | API 监听地址 |
 | `UAI_FORGE_PORT` | `8000` | API 端口 |
 | `UAI_FORGE_BIND_ADDRESS` | `127.0.0.1` | Compose 发布到宿主机的绑定地址；远程暴露前先配置密钥/CORS/TLS |
 | `UAI_FORGE_WEB_HOST` | `0.0.0.0` | production Web 监听地址 |
 | `PORT` | `3000` | production Web 容器内端口 |
 
-模型 AK 通过“系统设置”写入数据库 CredentialProfile，并由 ModelProfile 引用；API 只返回
-脱敏 mask，运行时短暂解密。OpenAI-compatible provider 没有数据库凭据时会 fail closed。
+模型 AK 通过“凭证&模型配置”写入数据库 `ModelConfig` 的密文列；Agent 只引用
+`model_config_id`，API 只返回脱敏 mask，运行时短暂解密。OpenAI-compatible 和 Claude
+provider 没有数据库凭据时都会 fail closed。
 不要把 AK 写入 Agent 配置、环境文件、浏览器持久化或版本库。
 
 OpenAI Sites 的 `.openai/hosting.json` 同样只保存在部署者本机；公开源码提供

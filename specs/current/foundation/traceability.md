@@ -40,18 +40,20 @@ last_reviewed: 2026-07-31
 | `EXT-002` | Specified | 当前直接 entry-point load | v2 proposed Schema，无 preflight loader |
 | `EXT-003` | Specified | 普通 middleware | 缺不可绕过 PolicyEngine |
 | `EXT-004` | Specified | 无 plugin state | 缺 namespace/migration TCK |
-| `EXT-005` | Implemented（最小边界） | `RepositoryPort`、`EventStorePort`、`EventBusPort`、`EventStreamPort` | 非 SQLite/EventBroker 替身真实 Run + 内置适配器结构符合性测试；仍仅一套生产 adapter |
+| `EXT-005` | Implemented（最小边界） | `RepositoryPort`、`EventStorePort`、`EventBusPort`、`EventStreamPort` | 非 SQLite/EventBroker 替身真实 Run + OpenAI/Claude provider 协议边界测试；存储与事件仍仅单套生产 adapter |
 | `EXT-006` | Implemented | Registry Schema cache、API/Repository/Run/Runtime gates、Tool/delegate argument guard、binding-local memory policy | `test_plugin_config_validation.py`、`test_tool_argument_validation.py`、`test_memory_bindings.py` |
-| `SEC-001` | Partial | CredentialProfile 密文存储、ModelProfile 引用、运行时短暂解析、配置边界明文拒绝 | 多凭据/脱敏/运行解析有测；生产 Secret Manager 轮换、插件自定义字段与全输出泄露仍待完成 |
+| `EXT-007` | Implemented | 生产 registry 只注册 `openai_compatible` 与 `anthropic_messages`；测试 provider 位于 `backend/tests` | `test_builtin_provider_catalog_excludes_test_adapters`、容器 smoke |
+| `SEC-001` | Partial | ModelConfig 密文存储、Agent `model_config_id` 引用、运行时短暂解析、配置边界明文拒绝 | 多租户/脱敏/运行解析有测；生产 Secret Manager 轮换、插件自定义字段与全输出泄露仍待完成 |
 | `SEC-002` | Partial | tenant-scoped SQLite | `test_tenant_data_is_isolated`；header 不可信 |
 | `SEC-003` | Planned | 可选共享 API key | 缺 OIDC/RBAC/ABAC |
 | `SEC-004` | Partial | confirm fail-closed；服务端清空客户端审批声明 | 伪造防护有测；缺 Approval API 与恢复流程 |
 | `SEC-005` | Partial | 未持久化专门 CoT block | 缺 provider raw/log 泄露测试 |
-| `SEC-006` | Implemented | 锁定兼容依赖、CI production audit、裁剪 Web 运行镜像 | `npm ci`、production-only audit、lint/typecheck/test 与镜像内 audit 通过；完整开发链剩余项记录在 CHG-0005 |
+| `SEC-006` | Implemented | 锁定兼容依赖、生产依赖 audit、裁剪 Web 运行镜像 | `npm ci`、production-only audit、lint/typecheck/test 与镜像内 audit 通过；完整开发链剩余项记录在 CHG-0005 |
 | `SEC-007` | Implemented | 忽略真实 hosting 元数据、提交中性示例、Vite 缺省加载 | 无真实 hosting 文件的 lint/typecheck/build/4 项测试、容器 smoke 与当前树/历史扫描通过；证据见 CHG-0006 |
-| `UI-001` | Partial | 高级 revision/mount plugin scope/plugin/Instance 编辑、profile/credential/runtime 配置与真实 history | SSR/源合同测试 + rev 2、第二 Instance、17 条事件浏览器 E2E；缺 Schema 自动表单、Instance override、revision diff 与 peer |
+| `UI-001` | Partial | 高级 revision/mount plugin scope/plugin/Instance 编辑、ModelConfig/runtime 配置与真实 history | SSR/源合同测试 + rev 2、第二 Instance、17 条事件浏览器 E2E；缺 Schema 自动表单、Instance override、revision diff 与 peer |
 | `UI-002` | Implemented | live state；断线为空状态，不生成本地业务配置 | `rendered-html.test.mjs` 静态连接契约 |
 | `OBS-001` | Partial | Run Event/metrics | 缺 OTel/correlation/脱敏 |
 | `DEP-001` | Implemented | CLI/FastAPI/SQLite/Web | backend + frontend 门禁 |
-| `DEP-002` | Implemented | 已验证单节点 Docker/Compose 与 SQLite volume；Kubernetes 单副本清单是未实测示例 | `scripts/container-smoke.sh` + CI：双镜像、双健康容器、doctor、真实委派、连续事件与隔离清理 |
+| `DEP-002` | Implemented | 已验证单节点 Docker/Compose 与 SQLite volume；Kubernetes 单副本清单是未实测示例 | `scripts/container-smoke.sh`：双镜像、双健康容器、doctor、空数据库/provider 注册表与隔离清理 |
 | `DEP-003` | Planned | 无正式云 adapter | 需 Postgres/bus/chaos |
+| `DEP-004` | Implemented | 版本化 Makefile、测试命令和容器 smoke，不依赖仓库 workflow | `bash -n scripts/container-smoke.sh`、`npm test`、容器 smoke |

@@ -21,6 +21,7 @@ from uai_forge.registry import PluginRegistry
 from uai_forge.run_manager import InvalidTopologyError, RunManager
 from uai_forge.runtime import AgentRuntime
 from uai_forge.storage import SQLiteRepository
+from test_support import register_test_provider
 
 
 async def make_runtime(tmp_path: Path):
@@ -28,6 +29,8 @@ async def make_runtime(tmp_path: Path):
     await repository.initialize()
     registry = PluginRegistry()
     register_builtins(registry)
+    register_test_provider(registry)
+    register_test_provider(registry, "openai_compatible")
     events = EventBroker(repository)
     validator = AgentGraphValidator(repository)
     runtime = AgentRuntime(repository, registry, events)

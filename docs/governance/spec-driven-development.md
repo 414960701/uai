@@ -73,7 +73,7 @@ THE SYSTEM SHALL <可测行为>
 - 冻结需求、ADR、验收测试不由实现 Agent 改写。
 - 结构化输出经 Schema/Pydantic 校验。
 - 高影响动作“提议”和“执行”分离。
-- 主 CI 使用 deterministic fake provider；真实模型 eval 放 nightly/release。
+- 测试套件在测试边界注册隔离 provider；真实模型 eval 放 nightly/release，产品运行时不内置测试 provider。
 - 记录 provider/model、spec revision、插件版本、策略和调用树；不记录原始 CoT。
 - 独立 fresh-context reviewer 检查规范、实现与测试共谋错误。
 

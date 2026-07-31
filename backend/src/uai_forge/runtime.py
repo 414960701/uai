@@ -14,11 +14,12 @@ from .models import (
     EventType,
     ExecutionPolicy,
     ModelBinding,
+    PluginKind,
     RunEvent,
     RunRecord,
 )
 from .ports import EventBusPort, ModelMessage, ModelRequest, RepositoryPort, ToolCall
-from .registry import PluginRegistry
+from .registry import PluginBindingError, PluginRegistry
 from .schema_validation import (
     InvalidJsonSchema,
     compile_json_schema,
@@ -182,53 +183,61 @@ class AgentRuntime:
     async def _resolve_model_binding(
         self, tenant_id: str, binding: ModelBinding
     ) -> ModelBinding:
-        """Resolve a database profile into a short-lived provider binding.
+        """Resolve a tenant ModelConfig into a short-lived provider binding.
 
         The returned object is never persisted.  Its credential is a private
         Pydantic attribute so it cannot enter Agent specs, Run records, events,
         traces or API responses.
         """
 
-        get_profile = getattr(self.repository, "get_model_profile", None)
-        resolve_credential = getattr(self.repository, "resolve_credential", None)
-        profile_id = binding.profile_id
-        if not profile_id:
+        get_config = getattr(self.repository, "get_model_config", None)
+        resolve_secret = getattr(self.repository, "resolve_model_config_secret", None)
+        config_id = binding.model_config_id
+        if not config_id:
             get_runtime_config = getattr(self.repository, "get_runtime_config", None)
             if get_runtime_config is not None:
                 default = await get_runtime_config(
-                    tenant_id, "runtime.default_model_profile_id"
+                    tenant_id, "runtime.default_model_config_id"
                 )
                 if default is not None and isinstance(default.value, str):
-                    profile_id = default.value
-        if not profile_id:
-            if binding.provider == "openai_compatible":
-                raise RuntimeGuardError(
-                    "openai_compatible provider requires a database model profile"
-                )
-            return binding
-        if get_profile is None:
-            raise RuntimeGuardError("database-backed model profiles are unavailable")
-        profile = await get_profile(tenant_id, profile_id)
-        if profile is None or not profile.enabled:
-            raise RuntimeGuardError(f"model profile is unavailable: {profile_id}")
+                    config_id = default.value
+        if not config_id:
+            raise RuntimeGuardError("agent requires a database model configuration")
+        if get_config is None:
+            raise RuntimeGuardError("database-backed model configurations are unavailable")
+        model_config = await get_config(tenant_id, config_id)
+        if model_config is None or not model_config.enabled:
+            raise RuntimeGuardError(f"model configuration is unavailable: {config_id}")
 
-        # Profile values are the defaults; an Agent revision may carry
+        # ModelConfig values are the defaults; an Agent revision may carry
         # non-secret extension overrides that are also persisted in SQLite.
-        config = {**profile.config, **binding.config}
-        if profile.base_url:
-            config.setdefault("base_url", profile.base_url)
+        config = {**model_config.config, **binding.config}
+        if model_config.base_url:
+            config.setdefault("base_url", model_config.base_url)
+        try:
+            self.registry.validate_binding(model_config.provider, PluginKind.PROVIDER, config)
+        except PluginBindingError as exc:
+            raise RuntimeGuardError("model configuration is invalid") from exc
         resolved = ModelBinding(
-            provider=profile.provider,
-            model=profile.model,
-            profile_id=profile.id,
+            model_config_id=model_config.id,
             config=config,
         )
-        if profile.credential_profile_id:
-            if resolve_credential is None:
-                raise RuntimeGuardError("database-backed credentials are unavailable")
-            secret = await resolve_credential(tenant_id, profile.credential_profile_id)
+        resolved._runtime_provider = model_config.provider
+        resolved._runtime_protocol = model_config.protocol
+        resolved._runtime_model = model_config.model
+        if self.registry.manifests(PluginKind.PROVIDER):
+            manifest = self.registry.manifest(model_config.provider, PluginKind.PROVIDER)
+            if manifest is not None and manifest.credential_required:
+                if resolve_secret is None:
+                    raise RuntimeGuardError("database-backed model secrets are unavailable")
+                secret = await resolve_secret(tenant_id, model_config.id)
+                if not secret:
+                    raise RuntimeGuardError("model configuration secret is unavailable")
+                resolved._runtime_credential = secret
+        elif resolve_secret is not None:
+            secret = await resolve_secret(tenant_id, model_config.id)
             if not secret:
-                raise RuntimeGuardError("model credential profile is unavailable")
+                raise RuntimeGuardError("model configuration secret is unavailable")
             resolved._runtime_credential = secret
         return resolved
 

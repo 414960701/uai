@@ -20,7 +20,6 @@ requirements:
     implementation:
       - backend/src/uai_forge/models.py
       - backend/src/uai_forge/runtime.py
-      - backend/src/uai_forge/seed.py
     verification:
       - backend/tests/test_multi_agent_policy.py
       - backend/tests/test_api.py

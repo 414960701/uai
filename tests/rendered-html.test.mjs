@@ -53,8 +53,9 @@ test("removes starter-only infrastructure and wires the product client", async (
   assert.match(layout, /UAI Forge/);
   assert.match(layout, /lang="zh-CN"/);
   assert.match(controlCenter, /http:\/\/localhost:8000\/api\/v1/);
-  assert.match(controlCenter, /delegate:analyst/);
   assert.match(controlCenter, /mode === "live"/);
+  assert.match(controlCenter, /mode === "disconnected"/);
+  assert.doesNotMatch(controlCenter, /mock|demoEvents|delegate:analyst/i);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 
   await assert.rejects(access(new URL("app/_sites-preview", projectRoot)));
@@ -67,6 +68,23 @@ test("keeps advanced Agent configuration and real event history wired", async ()
   );
 
   assert.match(controlCenter, /模型配置 JSON/);
+  assert.match(controlCenter, /常用模型已列出/);
+  assert.match(controlCenter, /自定义模型 ID/);
+  assert.match(controlCenter, /DeepSeek 兼容接口/);
+  assert.match(controlCenter, /Qwen3-Coder/);
+  assert.match(controlCenter, /Kimi K2 Thinking/);
+  assert.match(controlCenter, /豆包 Seed 1.6/);
+  assert.match(controlCenter, /豆包 Seed 2.1 Pro/);
+  assert.match(controlCenter, /腾讯混元 T1/);
+  assert.match(controlCenter, /MiniMax M2/);
+  assert.match(controlCenter, /MiniMax M3/);
+  assert.match(controlCenter, /Qwen3.8 Max Preview/);
+  assert.match(controlCenter, /Kimi K2.7 Code/);
+  assert.match(controlCenter, /GLM-5 Turbo/);
+  assert.match(controlCenter, /凭证&模型配置/);
+  assert.match(controlCenter, /anthropic_messages/);
+  assert.match(controlCenter, /MODEL_TIMEOUT_OPTIONS/);
+  assert.match(controlCenter, /Provider 扩展参数 JSON/);
   assert.match(controlCenter, /记忆与中间件/);
   assert.match(controlCenter, /固定修订/);
   assert.match(controlCenter, /输入模板/);
@@ -86,12 +104,13 @@ test("keeps advanced Agent configuration and real event history wired", async ()
   assert.match(controlCenter, /环境标签（不负责部署）/);
   assert.match(controlCenter, /全链路事件脱敏/);
   assert.match(controlCenter, /单节点容器/);
-  assert.match(controlCenter, /真实委派/);
+  assert.match(controlCenter, /events\/history/);
   assert.match(controlCenter, /deployment-state verified/);
   assert.match(controlCenter, /可恢复云集群/);
   assert.match(controlCenter, /deployment-state planned/);
   assert.doesNotMatch(controlCenter, /尚未真实启动验收/);
   assert.doesNotMatch(controlCenter, /function SettingToggle/);
+  assert.doesNotMatch(controlCenter, /mock|demoEvents|delegate:analyst/i);
 });
 
 test("keeps account-specific hosting metadata out of portable source", async () => {

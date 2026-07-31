@@ -241,11 +241,8 @@ class PluginRegistry:
     def validate_agent_spec(self, spec: AgentSpec) -> None:
         """Validate every binding, including disabled bindings, fail closed."""
 
-        self.validate_binding(
-            spec.model.provider,
-            PluginKind.PROVIDER,
-            spec.model.config,
-        )
+        # Provider adapter/schema validation happens after the tenant ModelConfig
+        # is resolved. Agent revisions intentionally store only model_config_id.
         for binding in spec.tools:
             self.validate_binding(
                 binding.plugin_id,
@@ -338,6 +335,11 @@ class PluginRegistry:
         if kind is not None:
             values = [item for item in values if item.kind == kind]
         return sorted(values, key=lambda item: (item.kind.value, item.display_name.lower()))
+
+    def manifest(self, plugin_id: str, kind: PluginKind) -> Optional[PluginManifest]:
+        """Return registered manifest metadata without exposing an implementation."""
+
+        return self._manifests.get((kind, plugin_id))
 
     def discover_entry_points(self) -> None:
         """Load third-party plugin bundles without making discovery fatal."""

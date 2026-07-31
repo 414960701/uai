@@ -13,7 +13,7 @@ target: 0.1.x
 
 `vite.config.ts` 在 Node 配置阶段读取可选 hosting 文件：文件不存在时返回
 `{ d1: null, r2: null }`；文件存在但 JSON 损坏时保持 fail closed 并让构建失败。这样
-普通 checkout、CI 和容器构建不需要临时生成部署文件，而本地 Sites 部署仍能读取真实
+普通 checkout、本地发布门禁和容器构建不需要临时生成部署文件，而本地 Sites 部署仍能读取真实
 binding 名称。
 
 仓库卫生测试验证 ignore 规则、示例内容和可选加载约定。发布审计同时扫描当前索引与所有

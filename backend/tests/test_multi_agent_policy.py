@@ -25,6 +25,7 @@ from uai_forge.registry import PluginRegistry
 from uai_forge.run_manager import RunManager
 from uai_forge.runtime import AgentRuntime
 from uai_forge.storage import SQLiteRepository
+from test_support import register_test_provider
 
 
 async def make_runtime(tmp_path: Path):
@@ -32,6 +33,8 @@ async def make_runtime(tmp_path: Path):
     await repository.initialize()
     registry = PluginRegistry()
     register_builtins(registry)
+    register_test_provider(registry)
+    register_test_provider(registry, "openai_compatible")
     events = EventBroker(repository)
     validator = AgentGraphValidator(repository)
     runtime = AgentRuntime(repository, registry, events)
@@ -215,7 +218,7 @@ async def test_child_timeout_cancels_and_releases_all_concurrency_permits(tmp_pa
             id="agt_timeout_child",
             name="Timeout Child",
             system_prompt="Complete the task.",
-            model=ModelBinding(provider="test.first_slow", model="slow"),
+            model=ModelBinding(model_config_id="test.first_slow"),
             policy=ExecutionPolicy(timeout_seconds=0.03),
         ),
     )
@@ -311,7 +314,7 @@ async def test_child_local_parallel_limit_caps_grandchild_fanout(tmp_path):
             id="agt_parallel_leaf",
             name="Parallel Leaf",
             system_prompt="Complete the leaf task.",
-            model=ModelBinding(provider="test.tracking_leaf", model="leaf"),
+            model=ModelBinding(model_config_id="test.tracking_leaf"),
             policy=ExecutionPolicy(timeout_seconds=1),
         ),
     )
@@ -321,7 +324,7 @@ async def test_child_local_parallel_limit_caps_grandchild_fanout(tmp_path):
             id="agt_parallel_middle",
             name="Parallel Middle",
             system_prompt="Fan out.",
-            model=ModelBinding(provider="test.fanout", model="fanout"),
+            model=ModelBinding(model_config_id="test.fanout"),
             children=[
                 ChildMount(
                     alias="leaf",
@@ -499,7 +502,7 @@ async def test_mount_allowlist_null_is_compatible_and_empty_denies_all_tools(
             id="agt_scope_echo_child",
             name="Scope Echo Child",
             system_prompt="Call echo.",
-            model=ModelBinding(provider="test.forced_echo", model="forced"),
+            model=ModelBinding(model_config_id="test.forced_echo"),
             tools=[ToolBinding(plugin_id="tool.echo", alias="echo")],
         ),
     )
@@ -610,8 +613,7 @@ async def test_descendant_mount_cannot_expand_ancestor_tool_scope(tmp_path):
             name="Scope Leaf",
             system_prompt="Call calculator.",
             model=ModelBinding(
-                provider="test.forced_calculator",
-                model="forced",
+                model_config_id="test.forced_calculator",
             ),
             tools=[
                 ToolBinding(
@@ -701,8 +703,7 @@ async def test_mount_allowlist_cannot_upgrade_child_deny_policy(
             name="Scope Denied Child",
             system_prompt="Attempt echo.",
             model=ModelBinding(
-                provider="test.forced_denied_echo",
-                model="forced",
+                model_config_id="test.forced_denied_echo",
             ),
             tools=[
                 ToolBinding(

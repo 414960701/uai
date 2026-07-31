@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 import time
 from pathlib import Path
@@ -6,153 +7,174 @@ from fastapi.testclient import TestClient
 
 from uai_forge.api import create_app
 from uai_forge.settings import Settings
+from test_support import register_test_provider
 
 
 def make_client(tmp_path: Path) -> TestClient:
-    return TestClient(
-        create_app(
-            Settings(
-                database_path=str(tmp_path / "configuration.db"),
-                credential_master_key="test-master-key",
-                seed_demo=True,
-            )
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    app = create_app(
+        Settings(
+            database_path=str(tmp_path / "configuration.db"),
+            credential_master_key="test-master-key",
         )
     )
+    register_test_provider(app.state.container.registry)
+    return TestClient(app)
 
 
-def test_credentials_are_encrypted_and_tenant_scoped(tmp_path):
+def test_model_configs_are_encrypted_and_tenant_scoped(tmp_path):
     database_path = tmp_path / "configuration.db"
     with make_client(tmp_path) as client:
         secret = "sk-test-never-return-this"
         created = client.post(
-            "/api/v1/credentials",
+            "/api/v1/model-configs",
             json={
-                "id": "cred_primary",
+                "id": "cfg_primary",
                 "name": "Primary OpenAI",
                 "provider": "openai_compatible",
+                "model": "gpt-4o-mini",
+                "base_url": "https://api.openai.com/v1",
                 "secret": secret,
             },
         )
         assert created.status_code == 201
         assert secret not in created.text
-        assert created.json()["masked_value"] == "sk-…this"
-
-        assert client.get("/api/v1/credentials/cred_primary").json()["masked_value"] == "sk-…this"
+        assert created.json()["masked_secret"] == "sk-…this"
+        assert client.get("/api/v1/model-configs/cfg_primary").json()["masked_secret"] == "sk-…this"
         assert client.get(
-            "/api/v1/credentials/cred_primary", headers={"X-Tenant-ID": "other"}
+            "/api/v1/model-configs/cfg_primary", headers={"X-Tenant-ID": "other"}
         ).status_code == 404
-        invalid = client.post(
-            "/api/v1/credentials",
-            json={
-                "name": "Bad credential",
-                "provider": "openai_compatible",
-                "secret": "",
-            },
-        )
-        assert invalid.status_code == 422
-        assert secret not in invalid.text
 
         raw = sqlite3.connect(database_path).execute(
-            "SELECT secret_ciphertext, metadata_json FROM credential_profiles"
+            "SELECT secret_ciphertext, metadata_json FROM model_configs"
         ).fetchone()
+        assert raw is not None
         assert secret not in raw[0]
         assert secret not in raw[1]
+        tables = {
+            row[0]
+            for row in sqlite3.connect(database_path).execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert "credential_profiles" not in tables
+        assert "model_profiles" not in tables
 
 
-def test_multiple_model_profiles_and_references_are_database_backed(tmp_path):
+def test_agents_require_enabled_model_config(tmp_path):
     with make_client(tmp_path) as client:
-        credential = client.post(
-            "/api/v1/credentials",
+        missing = client.post(
+            "/api/v1/agents",
             json={
-                "id": "cred_for_model",
-                "name": "Model credential",
-                "provider": "openai_compatible",
-                "api_key": "sk-model-secret",
+                "id": "agt_missing_config",
+                "name": "Missing Config Agent",
+                "system_prompt": "Must fail closed.",
+                "model": {"model_config_id": "cfg_missing"},
             },
         )
-        assert credential.status_code == 201
-        profile = client.post(
-            "/api/v1/model-profiles",
+        assert missing.status_code == 422
+
+        disabled = client.post(
+            "/api/v1/model-configs",
             json={
-                "id": "mdl_db_mock",
-                "name": "DB mock profile",
-                "provider": "mock",
+                "id": "cfg_disabled",
+                "name": "Disabled connection",
+                "provider": "test.deterministic",
+                "model": "deterministic",
+                "enabled": False,
+            },
+        )
+        assert disabled.status_code == 201
+        rejected = client.post(
+            "/api/v1/agents",
+            json={
+                "id": "agt_disabled_config",
+                "name": "Disabled Config Agent",
+                "system_prompt": "Must fail closed.",
+                "model": {"model_config_id": "cfg_disabled"},
+            },
+        )
+        assert rejected.status_code == 422
+
+        enabled = client.post(
+            "/api/v1/model-configs",
+            json={
+                "id": "cfg_enabled",
+                "name": "Enabled connection",
+                "provider": "test.deterministic",
                 "model": "deterministic",
             },
         )
-        assert profile.status_code == 201
-        profile_with_credential = client.post(
-            "/api/v1/model-profiles",
+        assert enabled.status_code == 201
+        accepted = client.post(
+            "/api/v1/agents",
             json={
-                "id": "mdl_db_openai",
-                "name": "DB OpenAI profile",
-                "provider": "openai_compatible",
-                "model": "gpt-test",
-                "credential_profile_id": "cred_for_model",
-                "base_url": "https://example.invalid/v1",
+                "id": "agt_enabled_config",
+                "name": "Enabled Config Agent",
+                "system_prompt": "Use the database connection.",
+                "model": {"model_config_id": "cfg_enabled"},
             },
         )
-        assert profile_with_credential.status_code == 201
+        assert accepted.status_code == 201
+        assert accepted.json()["model"] == {"model_config_id": "cfg_enabled", "config": {}}
 
+
+def test_model_config_delete_is_guarded_by_agent_revisions(tmp_path):
+    with make_client(tmp_path) as client:
+        created = client.post(
+            "/api/v1/model-configs",
+            json={
+                "id": "cfg_referenced",
+                "name": "Referenced connection",
+                "provider": "test.deterministic",
+                "model": "deterministic",
+            },
+        )
+        assert created.status_code == 201
         agent = client.post(
             "/api/v1/agents",
             json={
-                "id": "agt_profile_agent",
-                "name": "Profile Agent",
-                "system_prompt": "Use the selected database profile.",
-                "model": {
-                    "provider": "mock",
-                    "model": "ignored-by-profile",
-                    "profile_id": "mdl_db_mock",
-                },
+                "id": "agt_referencing_config",
+                "name": "Referencing Agent",
+                "system_prompt": "Use the selected connection.",
+                "model": {"model_config_id": "cfg_referenced"},
             },
         )
         assert agent.status_code == 201
-        assert agent.json()["model"]["profile_id"] == "mdl_db_mock"
+        assert client.delete("/api/v1/model-configs/cfg_referenced").status_code == 409
 
-        run = client.post(
-            "/api/v1/runs",
-            json={"agent_id": "agt_profile_agent", "input": "database profile run"},
+        assert client.delete("/api/v1/agents/agt_referencing_config").status_code == 204
+        # Historical revisions remain durable, so the reference guard is
+        # intentionally still active after deleting the latest Agent row.
+        assert client.delete("/api/v1/model-configs/cfg_referenced").status_code == 409
+        unused = client.post(
+            "/api/v1/model-configs",
+            json={
+                "id": "cfg_unused",
+                "name": "Unused connection",
+                "provider": "test.deterministic",
+                "model": "deterministic",
+            },
         )
-        assert run.status_code == 202
-        for _ in range(50):
-            latest = client.get(f"/api/v1/runs/{run.json()['id']}").json()
-            if latest["status"] in {"succeeded", "failed", "cancelled"}:
-                break
-            time.sleep(0.02)
-        assert latest["status"] == "succeeded"
-        assert "sk-model-secret" not in str(latest)
-
-        assert client.delete("/api/v1/credentials/cred_for_model").status_code == 409
-        assert client.delete("/api/v1/model-profiles/mdl_db_mock").status_code == 409
+        assert unused.status_code == 201
+        assert client.delete("/api/v1/model-configs/cfg_unused").status_code == 204
 
 
-def test_openai_profiles_require_database_credentials(tmp_path):
+def test_openai_model_configs_require_database_credentials(tmp_path):
     with make_client(tmp_path) as client:
         profile = client.post(
-            "/api/v1/model-profiles",
+            "/api/v1/model-configs",
             json={
-                "id": "mdl_openai_without_credential",
-                "name": "Invalid OpenAI profile",
+                "id": "cfg_openai_without_secret",
+                "name": "Invalid OpenAI connection",
                 "provider": "openai_compatible",
-                "model": "gpt-test",
+                "model": "gpt-4o-mini",
             },
         )
         assert profile.status_code == 422
-
-        agent = client.post(
-            "/api/v1/agents",
-            json={
-                "id": "agt_openai_without_profile",
-                "name": "Invalid OpenAI Agent",
-                "system_prompt": "Must fail closed before a run.",
-                "model": {
-                    "provider": "openai_compatible",
-                    "model": "gpt-test",
-                },
-            },
-        )
-        assert agent.status_code == 422
 
 
 def test_runtime_config_is_versioned_and_rejects_secrets(tmp_path):

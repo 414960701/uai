@@ -20,4 +20,4 @@ plugins:
   protocol_change: false
 rollback:
   data_migration_required: false
-  note: "Revert the smoke/CI and compatible dependency updates; runtime data and public contracts are unchanged"
+  note: "Revert the smoke and compatible dependency updates; runtime data and public contracts are unchanged"

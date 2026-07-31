@@ -22,6 +22,25 @@ def test_builtin_capability_catalog_covers_extension_points():
     }.issubset(kinds)
 
 
+def test_builtin_provider_catalog_excludes_test_adapters():
+    registry = PluginRegistry()
+    register_builtins(registry)
+
+    providers = registry.manifests(PluginKind.PROVIDER)
+    assert [manifest.id for manifest in providers] == [
+        "anthropic_messages",
+        "openai_compatible",
+    ]
+    assert all("test" not in manifest.id for manifest in providers)
+    assert any(item.id == "deepseek-r1" for item in providers[1].model_catalog)
+    assert any(item.id == "qwen3.8-max-preview" for item in providers[1].model_catalog)
+    assert any(item.id == "kimi-k2.7-code" for item in providers[1].model_catalog)
+    assert any(item.id == "glm-5-turbo" for item in providers[1].model_catalog)
+    assert any(item.id == "doubao-seed-2-1-pro" for item in providers[1].model_catalog)
+    assert any(item.id == "MiniMax-M3" for item in providers[1].model_catalog)
+    assert any(item.id == "claude-sonnet-5" for item in providers[0].model_catalog)
+
+
 def test_incompatible_plugin_protocol_fails_closed():
     registry = PluginRegistry()
     manifest = PluginManifest(

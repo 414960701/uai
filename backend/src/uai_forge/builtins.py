@@ -6,9 +6,9 @@ from .memory import IN_PROCESS_MEMORY_MANIFEST, create_in_process_memory
 from .middleware import AUDIT_MIDDLEWARE_MANIFEST, create_audit_tags
 from .models import PluginKind, PluginManifest
 from .providers import (
-    MOCK_MANIFEST,
+    ANTHROPIC_MESSAGES_MANIFEST,
     OPENAI_COMPATIBLE_MANIFEST,
-    create_mock_provider,
+    create_anthropic_messages_provider,
     create_openai_compatible_provider,
 )
 from .registry import PluginRegistry
@@ -23,8 +23,8 @@ from .tools import (
 
 
 def register_builtins(registry: PluginRegistry) -> None:
-    registry.register_provider(MOCK_MANIFEST, create_mock_provider)
     registry.register_provider(OPENAI_COMPATIBLE_MANIFEST, create_openai_compatible_provider)
+    registry.register_provider(ANTHROPIC_MESSAGES_MANIFEST, create_anthropic_messages_provider)
     registry.register_tool(CALCULATOR_MANIFEST, create_calculator)
     registry.register_tool(ECHO_MANIFEST, create_echo)
     registry.register_tool(UTC_NOW_MANIFEST, create_utc_now)

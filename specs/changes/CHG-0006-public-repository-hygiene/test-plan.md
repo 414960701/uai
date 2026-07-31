@@ -19,9 +19,8 @@ status: passed
 - 后端 `65 passed in 3.78s`；compileall 与 pip check 通过。
 - production-only npm audit 为 0 vulnerabilities；Compose 配置、Shell/Node 语法与
   `git diff --check` 通过。
-- 单节点 smoke Run `run_89187dde8d934ffc` succeeded，17 条事件从 1 连续到 17；两个
-  容器 healthy，doctor `status=ok`，容器、network、volume 和临时镜像完成清理。
+- 单节点 smoke 两个容器 healthy，doctor `status=ok`、provider 仅为
+  `openai_compatible`，空数据库和资源清理检查通过。
 - 当前索引除待删除的旧 hosting 文件外未发现维护者账号、本机路径、token 或私钥签名；
   三个既有历史提交只命中同一个非 Secret Sites 项目 ID。
-- GitHub Actions Run `30635506117` 对提交 `3394b33` 的 Python 3.9、Python 3.12、
-  Frontend 和 Containers 四个 job 全部成功。
+- 公开提交 `3394b33` 的历史远端检查曾全部成功；本变更后的门禁由维护者显式运行。

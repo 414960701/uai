@@ -1,0 +1,18 @@
+change_id: CHG-0008
+api:
+  payload_changed: true
+  breaking_behavior: "mock/test provider IDs and seeded resources are no longer available"
+runtime:
+  execution_semantics_changed: true
+  note: "A configured real provider is required for model execution"
+deployment:
+  workflow_removed: true
+  local_gates_remain: true
+storage:
+  schema_change: false
+  migration_required: false
+plugins:
+  builtin_provider_catalog_reduced: true
+rollback:
+  data_migration_required: false
+  note: "Rollback would reintroduce intentionally removed demo behavior and is not supported"

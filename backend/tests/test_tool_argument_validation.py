@@ -23,6 +23,7 @@ from uai_forge.registry import PluginRegistry
 from uai_forge.run_manager import RunManager
 from uai_forge.runtime import AgentRuntime
 from uai_forge.storage import SQLiteRepository
+from test_support import register_test_provider
 
 
 class ForcedArgumentsProvider:
@@ -74,6 +75,7 @@ async def make_runtime(tmp_path: Path, filename: str):
     await repository.initialize()
     registry = PluginRegistry()
     register_builtins(registry)
+    register_test_provider(registry, "openai_compatible")
     events = EventBroker(repository)
     runtime = AgentRuntime(repository, registry, events)
     manager = RunManager(
@@ -141,8 +143,7 @@ async def test_tool_arguments_reject_required_extra_and_type_before_invoke(
             name=f"{keyword} Arguments",
             system_prompt="Call the configured tool.",
             model=ModelBinding(
-                provider=provider_id,
-                model="forced",
+                model_config_id=provider_id,
             ),
             tools=[tool],
             policy=ExecutionPolicy(max_steps=3),
@@ -207,7 +208,7 @@ async def test_delegation_arguments_are_schema_validated_before_child_start(
             id=f"agt_delegation_parent_{keyword.lower()}",
             name="Delegation Parent",
             system_prompt="Delegate with forced arguments.",
-            model=ModelBinding(provider=provider_id, model="forced"),
+            model=ModelBinding(model_config_id=provider_id),
             children=[ChildMount(alias="child", agent_id=child.id)],
             policy=ExecutionPolicy(max_steps=3, max_depth=2),
         ),
@@ -307,8 +308,7 @@ async def test_middleware_mutated_arguments_are_revalidated_before_invoke(tmp_pa
             name="Middleware Argument Guard",
             system_prompt="Use a middleware-mutated tool call.",
             model=ModelBinding(
-                provider="provider.middleware_arguments",
-                model="forced",
+                model_config_id="provider.middleware_arguments",
             ),
             tools=[
                 ToolBinding(
@@ -392,8 +392,7 @@ async def test_invalid_tool_parameter_schema_fails_before_provider_call(tmp_path
             name="Invalid Parameter Schema",
             system_prompt="Fail before calling the provider.",
             model=ModelBinding(
-                provider="provider.never_called",
-                model="recording",
+                model_config_id="provider.never_called",
             ),
             tools=[
                 ToolBinding(

@@ -65,7 +65,7 @@ compose-logs: ## Follow local container logs
 docker-build: ## Build both production container images
 	docker compose build
 
-container-smoke: ## Build, start, health-check, and exercise bounded delegation in containers
+container-smoke: ## Build, start, health-check, and verify fresh database/provider state
 	./scripts/container-smoke.sh
 
 clean: ## Remove generated local build output (keeps SQLite data)

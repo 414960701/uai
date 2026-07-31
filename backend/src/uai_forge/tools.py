@@ -1,4 +1,4 @@
-"""Small, safe reference tools used by the demo and compatibility tests."""
+"""Small, safe reference tools used by the product and compatibility tests."""
 
 from __future__ import annotations
 

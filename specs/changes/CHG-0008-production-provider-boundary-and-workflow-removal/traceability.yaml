@@ -1,0 +1,18 @@
+change_id: CHG-0008
+requirements:
+  EXT-007:
+    implementation:
+      - backend/src/uai_forge/builtins.py
+      - backend/src/uai_forge/providers.py
+      - backend/tests/test_support.py
+    verification:
+      - backend/tests/test_registry.py::test_builtin_provider_catalog_excludes_test_adapters
+      - scripts/container-smoke.sh
+  DEP-004:
+    implementation:
+      - Makefile
+      - scripts/container-smoke.sh
+      - tests/rendered-html.test.mjs
+    verification:
+      - bash -n scripts/container-smoke.sh
+      - npm test

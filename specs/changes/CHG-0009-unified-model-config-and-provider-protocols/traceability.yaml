@@ -1,0 +1,40 @@
+change: CHG-0009
+requirements:
+  R1:
+    implementation:
+      - backend/src/uai_forge/models.py
+      - backend/src/uai_forge/storage.py
+      - backend/src/uai_forge/api.py
+      - app/control-center.tsx
+    tests:
+      - backend/tests/test_database_configuration.py::test_model_configs_are_encrypted_and_tenant_scoped
+      - backend/tests/test_database_configuration.py::test_agents_require_enabled_model_config
+  R2:
+    implementation:
+      - backend/src/uai_forge/storage.py
+      - backend/src/uai_forge/runtime.py
+    tests:
+      - backend/tests/test_database_configuration.py::test_model_config_delete_is_guarded_by_agent_revisions
+  R3:
+    implementation:
+      - backend/src/uai_forge/providers.py
+      - backend/src/uai_forge/ports.py
+    tests:
+      - backend/tests/test_providers.py::test_openai_compatible_provider_maps_core_request
+      - backend/tests/test_providers.py::test_anthropic_messages_provider_maps_tools_and_usage
+  R4:
+    implementation:
+      - backend/src/uai_forge/builtins.py
+      - app/control-center.tsx
+    tests:
+      - backend/tests/test_registry.py::test_provider_manifests_expose_model_catalog
+      - tests/rendered-html.test.mjs
+  R5:
+    implementation:
+      - specs/traceability.yaml
+      - scripts/container-smoke.sh
+    tests:
+      - backend/tests
+      - npm run lint
+      - npm run typecheck
+      - npm test

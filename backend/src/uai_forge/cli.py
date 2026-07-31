@@ -10,20 +10,22 @@ import uvicorn
 
 from .api import create_app
 from .container import Container
-from .seed import seed_demo_data
+from .models import PluginKind
 from .settings import Settings
 
 
 async def _doctor(settings: Settings) -> int:
     container = Container.build(settings)
     await container.repository.initialize()
-    if settings.seed_demo:
-        await seed_demo_data(container.repository)
     agents = await container.repository.list_agents("default")
     payload = {
         "database": settings.database_path,
         "agents": len(agents),
         "plugins": len(container.registry.manifests()),
+        "providers": [
+            manifest.id
+            for manifest in container.registry.manifests(PluginKind.PROVIDER)
+        ],
         "plugin_errors": container.registry.discovery_errors,
         "status": "ok" if not container.registry.discovery_errors else "degraded",
     }

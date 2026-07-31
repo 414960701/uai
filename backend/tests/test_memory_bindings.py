@@ -19,6 +19,7 @@ from uai_forge.registry import PluginRegistry
 from uai_forge.run_manager import RunManager
 from uai_forge.runtime import AgentRuntime
 from uai_forge.storage import SQLiteRepository
+from test_support import register_test_provider
 
 
 @pytest.mark.asyncio
@@ -27,6 +28,8 @@ async def test_disabled_memory_binding_never_creates_loads_or_appends(tmp_path):
     await repository.initialize()
     registry = PluginRegistry()
     register_builtins(registry)
+    register_test_provider(registry)
+    register_test_provider(registry, "openai_compatible")
     calls = {"create": 0, "load": 0, "append": 0}
 
     class RecordingMemory:

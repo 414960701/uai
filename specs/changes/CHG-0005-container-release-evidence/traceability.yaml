@@ -8,7 +8,6 @@ requirements:
       - scripts/container-smoke.sh
     verification:
       - scripts/container-smoke.sh
-      - .github/workflows/ci.yml
   DEP-002B:
     implementation:
       - backend/src/uai_forge/api.py

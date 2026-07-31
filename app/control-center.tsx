@@ -51,8 +51,9 @@ type View =
   | "topology"
   | "runs"
   | "plugins"
+  | "model-configs"
   | "settings";
-type ConnectionMode = "connecting" | "live" | "demo";
+type ConnectionMode = "connecting" | "live" | "disconnected";
 
 type ChildMount = {
   alias: string;
@@ -92,9 +93,7 @@ type AgentSpec = {
   enabled: boolean;
   system_prompt: string;
   model: {
-    provider: string;
-    model: string;
-    profile_id?: string | null;
+    model_config_id: string;
     config?: Record<string, unknown>;
   };
   tools: ToolBindingSpec[];
@@ -155,27 +154,31 @@ type PluginManifest = {
   protocol_version: string;
   description: string;
   capabilities: string[];
+  api_protocol?: string;
+  credential_required?: boolean;
+  model_catalog?: Array<{
+    id: string;
+    label: string;
+    description?: string;
+    tier?: "latest" | "popular" | "legacy";
+    source_url?: string;
+  }>;
+  config_schema?: Record<string, unknown>;
   available: boolean;
   source: string;
 };
 
-type CredentialProfile = {
+type ModelConfig = {
   id: string;
+  tenant_id?: string;
   name: string;
   provider: string;
-  masked_value: string;
-  enabled: boolean;
-  metadata?: Record<string, unknown>;
-};
-
-type ModelProfile = {
-  id: string;
-  name: string;
-  provider: string;
+  protocol: string;
+  masked_secret: string;
   model: string;
-  credential_profile_id?: string | null;
   base_url?: string | null;
   config?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   enabled: boolean;
 };
 
@@ -190,10 +193,7 @@ type AgentConfigurationForm = {
   name: string;
   description: string;
   systemPrompt: string;
-  provider: string;
-  model: string;
-  modelProfileId?: string;
-  modelConfig: Record<string, unknown>;
+  modelConfigId: string;
   tools: ToolBindingSpec[];
   children: ChildMount[];
   memory: MemoryBindingSpec;
@@ -213,254 +213,6 @@ type ActivityItem = {
   icon: LucideIcon;
 };
 
-/* Legacy visual samples are intentionally disabled: the database is the only
-   source of Agent, instance, run and provider configuration. */
-/* const DEMO_AGENTS: AgentSpec[] = [
-  {
-    id: "agt_research_lead",
-    name: "研究负责人 Agent",
-    description: "拆解研究任务，调度分析与校验子 Agent，并汇总最终结论。",
-    revision: 3,
-    enabled: true,
-    system_prompt: "你是研究团队负责人。按需委派并清晰汇总结果。",
-    model: { provider: "mock", model: "deterministic" },
-    tools: [{ plugin_id: "tool.echo", alias: "echo", permission: "auto" }],
-    children: [
-      {
-        alias: "analyst",
-        agent_id: "agt_market_analyst",
-        description: "结构化市场分析",
-        max_concurrency: 2,
-      },
-      {
-        alias: "verifier",
-        agent_id: "agt_fact_verifier",
-        description: "事实与证据校验",
-        max_concurrency: 2,
-      },
-    ],
-    policy: {
-      max_steps: 16,
-      max_depth: 4,
-      max_tool_calls: 24,
-      max_parallel_children: 4,
-      timeout_seconds: 120,
-      token_budget: 32000,
-    },
-    labels: { team: "research", tier: "leader" },
-  },
-  {
-    id: "agt_market_analyst",
-    name: "市场分析 Agent",
-    description: "把研究问题拆成结构化结论、计算结果与可核验假设。",
-    revision: 2,
-    enabled: true,
-    system_prompt: "你是严谨的市场分析子 Agent。",
-    model: { provider: "openai_compatible", model: "gpt-4.1-mini" },
-    tools: [
-      { plugin_id: "tool.calculator", alias: "calculator", permission: "auto" },
-    ],
-    children: [],
-    policy: {
-      max_steps: 8,
-      max_depth: 2,
-      max_tool_calls: 12,
-      max_parallel_children: 2,
-      timeout_seconds: 90,
-      token_budget: 16000,
-    },
-    labels: { team: "research", tier: "worker" },
-  },
-  {
-    id: "agt_fact_verifier",
-    name: "事实校验 Agent",
-    description: "检查证据强度、结论冲突、来源完整性与仍待验证的边界。",
-    revision: 4,
-    enabled: true,
-    system_prompt: "你是事实校验子 Agent，不虚构来源。",
-    model: { provider: "openai_compatible", model: "gpt-4.1-mini" },
-    tools: [{ plugin_id: "tool.utc_now", alias: "utc_now", permission: "auto" }],
-    children: [],
-    policy: {
-      max_steps: 8,
-      max_depth: 2,
-      max_tool_calls: 10,
-      max_parallel_children: 2,
-      timeout_seconds: 90,
-      token_budget: 14000,
-    },
-    labels: { team: "research", tier: "worker" },
-  },
-  {
-    id: "agt_ops_guard",
-    name: "运行安全 Agent",
-    description: "监控预算、递归深度和高风险工具调用，在策略越界前阻断。",
-    revision: 1,
-    enabled: false,
-    system_prompt: "你是运行安全守卫。",
-    model: { provider: "mock", model: "deterministic" },
-    tools: [],
-    children: [],
-    policy: {
-      max_steps: 4,
-      max_depth: 1,
-      max_tool_calls: 4,
-      max_parallel_children: 1,
-      timeout_seconds: 30,
-      token_budget: 4000,
-    },
-    labels: { team: "platform", tier: "guard" },
-  },
-];
-
-const DEMO_INSTANCES: AgentInstance[] = [
-  {
-    id: "ins_research_local",
-    name: "研究团队 · 本地",
-    agent_id: "agt_research_lead",
-    agent_revision: 3,
-    environment: "local",
-    status: "ready",
-    max_concurrency: 4,
-  },
-  {
-    id: "ins_research_staging",
-    name: "研究团队 · Staging",
-    agent_id: "agt_research_lead",
-    agent_revision: 2,
-    environment: "cloud",
-    status: "ready",
-    max_concurrency: 12,
-  },
-];
-
-const DEMO_RUNS: RunRecord[] = [
-  {
-    id: "run_91ce7c",
-    agent_id: "agt_research_lead",
-    instance_id: "ins_research_local",
-    session_id: "ses_market_2026",
-    status: "succeeded",
-    input: "分析 Agent 框架扩展机制",
-    output: "已完成架构比较与扩展风险归纳。",
-    created_at: "2026-07-30T09:42:00+08:00",
-    finished_at: "2026-07-30T09:42:18+08:00",
-    metrics: { steps: 7, tool_calls: 3, tokens: 5840 },
-  },
-  {
-    id: "run_a38d12",
-    agent_id: "agt_market_analyst",
-    status: "running",
-    session_id: "ses_metrics",
-    input: "整理成本与并发指标",
-    created_at: "2026-07-30T09:51:00+08:00",
-    metrics: { steps: 3, tool_calls: 1, tokens: 2108 },
-  },
-  {
-    id: "run_752bb0",
-    agent_id: "agt_fact_verifier",
-    status: "failed",
-    session_id: "ses_verify",
-    input: "校验一组不完整来源",
-    error: "输入来源缺失，策略层拒绝继续推断",
-    created_at: "2026-07-30T08:17:00+08:00",
-    finished_at: "2026-07-30T08:17:06+08:00",
-    metrics: { steps: 2, tool_calls: 0, tokens: 960 },
-  },
-];
-
-const DEMO_PLUGINS: PluginManifest[] = [
-  {
-    id: "mock",
-    kind: "provider",
-    display_name: "Deterministic test provider",
-    version: "1.0.0",
-    protocol_version: "1.0",
-    description: "离线、可复现的测试与演示模型。",
-    capabilities: ["tool_calling", "offline", "usage_estimate"],
-    available: true,
-    source: "builtin",
-  },
-  {
-    id: "openai_compatible",
-    kind: "provider",
-    display_name: "OpenAI-compatible HTTP",
-    version: "1.0.0",
-    protocol_version: "1.0",
-    description: "支持标准 Chat Completions 的模型提供商适配器。",
-    capabilities: ["tool_calling", "usage_reporting"],
-    available: true,
-    source: "builtin",
-  },
-  {
-    id: "tool.calculator",
-    kind: "tool",
-    display_name: "Safe calculator",
-    version: "1.0.0",
-    protocol_version: "1.0",
-    description: "无 eval 的有界算术工具。",
-    capabilities: ["read_only", "idempotent"],
-    available: true,
-    source: "builtin",
-  },
-  {
-    id: "memory.in_process",
-    kind: "memory",
-    display_name: "In-process session memory",
-    version: "1.0.0",
-    protocol_version: "1.0",
-    description: "本地开发与测试用的有界短期记忆。",
-    capabilities: ["session_scoped", "bounded"],
-    available: true,
-    source: "builtin",
-  },
-  {
-    id: "storage.sqlite",
-    kind: "storage",
-    display_name: "SQLite storage",
-    version: "1.0.0",
-    protocol_version: "1.0",
-    description: "修订历史、实例和运行事件的单节点持久化。",
-    capabilities: ["transactions", "event_replay"],
-    available: true,
-    source: "builtin",
-  },
-  {
-    id: "event_bus.in_process",
-    kind: "event_bus",
-    display_name: "In-process event broker",
-    version: "1.0.0",
-    protocol_version: "1.0",
-    description: "按 Run 有序的实时事件扇出与 SQLite 重放。",
-    capabilities: ["sse", "replay", "ordered_per_run"],
-    available: true,
-    source: "builtin",
-  },
-  {
-    id: "middleware.audit_tags",
-    kind: "middleware",
-    display_name: "Audit tag middleware",
-    version: "1.0.0",
-    protocol_version: "1.0",
-    description: "不侵入内核的生命周期审计标签。",
-    capabilities: ["before_model", "stateless"],
-    available: true,
-    source: "builtin",
-  },
-  {
-    id: "scheduler.local",
-    kind: "scheduler",
-    display_name: "Local scheduler",
-    version: "0.1.0",
-    protocol_version: "1.0",
-    description: "预留的调度器扩展契约。",
-    capabilities: ["run_submission"],
-    available: false,
-    source: "builtin",
-  },
-];
-
-*/
 
 const NAV_ITEMS: Array<{ id: View; label: string; icon: LucideIcon }> = [
   { id: "overview", label: "总览", icon: LayoutDashboard },
@@ -469,6 +221,7 @@ const NAV_ITEMS: Array<{ id: View; label: string; icon: LucideIcon }> = [
   { id: "topology", label: "协作拓扑", icon: Network },
   { id: "runs", label: "运行记录", icon: Activity },
   { id: "plugins", label: "扩展中心", icon: Blocks },
+  { id: "model-configs", label: "凭证&模型配置", icon: KeyRound },
   { id: "settings", label: "系统设置", icon: Settings },
 ];
 
@@ -493,6 +246,397 @@ const PLUGIN_KIND_LABELS: Record<string, string> = {
   middleware: "中间件",
   ui: "界面扩展",
 };
+
+type ProviderOption = {
+  id: string;
+  label: string;
+  description: string;
+  defaultModel: string;
+  defaultBaseUrl?: string;
+  requiresCredential?: boolean;
+  apiProtocol?: string;
+  modelCatalog?: ModelOption[];
+};
+
+type ModelOption = {
+  value: string;
+  label: string;
+  hint: string;
+  tier?: "latest" | "popular" | "legacy";
+  sourceUrl?: string;
+};
+
+const CUSTOM_MODEL_VALUE = "__custom_model__";
+
+const PROVIDER_METADATA: Record<string, Omit<ProviderOption, "id">> = {
+  openai_compatible: {
+    label: "OpenAI 兼容接口",
+    description: "可连接 OpenAI、DeepSeek、百炼、Kimi、智谱等兼容服务",
+    defaultModel: "gpt-5.6-terra",
+    defaultBaseUrl: "https://api.openai.com/v1",
+    requiresCredential: true,
+    apiProtocol: "openai_chat_completions",
+  },
+  anthropic_messages: {
+    label: "Claude Messages API",
+    description: "Anthropic Claude 原生 Messages 协议",
+    defaultModel: "claude-sonnet-5",
+    defaultBaseUrl: "https://api.anthropic.com",
+    requiresCredential: true,
+    apiProtocol: "anthropic_messages",
+  },
+};
+
+const FALLBACK_PROVIDER_OPTIONS: ProviderOption[] = [
+  { id: "openai_compatible", ...PROVIDER_METADATA.openai_compatible },
+  { id: "anthropic_messages", ...PROVIDER_METADATA.anthropic_messages },
+];
+
+const MODEL_PRESETS: Record<string, ModelOption[]> = {
+  openai_compatible: [
+    {
+      value: "gpt-5.6-sol",
+      label: "GPT-5.6 Sol",
+      hint: "复杂推理与编码旗舰",
+      tier: "latest",
+    },
+    {
+      value: "gpt-5.6-terra",
+      label: "GPT-5.6 Terra",
+      hint: "智能与成本平衡",
+      tier: "latest",
+    },
+    {
+      value: "gpt-5.6-luna",
+      label: "GPT-5.6 Luna",
+      hint: "高并发、成本敏感",
+      tier: "latest",
+    },
+    {
+      value: "gpt-4o",
+      label: "GPT-4o",
+      hint: "成熟通用多模态模型",
+      tier: "popular",
+    },
+    {
+      value: "gpt-4o-mini",
+      label: "GPT-4o mini",
+      hint: "轻量、快速、成本友好",
+      tier: "popular",
+    },
+    { value: "deepseek-v4-pro", label: "DeepSeek V4 Pro", hint: "国产旗舰兼容接口", tier: "latest" },
+    { value: "deepseek-v4-flash", label: "DeepSeek V4 Flash", hint: "国产高速兼容接口", tier: "latest" },
+    { value: "deepseek-v3.2", label: "DeepSeek V3.2", hint: "通用对话与代码", tier: "latest" },
+    { value: "deepseek-v3.1", label: "DeepSeek V3.1", hint: "通用与工具调用", tier: "latest" },
+    { value: "deepseek-v3", label: "DeepSeek V3", hint: "成熟通用模型", tier: "popular" },
+    { value: "deepseek-r1", label: "DeepSeek R1", hint: "深度推理模型", tier: "popular" },
+    { value: "deepseek-r1-0528", label: "DeepSeek R1 0528", hint: "推理增强版本", tier: "popular" },
+    { value: "deepseek-chat", label: "DeepSeek Chat", hint: "DeepSeek 通用对话", tier: "popular" },
+    { value: "deepseek-reasoner", label: "DeepSeek Reasoner", hint: "DeepSeek 推理", tier: "popular" },
+    { value: "qwen3.7-max", label: "通义千问 Qwen3.7 Max", hint: "百炼旗舰", tier: "latest" },
+    { value: "qwen3.8-max-preview", label: "通义千问 Qwen3.8 Max Preview", hint: "百炼最新旗舰预览", tier: "latest" },
+    { value: "qwen3.7-plus", label: "通义千问 Qwen3.7 Plus", hint: "百炼通用长文本", tier: "latest" },
+    { value: "qwen3.7-flash", label: "通义千问 Qwen3.7 Flash", hint: "百炼高速低延迟", tier: "latest" },
+    { value: "qwen3.5-omni-plus", label: "通义千问 Qwen3.5 Omni Plus", hint: "通用多模态对话", tier: "latest" },
+    { value: "qwen3.5-plus", label: "通义千问 Qwen3.5 Plus", hint: "百炼通用", tier: "latest" },
+    { value: "qwen3-max", label: "通义千问 Qwen3 Max", hint: "百炼旗舰通用", tier: "latest" },
+    { value: "qwen3-235b-a22b", label: "Qwen3 235B A22B", hint: "开源大规模 MoE", tier: "latest" },
+    { value: "qwen3-32b", label: "Qwen3 32B", hint: "开源通用模型", tier: "popular" },
+    { value: "qwen3-30b-a3b", label: "Qwen3 30B A3B", hint: "高性价比 MoE", tier: "popular" },
+    { value: "qwen3-coder-plus", label: "Qwen3-Coder-Plus", hint: "代码与 Agent 任务", tier: "latest" },
+    { value: "qwen3-coder", label: "Qwen3-Coder", hint: "开源代码模型", tier: "popular" },
+    { value: "qwen3-vl-plus", label: "Qwen3-VL-Plus", hint: "视觉理解与文档", tier: "latest" },
+    { value: "qwen2.5-max", label: "通义千问 Qwen2.5 Max", hint: "成熟旗舰", tier: "popular" },
+    { value: "qwen2.5-72b-instruct", label: "Qwen2.5 72B Instruct", hint: "开源通用模型", tier: "popular" },
+    { value: "qwen-plus", label: "通义千问 Plus", hint: "长文本与通用任务", tier: "popular" },
+    { value: "qwen-turbo", label: "通义千问 Turbo", hint: "高并发低延迟", tier: "popular" },
+    { value: "kimi-k3", label: "Kimi K3", hint: "月之暗面新一代模型", tier: "latest" },
+    { value: "kimi-k2.6", label: "Kimi K2.6", hint: "Kimi 工具调用", tier: "latest" },
+    { value: "kimi-k2.7-code", label: "Kimi K2.7 Code", hint: "编程与 Agent 任务", tier: "latest" },
+    { value: "kimi-k2.7-code-highspeed", label: "Kimi K2.7 Code Highspeed", hint: "高速编程模型", tier: "latest" },
+    { value: "kimi-k2-thinking-turbo", label: "Kimi K2 Thinking Turbo", hint: "高速推理与工具调用", tier: "latest" },
+    { value: "kimi-k2-thinking", label: "Kimi K2 Thinking", hint: "长链路推理与工具调用", tier: "latest" },
+    { value: "kimi-k2-instruct", label: "Kimi K2 Instruct", hint: "通用指令模型", tier: "popular" },
+    { value: "kimi-k2.5", label: "Kimi K2.5", hint: "Kimi 多模态/通用", tier: "popular" },
+    { value: "moonshot-v1-128k", label: "Moonshot V1 128K", hint: "超长上下文", tier: "popular" },
+    { value: "moonshot-v1-32k", label: "Moonshot V1 32K", hint: "长文本通用", tier: "popular" },
+    { value: "glm-5.2", label: "智谱 GLM-5.2", hint: "智谱旗舰", tier: "latest" },
+    { value: "glm-5.1", label: "智谱 GLM-5.1", hint: "复杂任务与推理", tier: "latest" },
+    { value: "glm-5-turbo", label: "智谱 GLM-5 Turbo", hint: "高并发通用模型", tier: "latest" },
+    { value: "glm-5", label: "智谱 GLM-5", hint: "通用旗舰", tier: "popular" },
+    { value: "glm-4.6", label: "智谱 GLM-4.6", hint: "通用与 Agent", tier: "latest" },
+    { value: "glm-4.7-flash", label: "智谱 GLM-4.7 Flash", hint: "高速通用模型", tier: "latest" },
+    { value: "glm-4.5", label: "智谱 GLM-4.5", hint: "通用与推理", tier: "popular" },
+    { value: "glm-4.5-air", label: "智谱 GLM-4.5-Air", hint: "轻量快速", tier: "popular" },
+    { value: "glm-4.5-flash", label: "智谱 GLM-4.5 Flash", hint: "高性价比高速模型", tier: "popular" },
+    { value: "glm-4.6v", label: "智谱 GLM-4.6V", hint: "视觉理解与文档", tier: "latest" },
+    { value: "glm-4.6v-flash", label: "智谱 GLM-4.6V Flash", hint: "高速视觉理解", tier: "latest" },
+    { value: "glm-4.7", label: "智谱 GLM-4.7", hint: "成熟通用模型", tier: "popular" },
+    { value: "ernie-4.5-turbo-128k", label: "文心 ERNIE 4.5 Turbo", hint: "百度大模型", tier: "latest" },
+    { value: "ernie-4.5-8k", label: "文心 ERNIE 4.5", hint: "百度通用模型", tier: "popular" },
+    { value: "doubao-seed-1-6-250615", label: "豆包 Seed 1.6", hint: "字节跳动通用模型", tier: "latest" },
+    { value: "doubao-seed-1-6-thinking-250615", label: "豆包 Seed 1.6 Thinking", hint: "复杂推理", tier: "latest" },
+    { value: "doubao-seed-2-1-pro", label: "豆包 Seed 2.1 Pro", hint: "新一代通用旗舰", tier: "latest" },
+    { value: "doubao-seed-2-1-turbo", label: "豆包 Seed 2.1 Turbo", hint: "高速通用模型", tier: "latest" },
+    { value: "doubao-seed-2-0-pro", label: "豆包 Seed 2.0 Pro", hint: "通用旗舰模型", tier: "latest" },
+    { value: "doubao-seed-2-0-lite", label: "豆包 Seed 2.0 Lite", hint: "轻量高性价比", tier: "popular" },
+    { value: "doubao-seed-2-0-mini", label: "豆包 Seed 2.0 Mini", hint: "低延迟轻量模型", tier: "popular" },
+    { value: "doubao-seed-1-6-flash", label: "豆包 Seed 1.6 Flash", hint: "高速对话模型", tier: "popular" },
+    { value: "doubao-seed-code", label: "豆包 Seed Code", hint: "代码与 Agent 任务", tier: "latest" },
+    { value: "doubao-1-5-pro-32k", label: "豆包 1.5 Pro 32K", hint: "成熟通用模型", tier: "popular" },
+    { value: "hunyuan-t1", label: "腾讯混元 T1", hint: "推理模型", tier: "latest" },
+    { value: "hunyuan-turbos", label: "腾讯混元 Turbo S", hint: "高速通用模型", tier: "popular" },
+    { value: "hunyuan-pro", label: "腾讯混元 Pro", hint: "通用旗舰", tier: "popular" },
+    { value: "MiniMax-M2", label: "MiniMax M2", hint: "Agent 与代码任务", tier: "latest" },
+    { value: "MiniMax-M1", label: "MiniMax M1", hint: "长思考推理", tier: "popular" },
+    { value: "MiniMax-M3", label: "MiniMax M3", hint: "新一代通用与 Agent", tier: "latest" },
+    { value: "MiniMax-M2.7", label: "MiniMax M2.7", hint: "通用推理与代码", tier: "latest" },
+    { value: "MiniMax-M2.7-highspeed", label: "MiniMax M2.7 Highspeed", hint: "高速推理与代码", tier: "latest" },
+    { value: "MiniMax-M2.5", label: "MiniMax M2.5", hint: "通用对话模型", tier: "popular" },
+    { value: "MiniMax-M2.1", label: "MiniMax M2.1", hint: "通用推理模型", tier: "popular" },
+    { value: "abab6.5s-chat", label: "MiniMax abab6.5s", hint: "通用对话", tier: "legacy" },
+    { value: "Baichuan4", label: "百川 Baichuan4", hint: "国产通用模型", tier: "latest" },
+    { value: "Baichuan3-Turbo", label: "百川 Baichuan3 Turbo", hint: "高速通用模型", tier: "popular" },
+    { value: "yi-lightning", label: "零一万物 Yi-Large/Lightning", hint: "高速推理", tier: "popular" },
+    { value: "yi-large", label: "零一万物 Yi-Large", hint: "通用旗舰", tier: "popular" },
+    { value: "step-3.5-flash", label: "阶跃星辰 Step-3.5-Flash", hint: "高速推理", tier: "latest" },
+    { value: "step-2-16k", label: "阶跃星辰 Step-2", hint: "通用模型", tier: "popular" },
+    { value: "internlm3-latest", label: "书生·浦语 InternLM3", hint: "开源通用模型", tier: "popular" },
+    { value: "SenseNova-V6", label: "商汤日日新 SenseNova V6", hint: "国产通用模型", tier: "popular" },
+  ],
+  anthropic_messages: [
+    { value: "claude-opus-5", label: "Claude Opus 5", hint: "复杂 Agent 与编码", tier: "latest" },
+    { value: "claude-sonnet-5", label: "Claude Sonnet 5", hint: "速度与智能平衡", tier: "latest" },
+    { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5", hint: "快速高性价比", tier: "latest" },
+    { value: "claude-opus-4-8", label: "Claude Opus 4.8", hint: "上一代高性能", tier: "popular" },
+    { value: "claude-opus-4-7", label: "Claude Opus 4.7", hint: "上一代复杂任务", tier: "popular" },
+    { value: "claude-opus-4-6", label: "Claude Opus 4.6", hint: "稳定 Opus 版本", tier: "popular" },
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "稳定 Sonnet 版本", tier: "popular" },
+    { value: "claude-sonnet-4-5", label: "Claude Sonnet 4.5", hint: "兼容旧应用", tier: "legacy" },
+  ],
+};
+
+const OPENAI_ENDPOINT_PRESETS = [
+  { value: "https://api.openai.com/v1", label: "OpenAI 官方" },
+  { value: "https://api.deepseek.com/v1", label: "DeepSeek 兼容接口" },
+  {
+    value: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    label: "阿里云百炼兼容接口",
+  },
+  { value: "https://api.moonshot.cn/v1", label: "Moonshot 兼容接口" },
+  { value: "https://open.bigmodel.cn/api/paas/v4", label: "智谱 BigModel 兼容接口" },
+  { value: "https://ark.cn-beijing.volces.com/api/v3", label: "火山引擎方舟兼容接口" },
+  { value: "https://api.hunyuan.cloud.tencent.com/v1", label: "腾讯混元兼容接口" },
+  { value: "https://api.minimax.chat/v1", label: "MiniMax 兼容接口" },
+  { value: "https://api.stepfun.com/v1", label: "阶跃星辰兼容接口" },
+  { value: "https://api.baichuan-ai.com/v1", label: "百川智能兼容接口" },
+  { value: "https://api.lingyiwanwu.com/v1", label: "零一万物兼容接口" },
+  { value: "https://api.siliconflow.cn/v1", label: "硅基流动聚合接口" },
+  { value: "https://openrouter.ai/api/v1", label: "OpenRouter 兼容接口" },
+];
+
+const MODEL_TIMEOUT_OPTIONS = [
+  { value: "30", label: "30 秒 · 快速失败" },
+  { value: "60", label: "60 秒 · 常规请求" },
+  { value: "120", label: "120 秒 · 推荐" },
+  { value: "300", label: "300 秒 · 长任务" },
+];
+
+function providerOptionsFromPlugins(plugins: PluginManifest[]): ProviderOption[] {
+  const providers = plugins.filter(
+    (plugin) => plugin.kind === "provider" && plugin.available,
+  );
+  if (!providers.length) return FALLBACK_PROVIDER_OPTIONS;
+  return providers.map((plugin) => {
+    const metadata = PROVIDER_METADATA[plugin.id];
+    const catalog = plugin.model_catalog?.map((item) => ({
+      value: item.id,
+      label: item.label,
+      hint: item.description || "官方模型目录",
+      tier: item.tier,
+      sourceUrl: item.source_url,
+    }));
+    return {
+      id: plugin.id,
+      ...(metadata || {
+        label: plugin.display_name,
+        description: plugin.description || "由插件提供的模型适配器",
+        defaultModel: catalog?.[0]?.value || MODEL_PRESETS[plugin.id]?.[0]?.value || "",
+      }),
+      requiresCredential: plugin.credential_required ?? metadata?.requiresCredential,
+      apiProtocol: plugin.api_protocol || metadata?.apiProtocol,
+      modelCatalog: catalog?.length ? catalog : MODEL_PRESETS[plugin.id],
+    };
+  });
+}
+
+function providerOptionFor(
+  provider: string,
+  plugins: PluginManifest[],
+): ProviderOption {
+  return (
+    providerOptionsFromPlugins(plugins).find((item) => item.id === provider) || {
+      id: provider,
+      label: provider,
+      description: "自定义模型提供商",
+      defaultModel: MODEL_PRESETS[provider]?.[0]?.value || "",
+    }
+  );
+}
+
+function modelOptionsForProvider(
+  provider: string,
+  plugins: PluginManifest[] = [],
+): ModelOption[] {
+  const manifestCatalog = plugins.find(
+    (plugin) => plugin.kind === "provider" && plugin.id === provider,
+  )?.model_catalog;
+  if (manifestCatalog?.length) {
+    return manifestCatalog.map((item) => ({
+      value: item.id,
+      label: item.label,
+      hint: item.description || "官方模型目录",
+      tier: item.tier,
+      sourceUrl: item.source_url,
+    }));
+  }
+  return MODEL_PRESETS[provider] || [];
+}
+
+function hasKnownModel(
+  provider: string,
+  model: string,
+  plugins: PluginManifest[] = [],
+): boolean {
+  return modelOptionsForProvider(provider, plugins).some((item) => item.value === model);
+}
+
+function ModelChoiceField({
+  provider,
+  plugins,
+  model,
+  onChange,
+  required = true,
+}: {
+  provider: string;
+  plugins?: PluginManifest[];
+  model: string;
+  onChange: (value: string) => void;
+  required?: boolean;
+}) {
+  const options = modelOptionsForProvider(provider, plugins);
+  const isCustom = !hasKnownModel(provider, model, plugins);
+  return (
+    <label className="form-field">
+      <span>模型</span>
+      <select
+        value={isCustom ? CUSTOM_MODEL_VALUE : model}
+        onChange={(event) =>
+          onChange(
+            event.target.value === CUSTOM_MODEL_VALUE ? "" : event.target.value,
+          )
+        }
+      >
+        {options.map((option) => (
+          <option value={option.value} key={option.value}>
+            {option.label} · {option.hint}
+          </option>
+        ))}
+        <option value={CUSTOM_MODEL_VALUE}>自定义模型 ID…</option>
+      </select>
+      {isCustom && (
+        <input
+          required={required}
+          value={model}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="输入服务商提供的模型 ID，例如 deepseek-chat"
+        />
+      )}
+      <small>常用模型已列出；选“自定义模型 ID”即可连接其他兼容模型。</small>
+    </label>
+  );
+}
+
+function EndpointChoiceField({
+  provider,
+  value,
+  onChange,
+}: {
+  provider: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const presets = provider === "anthropic_messages"
+    ? [
+        { value: "https://api.anthropic.com", label: "Anthropic 官方" },
+        { value: "https://api.anthropic.com/v1", label: "Anthropic 官方（含 /v1）" },
+      ]
+    : OPENAI_ENDPOINT_PRESETS;
+  const isPreset = presets.some((item) => item.value === value);
+  return (
+    <label className="form-field">
+      <span>服务地址（可选）</span>
+      <select
+        value={isPreset ? value : ""}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        <option value="">快速选择常用地址…</option>
+        {presets.map((item) => (
+          <option value={item.value} key={item.value}>
+            {item.label}
+          </option>
+        ))}
+      </select>
+      <input
+        type="url"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="也可以直接输入，例如 https://example.com/v1"
+      />
+      <small>可从上方快速填入常用地址，也可以直接输入；留空使用服务商默认地址。</small>
+    </label>
+  );
+}
+
+function ProviderChoiceField({
+  provider,
+  plugins,
+  onChange,
+}: {
+  provider: string;
+  plugins: PluginManifest[];
+  onChange: (value: string) => void;
+}) {
+  const providers = providerOptionsFromPlugins(plugins);
+  const selected = providers.some((item) => item.id === provider);
+  const options = selected
+    ? providers
+    : [
+        {
+          ...providerOptionFor(provider, plugins),
+          label: `${provider}（当前配置）`,
+        },
+        ...providers,
+      ];
+  return (
+    <label className="form-field">
+      <span>模型提供商</span>
+      <select
+        value={provider}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {options.map((item) => (
+          <option value={item.id} key={item.id}>
+            {item.label}
+          </option>
+        ))}
+      </select>
+      <small>
+        {providerOptionFor(provider, plugins).description}
+      </small>
+    </label>
+  );
+}
 
 function compactNumber(value: number): string {
   return new Intl.NumberFormat("zh-CN", { notation: "compact" }).format(value);
@@ -619,8 +763,7 @@ export function ControlCenter() {
   const [instances, setInstances] = useState<AgentInstance[]>([]);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
-  const [credentials, setCredentials] = useState<CredentialProfile[]>([]);
-  const [modelProfiles, setModelProfiles] = useState<ModelProfile[]>([]);
+  const [modelConfigs, setModelConfigs] = useState<ModelConfig[]>([]);
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigEntry[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<AgentSpec | null>(null);
   const [editingAgent, setEditingAgent] = useState<AgentSpec | null>(null);
@@ -648,50 +791,46 @@ export function ControlCenter() {
       if (mode === "connecting") setMode("connecting");
       try {
         const [agentResponse, instanceResponse, runResponse, pluginResponse,
-          credentialResponse, modelProfileResponse, runtimeConfigResponse] =
+          modelConfigResponse, runtimeConfigResponse] =
           await Promise.all([
             fetch(`${base}/agents`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
             fetch(`${base}/instances`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
             fetch(`${base}/runs?limit=100`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
             fetch(`${base}/plugins`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
-            fetch(`${base}/credentials`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
-            fetch(`${base}/model-profiles`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
+            fetch(`${base}/model-configs`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
             fetch(`${base}/runtime-config`, { headers: headers(), signal: AbortSignal.timeout(2500) }),
           ]);
         if (![agentResponse, instanceResponse, runResponse, pluginResponse,
-          credentialResponse, modelProfileResponse, runtimeConfigResponse].every((item) => item.ok)) {
+          modelConfigResponse, runtimeConfigResponse].every((item) => item.ok)) {
           throw new Error("Control API unavailable");
         }
-        const [agentData, instanceData, runData, pluginData, credentialData,
-          modelProfileData, runtimeConfigData] = (await Promise.all([
+        const [agentData, instanceData, runData, pluginData,
+          modelConfigData, runtimeConfigData] = (await Promise.all([
           agentResponse.json(),
           instanceResponse.json(),
           runResponse.json(),
           pluginResponse.json(),
-          credentialResponse.json(),
-          modelProfileResponse.json(),
+          modelConfigResponse.json(),
           runtimeConfigResponse.json(),
         ])) as [AgentSpec[], AgentInstance[], RunRecord[], PluginManifest[],
-          CredentialProfile[], ModelProfile[], RuntimeConfigEntry[]];
+          ModelConfig[], RuntimeConfigEntry[]];
         setAgents(agentData);
         setInstances(instanceData);
         setRuns(runData);
         setPlugins(pluginData);
-        setCredentials(credentialData);
-        setModelProfiles(modelProfileData);
+        setModelConfigs(modelConfigData);
         setRuntimeConfig(runtimeConfigData);
         setApiBase(base);
         setMode("live");
         setNotice("已连接 Python 运行时");
         window.localStorage.setItem("uai-forge-api-base", base);
       } catch {
-        setMode("demo");
+        setMode("disconnected");
         setAgents([]);
         setInstances([]);
         setRuns([]);
         setPlugins([]);
-        setCredentials([]);
-        setModelProfiles([]);
+        setModelConfigs([]);
         setRuntimeConfig([]);
       } finally {
         setSyncing(false);
@@ -774,10 +913,7 @@ export function ControlCenter() {
       description: form.description,
       system_prompt: form.systemPrompt,
       model: {
-        provider: form.provider,
-        model: form.model,
-        profile_id: form.modelProfileId || undefined,
-        config: form.modelConfig,
+        model_config_id: form.modelConfigId,
       },
       tools: form.tools,
       children: form.children,
@@ -816,10 +952,7 @@ export function ControlCenter() {
       description: form.description,
       system_prompt: form.systemPrompt,
       model: {
-        provider: form.provider,
-        model: form.model,
-        profile_id: form.modelProfileId || undefined,
-        config: form.modelConfig,
+        model_config_id: form.modelConfigId,
       },
       tools: form.tools,
       children: form.children,
@@ -845,6 +978,33 @@ export function ControlCenter() {
     );
     setEditingAgent(null);
     setNotice(`${updated.name} rev ${updated.revision} 已发布`);
+  }
+
+  async function updateModelConfig(
+    config: ModelConfig,
+    patch: Record<string, unknown>,
+  ) {
+    if (mode !== "live") throw new Error("请先连接 Python 控制面；模型配置只写入数据库");
+    const response = await fetch(`${apiBase}/model-configs/${config.id}`, {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify(patch),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const updated = (await response.json()) as ModelConfig;
+    setModelConfigs((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+    setNotice(`${updated.name} 已更新`);
+  }
+
+  async function deleteModelConfig(config: ModelConfig) {
+    if (mode !== "live") throw new Error("请先连接 Python 控制面");
+    const response = await fetch(`${apiBase}/model-configs/${config.id}`, {
+      method: "DELETE",
+      headers: headers(),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    setModelConfigs((current) => current.filter((item) => item.id !== config.id));
+    setNotice(`${config.name} 已删除`);
   }
 
   async function createInstance(form: {
@@ -1079,12 +1239,12 @@ export function ControlCenter() {
         </header>
 
         <div className="content-stage">
-          {mode === "demo" && view !== "settings" && (
-            <div className="demo-banner">
+          {mode === "disconnected" && view !== "settings" && (
+            <div className="connection-banner">
               <div>
                 <Cloud size={17} />
                 <span>
-                  当前未连接控制面，页面不生成本地配置或演示数据。连接 Python 控制面后，所有 Agent、凭据、模型和运行记录均来自数据库。
+                  当前未连接控制面，页面不生成本地配置或业务数据。连接 Python 控制面后，所有 Agent、凭据、模型和运行记录均来自数据库。
                 </span>
               </div>
               <button onClick={() => setView("settings")}>
@@ -1156,17 +1316,30 @@ export function ControlCenter() {
 
           {view === "plugins" && <PluginsView plugins={plugins} />}
 
+          {view === "model-configs" && (
+            <ModelConfigsView
+              apiBase={apiBase}
+              mode={mode}
+              syncing={syncing}
+              plugins={plugins}
+              modelConfigs={modelConfigs}
+              requestHeaders={headers}
+              onConfigChanged={() => void refresh()}
+              onUpdate={(config, patch) => void updateModelConfig(config, patch)}
+              onDelete={(config) => void deleteModelConfig(config)}
+            />
+          )}
+
           {view === "settings" && (
             <SettingsView
               apiBase={apiBase}
               apiKey={apiKey}
               mode={mode}
               syncing={syncing}
-              credentials={credentials}
-              modelProfiles={modelProfiles}
               runtimeConfig={runtimeConfig}
               requestHeaders={headers}
               onConfigChanged={() => void refresh()}
+              onOpenModelConfigs={() => setView("model-configs")}
               setApiBase={setApiBase}
               setApiKey={setApiKey}
               onConnect={() => void refresh(apiBase)}
@@ -1179,6 +1352,7 @@ export function ControlCenter() {
         <AgentDrawer
           agent={selectedAgent}
           agents={agents}
+          modelConfigs={modelConfigs}
           onClose={() => setSelectedAgent(null)}
           onEdit={() => {
             setEditingAgent(selectedAgent);
@@ -1195,7 +1369,7 @@ export function ControlCenter() {
         <NewAgentModal
           agents={agents}
           plugins={plugins}
-          modelProfiles={modelProfiles}
+          modelConfigs={modelConfigs}
           onClose={() => setNewAgentOpen(false)}
           onCreate={createAgent}
         />
@@ -1206,7 +1380,7 @@ export function ControlCenter() {
           agent={editingAgent}
           agents={agents}
           plugins={plugins}
-          modelProfiles={modelProfiles}
+          modelConfigs={modelConfigs}
           onClose={() => setEditingAgent(null)}
           onSave={(form) => updateAgent(editingAgent, form)}
         />
@@ -1567,7 +1741,7 @@ function AgentsView({
             <h3>{agent.name}</h3>
             <p>{agent.description}</p>
             <div className="agent-card-tags">
-              <span>{agent.model.provider}</span>
+              <span>配置 {agent.model.model_config_id}</span>
               <span>{agent.tools.length} tools</span>
               <span>{agent.children.length} children</span>
             </div>
@@ -1722,7 +1896,7 @@ function TopologyView({
                 <span className="status-badge ready">Leader</span>
               </div>
               <strong>{rootAgent.name}</strong>
-              <small>{rootAgent.model.provider} / {rootAgent.model.model}</small>
+              <small>模型配置 · {rootAgent.model.model_config_id}</small>
               <div className="canvas-node-stats">
                 <span><TerminalSquare size={13} /> {rootAgent.tools.length}</span>
                 <span><Link2 size={13} /> {rootAgent.children.length}</span>
@@ -1816,52 +1990,13 @@ function RunsView({
     error: string;
   }>({ runId: "", events: [], error: "" });
   const selected = runs.find((run) => run.id === selectedId) || runs[0] || null;
-  const demoEvents = useMemo<RunEvent[]>(
-    () =>
-      selected
-        ? [
-            {
-              run_id: selected.id,
-              sequence: 1,
-              type: "run.started",
-              timestamp: selected.created_at,
-              agent_id: selected.agent_id,
-              depth: 0,
-              payload: { session_id: selected.session_id },
-            },
-            {
-              run_id: selected.id,
-              sequence: 2,
-              type:
-                selected.status === "failed"
-                  ? "run.failed"
-                  : selected.status === "cancelled"
-                    ? "run.cancelled"
-                    : "run.completed",
-              timestamp: selected.finished_at || selected.created_at,
-              agent_id: selected.agent_id,
-              depth: 0,
-              payload: {
-                output: selected.output,
-                error: selected.error,
-                metrics: selected.metrics,
-              },
-            },
-          ]
-        : [],
-    [selected],
-  );
   const historyMatchesSelection =
     Boolean(selected) && eventHistory.runId === selected?.id;
   const eventsLoading =
     mode === "live" && Boolean(selected) && !historyMatchesSelection;
   const eventsError = historyMatchesSelection ? eventHistory.error : "";
   const timelineEvents =
-    mode === "live"
-      ? historyMatchesSelection
-        ? eventHistory.events
-        : []
-      : demoEvents;
+    mode === "live" && historyMatchesSelection ? eventHistory.events : [];
 
   useEffect(() => {
     if (!selected || mode !== "live") return;
@@ -1976,7 +2111,7 @@ function RunsView({
                       ? "正在读取持久事件"
                       : mode === "live"
                         ? `${timelineEvents.length} 条 · 按 Run sequence`
-                        : "演示事件"}
+                        : "未连接控制面"}
                   </span>
                 </div>
                 {timelineEvents.map((event) => (
@@ -2069,16 +2204,237 @@ function PluginsView({ plugins }: { plugins: PluginManifest[] }) {
   );
 }
 
+type ModelConfigFormState = {
+  name: string;
+  provider: string;
+  model: string;
+  baseUrl: string;
+  secret: string;
+  timeoutSeconds: string;
+  maxTokens: string;
+  temperature: string;
+  advancedJson: string;
+  enabled: boolean;
+};
+
+function newModelConfigForm(plugins: PluginManifest[]): ModelConfigFormState {
+  const provider = providerOptionsFromPlugins(plugins)[0] || FALLBACK_PROVIDER_OPTIONS[0];
+  return {
+    name: "",
+    provider: provider.id,
+    model: provider.defaultModel,
+    baseUrl: provider.defaultBaseUrl || "",
+    secret: "",
+    timeoutSeconds: "120",
+    maxTokens: "4096",
+    temperature: "0.7",
+    advancedJson: "{}",
+    enabled: true,
+  };
+}
+
+function formFromModelConfig(
+  config: ModelConfig,
+): ModelConfigFormState {
+  const values = config.config || {};
+  return {
+    name: config.name,
+    provider: config.provider,
+    model: config.model,
+    baseUrl: config.base_url || "",
+    secret: "",
+    timeoutSeconds: String(values.timeout_seconds ?? 120),
+    maxTokens: String(values.max_tokens ?? 4096),
+    temperature: String(values.temperature ?? 0.7),
+    advancedJson: JSON.stringify(
+      Object.fromEntries(
+        Object.entries(values).filter(
+          ([key]) => !["timeout_seconds", "max_tokens", "temperature", "base_url"].includes(key),
+        ),
+      ),
+      null,
+      2,
+    ),
+    enabled: config.enabled,
+  };
+}
+
+function ModelConfigsView({
+  apiBase,
+  mode,
+  syncing,
+  plugins,
+  modelConfigs,
+  requestHeaders,
+  onConfigChanged,
+  onUpdate,
+  onDelete,
+}: {
+  apiBase: string;
+  mode: ConnectionMode;
+  syncing: boolean;
+  plugins: PluginManifest[];
+  modelConfigs: ModelConfig[];
+  requestHeaders: () => HeadersInit;
+  onConfigChanged: () => void;
+  onUpdate: (config: ModelConfig, patch: Record<string, unknown>) => Promise<void> | void;
+  onDelete: (config: ModelConfig) => Promise<void> | void;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<ModelConfigFormState>(() => newModelConfigForm(plugins));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const selectedProvider = providerOptionFor(form.provider, plugins);
+
+  function startCreate() {
+    setEditingId(null);
+    setForm(newModelConfigForm(plugins));
+    setError("");
+  }
+
+  function startEdit(config: ModelConfig) {
+    setEditingId(config.id);
+    setForm(formFromModelConfig(config));
+    setError("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function updateForm(patch: Partial<ModelConfigFormState>) {
+    setForm((current) => ({ ...current, ...patch }));
+  }
+
+  function selectProvider(provider: string) {
+    const option = providerOptionFor(provider, plugins);
+    updateForm({
+      provider,
+      model: option.defaultModel || modelOptionsForProvider(provider, plugins)[0]?.value || "",
+      baseUrl: option.defaultBaseUrl || (provider === "anthropic_messages" ? "https://api.anthropic.com" : ""),
+    });
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const advanced = parseJsonObject(form.advancedJson, "高级参数 JSON");
+      const config: Record<string, unknown> = {
+        ...advanced,
+        timeout_seconds: Number(form.timeoutSeconds),
+        max_tokens: Number(form.maxTokens),
+        temperature: Number(form.temperature),
+      };
+      const payload: Record<string, unknown> = {
+        name: form.name,
+        provider: form.provider,
+        model: form.model,
+        base_url: form.baseUrl || null,
+        config,
+        enabled: form.enabled,
+      };
+      if (form.secret.trim()) payload.secret = form.secret.trim();
+      if (mode !== "live") throw new Error("请先连接 Python 控制面；模型配置只写入数据库");
+      if (editingId) {
+        const current = modelConfigs.find((item) => item.id === editingId);
+        if (!current) throw new Error("模型配置已不存在，请刷新后重试");
+        await onUpdate(current, payload);
+      } else {
+        const response = await fetch(`${apiBase}/model-configs`, {
+          method: "POST",
+          headers: requestHeaders(),
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) throw new Error(await response.text());
+        onConfigChanged();
+      }
+      setEditingId(null);
+      setForm(newModelConfigForm(plugins));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "模型配置保存失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(config: ModelConfig) {
+    if (!window.confirm(`确认删除“${config.name}”吗？已被 Agent 引用的配置不能删除。`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      await onDelete(config);
+      if (editingId === config.id) startCreate();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "模型配置删除失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="view-stack settings-stack">
+      <div className="view-heading">
+        <div>
+          <span className="section-kicker">TENANT MODEL CONNECTIONS</span>
+          <h2>凭证&模型配置</h2>
+          <p>每个租户维护自己的模型连接；协议、端点、模型和加密凭证集中在一条配置中。</p>
+        </div>
+        <button className="button button-primary" onClick={startCreate} disabled={syncing || busy}>
+          <Plus size={16} /> 新建配置
+        </button>
+      </div>
+
+      <form className="panel settings-panel" onSubmit={submit}>
+        <div className="settings-panel-head">
+          <span className="settings-icon"><KeyRound size={19} /></span>
+          <div><h3>{editingId ? "编辑连接配置" : "新建连接配置"}</h3><p>密钥只在提交时写入数据库密文，列表永不返回明文。</p></div>
+          {editingId && <button type="button" className="button button-ghost" onClick={startCreate}>取消编辑</button>}
+        </div>
+        <div className="form-row">
+          <label className="form-field"><span>配置名称</span><input required minLength={2} value={form.name} onChange={(event) => updateForm({ name: event.target.value })} placeholder="例如：团队 DeepSeek 主连接" /></label>
+          <ProviderChoiceField provider={form.provider} plugins={plugins} onChange={selectProvider} />
+        </div>
+        <div className="form-row">
+          <ModelChoiceField provider={form.provider} plugins={plugins} model={form.model} onChange={(model) => updateForm({ model })} />
+          <EndpointChoiceField provider={form.provider} value={form.baseUrl} onChange={(baseUrl) => updateForm({ baseUrl })} />
+        </div>
+        <div className="form-row">
+          <label className="form-field"><span>{selectedProvider.requiresCredential === false ? "访问凭证（可选）" : "访问凭证"}</span><input type="password" value={form.secret} onChange={(event) => updateForm({ secret: event.target.value })} placeholder={editingId ? "留空表示沿用原密钥" : "粘贴 API Key，仅提交一次"} autoComplete="new-password" /><small>{selectedProvider.apiProtocol || "由 Provider manifest 决定协议"} · {selectedProvider.description}</small></label>
+          <label className="form-field"><span>请求超时</span><select value={form.timeoutSeconds} onChange={(event) => updateForm({ timeoutSeconds: event.target.value })}>{MODEL_TIMEOUT_OPTIONS.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label>
+        </div>
+        <div className="form-row">
+          <label className="form-field"><span>最大输出 Token</span><select value={form.maxTokens} onChange={(event) => updateForm({ maxTokens: event.target.value })}><option value="2048">2K · 轻量</option><option value="4096">4K · 推荐</option><option value="8192">8K · 长回答</option><option value="16384">16K · 复杂任务</option><option value="32768">32K · 超长任务</option></select></label>
+          <label className="form-field"><span>Temperature</span><select value={form.temperature} onChange={(event) => updateForm({ temperature: event.target.value })}><option value="0">0 · 确定性</option><option value="0.2">0.2 · 稳定</option><option value="0.7">0.7 · 推荐</option><option value="1">1 · 发散</option></select></label>
+        </div>
+        <details className="advanced-config">
+          <summary>模型配置 JSON · 高级参数（可选）</summary>
+          <small>Provider 扩展参数 JSON：只填写非敏感参数，例如 top_p、headers 或 Anthropic 版本；不要粘贴 API Key。</small>
+          <textarea className="json-config-field" value={form.advancedJson} onChange={(event) => updateForm({ advancedJson: event.target.value })} rows={5} spellCheck={false} />
+        </details>
+        <label className="checkbox-field"><input type="checkbox" checked={form.enabled} onChange={(event) => updateForm({ enabled: event.target.checked })} /><span>启用此配置（停用后 Agent 无法启动）</span></label>
+        {error && <div className="form-error"><OctagonAlert size={16} /> {error}</div>}
+        <div className="modal-actions"><button type="submit" className="button button-primary" disabled={busy || mode !== "live"}>{busy ? "保存中…" : editingId ? "保存修改" : "创建配置"}</button></div>
+      </form>
+
+      <div className="panel settings-panel">
+        <div className="settings-panel-head"><span className="settings-icon"><Cpu size={19} /></span><div><h3>已保存配置</h3><p>{modelConfigs.length ? `${modelConfigs.length} 条租户连接 · Agent 只选择这里的配置` : "还没有配置，先创建一条模型连接"}</p></div></div>
+        {modelConfigs.length ? <div className="config-list">{modelConfigs.map((config) => <div className="config-list-row" key={config.id}>
+          <span><strong>{config.name}</strong><small>{config.provider} · {config.model} · {config.protocol} · {config.masked_secret || "无凭证"}</small></span>
+          <span className="config-row-actions"><span className={`status-badge ${config.enabled ? "ready" : "stopped"}`}>{config.enabled ? "启用" : "停用"}</span><button className="button button-ghost" onClick={() => startEdit(config)} disabled={busy}>编辑</button><button className="button button-danger" onClick={() => void remove(config)} disabled={busy}>删除</button></span>
+        </div>)}</div> : <div className="empty-state"><KeyRound size={24} /><strong>暂无模型连接</strong><span>创建后这里会显示脱敏凭证和协议类型。</span></div>}
+      </div>
+    </div>
+  );
+}
+
 function SettingsView({
   apiBase,
   apiKey,
   mode,
   syncing,
-  credentials,
-  modelProfiles,
   runtimeConfig,
   requestHeaders,
   onConfigChanged,
+  onOpenModelConfigs,
   setApiBase,
   setApiKey,
   onConnect,
@@ -2087,77 +2443,18 @@ function SettingsView({
   apiKey: string;
   mode: ConnectionMode;
   syncing: boolean;
-  credentials: CredentialProfile[];
-  modelProfiles: ModelProfile[];
   runtimeConfig: RuntimeConfigEntry[];
   requestHeaders: () => HeadersInit;
   onConfigChanged: () => void;
+  onOpenModelConfigs: () => void;
   setApiBase: (value: string) => void;
   setApiKey: (value: string) => void;
   onConnect: () => void;
 }) {
-  const [credentialName, setCredentialName] = useState("");
-  const [credentialProvider, setCredentialProvider] = useState("openai_compatible");
-  const [credentialSecret, setCredentialSecret] = useState("");
-  const [modelProfileName, setModelProfileName] = useState("");
-  const [modelProfileProvider, setModelProfileProvider] = useState("openai_compatible");
-  const [modelProfileModel, setModelProfileModel] = useState("");
-  const [modelProfileCredential, setModelProfileCredential] = useState("");
-  const [modelProfileBaseUrl, setModelProfileBaseUrl] = useState("");
-  const [modelProfileConfig, setModelProfileConfig] = useState("{}");
   const [runtimeKey, setRuntimeKey] = useState("");
   const [runtimeValue, setRuntimeValue] = useState("{}");
   const [configBusy, setConfigBusy] = useState(false);
   const [configError, setConfigError] = useState("");
-
-  async function saveCredential(event: FormEvent) {
-    event.preventDefault();
-    setConfigBusy(true);
-    setConfigError("");
-    try {
-      const response = await fetch(`${apiBase}/credentials`, {
-        method: "POST",
-        headers: requestHeaders(),
-        body: JSON.stringify({ name: credentialName, provider: credentialProvider, secret: credentialSecret }),
-      });
-      if (!response.ok) throw new Error(await response.text());
-      setCredentialName("");
-      setCredentialSecret("");
-      onConfigChanged();
-    } catch (error) {
-      setConfigError(error instanceof Error ? error.message : "凭据保存失败");
-    } finally {
-      setConfigBusy(false);
-    }
-  }
-
-  async function saveModelProfile(event: FormEvent) {
-    event.preventDefault();
-    setConfigBusy(true);
-    setConfigError("");
-    try {
-      const response = await fetch(`${apiBase}/model-profiles`, {
-        method: "POST",
-        headers: requestHeaders(),
-        body: JSON.stringify({
-          name: modelProfileName,
-          provider: modelProfileProvider,
-          model: modelProfileModel,
-          credential_profile_id: modelProfileCredential || null,
-          base_url: modelProfileBaseUrl || null,
-          config: parseJsonObject(modelProfileConfig, "模型配置"),
-        }),
-      });
-      if (!response.ok) throw new Error(await response.text());
-      setModelProfileName("");
-      setModelProfileModel("");
-      onConfigChanged();
-    } catch (error) {
-      setConfigError(error instanceof Error ? error.message : "模型配置保存失败");
-    } finally {
-      setConfigBusy(false);
-    }
-  }
 
   async function saveRuntimeConfig(event: FormEvent) {
     event.preventDefault();
@@ -2213,28 +2510,13 @@ function SettingsView({
             {syncing ? "正在连接" : "测试并连接"}
           </button>
         </div>
-        <div className="panel settings-panel config-panel">
-          <div className="settings-panel-head">
-            <span className="settings-icon"><KeyRound size={19} /></span>
-            <div><h3>凭据库（多 AK）</h3><p>只返回脱敏信息，明文仅在提交时短暂驻留页面内存</p></div>
+        <div className="panel settings-panel">
+          <div className="settings-panel-head"><span className="settings-icon"><KeyRound size={19} /></span><div><h3>凭证&模型配置</h3><p>已移到侧边栏独立页面；一条配置包含协议、模型、端点和加密凭证。</p></div><button className="button button-secondary" onClick={onOpenModelConfigs}>打开配置</button></div>
+          <div className="setting-values">
+            <div><span>配置事实源</span><strong>租户数据库</strong></div>
+            <div><span>内置协议</span><strong>OpenAI Chat / Claude Messages</strong></div>
+            <div><span>密钥返回</span><strong>仅脱敏</strong></div>
           </div>
-          <form className="config-form" onSubmit={saveCredential}>
-            <div className="form-row"><label className="form-field"><span>名称</span><input required value={credentialName} onChange={(event) => setCredentialName(event.target.value)} placeholder="OpenAI 主账号" /></label><label className="form-field"><span>提供商</span><input required value={credentialProvider} onChange={(event) => setCredentialProvider(event.target.value)} /></label></div>
-            <label className="form-field"><span>AK / Secret</span><input required type="password" value={credentialSecret} onChange={(event) => setCredentialSecret(event.target.value)} autoComplete="new-password" placeholder="提交后不可回显" /></label>
-            <button className="button button-secondary" disabled={configBusy || mode !== "live"}>{configBusy ? "保存中" : "保存凭据"}</button>
-          </form>
-          <div className="config-list">{credentials.length ? credentials.map((item) => <div className="config-list-row" key={item.id}><span><strong>{item.name}</strong><small>{item.provider} · {item.masked_value}</small></span><span className={`status-badge ${item.enabled ? "ready" : "stopped"}`}>{item.enabled ? "启用" : "停用"}</span></div>) : <div className="empty-inline">数据库中暂无凭据</div>}</div>
-        </div>
-        <div className="panel settings-panel config-panel">
-          <div className="settings-panel-head"><span className="settings-icon"><Cpu size={19} /></span><div><h3>模型配置档</h3><p>Agent 只引用 profile_id；模型与凭据可复用</p></div></div>
-          <form className="config-form" onSubmit={saveModelProfile}>
-            <div className="form-row"><label className="form-field"><span>名称</span><input required value={modelProfileName} onChange={(event) => setModelProfileName(event.target.value)} placeholder="GPT-4o 主配置" /></label><label className="form-field"><span>提供商</span><input required value={modelProfileProvider} onChange={(event) => setModelProfileProvider(event.target.value)} /></label></div>
-            <div className="form-row"><label className="form-field"><span>模型</span><input required value={modelProfileModel} onChange={(event) => setModelProfileModel(event.target.value)} placeholder="gpt-4o-mini" /></label><label className="form-field"><span>凭据</span><select value={modelProfileCredential} onChange={(event) => setModelProfileCredential(event.target.value)}><option value="">无（仅离线 provider）</option>{credentials.filter((item) => item.enabled).map((item) => <option value={item.id} key={item.id}>{item.name} · {item.masked_value}</option>)}</select></label></div>
-            <label className="form-field"><span>Base URL（可选）</span><input value={modelProfileBaseUrl} onChange={(event) => setModelProfileBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" /></label>
-            <label className="form-field json-config-field"><span>扩展参数 JSON</span><textarea rows={3} value={modelProfileConfig} onChange={(event) => setModelProfileConfig(event.target.value)} spellCheck={false} /></label>
-            <button className="button button-secondary" disabled={configBusy || mode !== "live"}>{configBusy ? "保存中" : "保存模型配置"}</button>
-          </form>
-          <div className="config-list">{modelProfiles.length ? modelProfiles.map((item) => <div className="config-list-row" key={item.id}><span><strong>{item.name}</strong><small>{item.provider} / {item.model}{item.credential_profile_id ? " · 已绑定凭据" : " · 无凭据"}</small></span><span className={`status-badge ${item.enabled ? "ready" : "stopped"}`}>{item.enabled ? "启用" : "停用"}</span></div>) : <div className="empty-inline">数据库中暂无模型配置档</div>}</div>
         </div>
         <div className="panel settings-panel config-panel">
           <div className="settings-panel-head"><span className="settings-icon"><Braces size={19} /></span><div><h3>运行配置</h3><p>非敏感业务开关和默认值，按版本写入数据库</p></div></div>
@@ -2279,7 +2561,7 @@ function SettingsView({
             </div>
             <div className="deployment-option">
               <Box size={18} />
-              <span><strong>单节点容器</strong><small>Docker / Compose 已通过 build、健康检查与真实委派；Kubernetes 单副本清单已提供</small></span>
+              <span><strong>单节点容器</strong><small>Docker / Compose 已通过 build、健康检查与空数据库注册表检查；Kubernetes 单副本清单已提供</small></span>
               <span className="deployment-state verified">已验证</span>
             </div>
             <div className="deployment-option">
@@ -2387,16 +2669,21 @@ function MountToolScopeEditor({
 function AgentDrawer({
   agent,
   agents,
+  modelConfigs,
   onClose,
   onEdit,
   onRun,
 }: {
   agent: AgentSpec;
   agents: AgentSpec[];
+  modelConfigs: ModelConfig[];
   onClose: () => void;
   onEdit: () => void;
   onRun: () => void;
 }) {
+  const modelConfig = modelConfigs.find(
+    (item) => item.id === agent.model.model_config_id,
+  );
   return (
     <div className="drawer-layer" role="dialog" aria-modal="true" aria-label={`${agent.name} 配置`}>
       <button className="modal-scrim" onClick={onClose} aria-label="关闭 Agent 详情" />
@@ -2416,8 +2703,9 @@ function AgentDrawer({
         <p className="drawer-description">{agent.description}</p>
         <div className="drawer-section">
           <div className="drawer-section-title"><Cpu size={16} /> 模型</div>
-          <div className="config-value"><span>Provider</span><strong>{agent.model.provider}</strong></div>
-          <div className="config-value"><span>Model</span><strong>{agent.model.model}</strong></div>
+          <div className="config-value"><span>配置</span><strong>{modelConfig?.name || agent.model.model_config_id}</strong></div>
+          <div className="config-value"><span>Provider / Model</span><strong>{modelConfig ? `${modelConfig.provider} / ${modelConfig.model}` : "按租户配置解析"}</strong></div>
+          <div className="config-value"><span>协议</span><strong>{modelConfig?.protocol || "运行时解析"}</strong></div>
         </div>
         <div className="drawer-section">
           <div className="drawer-section-title"><Link2 size={16} /> 子 Agent 挂载</div>
@@ -2486,27 +2774,23 @@ function AgentDrawer({
 function NewAgentModal({
   agents,
   plugins,
-  modelProfiles,
+  modelConfigs,
   onClose,
   onCreate,
 }: {
   agents: AgentSpec[];
   plugins: PluginManifest[];
-  modelProfiles: ModelProfile[];
+  modelConfigs: ModelConfig[];
   onClose: () => void;
   onCreate: (form: NewAgentForm) => Promise<void>;
 }) {
-  const providers = plugins.filter((plugin) => plugin.kind === "provider" && plugin.available);
   const toolPlugins = plugins.filter((plugin) => plugin.kind === "tool" && plugin.available);
   const memoryPlugins = plugins.filter((plugin) => plugin.kind === "memory" && plugin.available);
   const middlewarePlugins = plugins.filter((plugin) => plugin.kind === "middleware" && plugin.available);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("你是一个可靠、可审计的专业 Agent。");
-  const [provider, setProvider] = useState(providers[0]?.id || "mock");
-  const [model, setModel] = useState("deterministic");
-  const [modelProfileId, setModelProfileId] = useState(modelProfiles[0]?.id || "");
-  const [modelConfigText, setModelConfigText] = useState("{}");
+  const [modelConfigId, setModelConfigId] = useState(modelConfigs[0]?.id || "");
   const [children, setChildren] = useState<ChildMount[]>([]);
   const [tools, setTools] = useState<ToolBindingSpec[]>([]);
   const [toolConfigTexts, setToolConfigTexts] = useState<string[]>([]);
@@ -2554,10 +2838,7 @@ function NewAgentModal({
         name,
         description,
         systemPrompt,
-        provider,
-        model,
-        modelProfileId: modelProfileId || undefined,
-        modelConfig: parseJsonObject(modelConfigText, "模型配置"),
+        modelConfigId,
         children,
         tools: configuredTools,
         memory: {
@@ -2587,20 +2868,9 @@ function NewAgentModal({
         <div className="modal-body">
           <div className="form-row">
             <label className="form-field"><span>名称</span><input required minLength={2} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：合规审查 Agent" /></label>
-            <label className="form-field"><span>模型配置档</span><select value={modelProfileId} onChange={(event) => { const profile = modelProfiles.find((item) => item.id === event.target.value); setModelProfileId(event.target.value); if (profile) { setProvider(profile.provider); setModel(profile.model); } }}><option value="">不使用配置档（仅离线默认）</option>{modelProfiles.filter((item) => item.enabled).map((item) => <option value={item.id} key={item.id}>{item.name} · {item.provider}/{item.model}</option>)}</select></label>
+            <label className="form-field"><span>模型配置</span><select required value={modelConfigId} onChange={(event) => setModelConfigId(event.target.value)}><option value="">请选择已启用的模型配置</option>{modelConfigs.filter((item) => item.enabled).map((item) => <option value={item.id} key={item.id}>{item.name} · {item.provider} / {item.model}</option>)}</select><small>模型、协议、端点和凭证都来自租户模型配置。</small></label>
           </div>
           <label className="form-field"><span>描述</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="一句话说明职责边界" /></label>
-          {!modelProfileId && <div className="form-row"><label className="form-field"><span>模型提供商</span><select value={provider} onChange={(event) => { setProvider(event.target.value); setModel(event.target.value === "mock" ? "deterministic" : "gpt-4.1-mini"); }}>{providers.map((item) => <option value={item.id} key={item.id}>{item.display_name}</option>)}</select></label><label className="form-field"><span>模型</span><input required value={model} onChange={(event) => setModel(event.target.value)} /></label></div>}
-          <label className="form-field json-config-field">
-            <span>模型配置 JSON</span>
-            <textarea
-              rows={4}
-              value={modelConfigText}
-              onChange={(event) => setModelConfigText(event.target.value)}
-              spellCheck={false}
-            />
-            <small>{modelProfileId ? "模型参数与 AK 引用来自数据库配置档；此处仅用于扩展参数。" : "建议先在系统设置中创建模型配置档；此处不接受 AK 明文。"}</small>
-          </label>
           <label className="form-field"><span>系统提示词</span><textarea required rows={4} value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} /></label>
           <fieldset className="child-picker tool-picker">
             <legend>工具绑定 <span>可选</span></legend>
@@ -2990,20 +3260,17 @@ function EditAgentModal({
   agent,
   agents,
   plugins,
-  modelProfiles,
+  modelConfigs,
   onClose,
   onSave,
 }: {
   agent: AgentSpec;
   agents: AgentSpec[];
   plugins: PluginManifest[];
-  modelProfiles: ModelProfile[];
+  modelConfigs: ModelConfig[];
   onClose: () => void;
   onSave: (form: AgentConfigurationForm) => Promise<void>;
 }) {
-  const providers = plugins.filter(
-    (plugin) => plugin.kind === "provider" && plugin.available,
-  );
   const toolPlugins = plugins.filter(
     (plugin) => plugin.kind === "tool" && plugin.available,
   );
@@ -3016,12 +3283,7 @@ function EditAgentModal({
   const [name, setName] = useState(agent.name);
   const [description, setDescription] = useState(agent.description);
   const [systemPrompt, setSystemPrompt] = useState(agent.system_prompt);
-  const [provider, setProvider] = useState(agent.model.provider);
-  const [model, setModel] = useState(agent.model.model);
-  const [modelProfileId, setModelProfileId] = useState(agent.model.profile_id || "");
-  const [modelConfigText, setModelConfigText] = useState(
-    JSON.stringify(agent.model.config || {}, null, 2),
-  );
+  const [modelConfigId, setModelConfigId] = useState(agent.model.model_config_id);
   const [tools, setTools] = useState<ToolBindingSpec[]>(agent.tools);
   const [toolConfigTexts, setToolConfigTexts] = useState<string[]>(
     () => agent.tools.map((tool) => JSON.stringify(tool.config || {}, null, 2)),
@@ -3072,10 +3334,7 @@ function EditAgentModal({
         name,
         description,
         systemPrompt,
-        provider,
-        model,
-        modelProfileId: modelProfileId || undefined,
-        modelConfig: parseJsonObject(modelConfigText, "模型配置"),
+        modelConfigId,
         tools: configuredTools,
         children,
         memory: {
@@ -3131,20 +3390,8 @@ function EditAgentModal({
             <input value={description} onChange={(event) => setDescription(event.target.value)} />
           </label>
           <div className="form-row">
-            <label className="form-field"><span>模型配置档</span><select value={modelProfileId} onChange={(event) => { const profile = modelProfiles.find((item) => item.id === event.target.value); setModelProfileId(event.target.value); if (profile) { setProvider(profile.provider); setModel(profile.model); } }}><option value="">不使用配置档（仅离线默认）</option>{modelProfiles.filter((item) => item.enabled).map((item) => <option value={item.id} key={item.id}>{item.name} · {item.provider}/{item.model}</option>)}</select></label>
-            {!modelProfileId && <label className="form-field"><span>模型提供商</span><select value={provider} onChange={(event) => setProvider(event.target.value)}>{providers.map((item) => <option value={item.id} key={item.id}>{item.display_name}</option>)}</select></label>}
+            <label className="form-field"><span>模型配置</span><select required value={modelConfigId} onChange={(event) => setModelConfigId(event.target.value)}><option value="">请选择已启用的模型配置</option>{modelConfigs.filter((item) => item.enabled).map((item) => <option value={item.id} key={item.id}>{item.name} · {item.provider} / {item.model}</option>)}</select><small>Agent 只引用租户模型配置；协议、端点和凭证不复制到 Agent。</small></label>
           </div>
-          {!modelProfileId && <label className="form-field"><span>模型</span><input required value={model} onChange={(event) => setModel(event.target.value)} /></label>}
-          <label className="form-field json-config-field">
-            <span>模型配置 JSON</span>
-            <textarea
-              rows={4}
-              value={modelConfigText}
-              onChange={(event) => setModelConfigText(event.target.value)}
-              spellCheck={false}
-            />
-            <small>{modelProfileId ? "AK 与模型参数由数据库配置档提供；此处不读取或保存明文 AK。" : "只保存非敏感扩展参数；password、token、api_key 等明文键会被拒绝。"}</small>
-          </label>
           <label className="form-field">
             <span>系统提示词</span>
             <textarea required rows={4} value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} />
@@ -3654,7 +3901,7 @@ function RunModal({
     ...agents.map((item) => ({ id: item.id, kind: "agent" as const, label: item.name, note: `definition · rev ${item.revision}` })),
   ];
   const [target, setTarget] = useState(options[0]?.id || "");
-  const [input, setInput] = useState("delegate:analyst 评估当前 Agent 框架的扩展边界与主要风险");
+    const [input, setInput] = useState("请评估当前 Agent 框架的扩展边界与主要风险");
   const selected = options.find((item) => item.id === target);
   return (
     <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="run-modal-title">

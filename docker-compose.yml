@@ -15,7 +15,6 @@ services:
       UAI_FORGE_DATABASE_PATH: /data/forge.db
       UAI_FORGE_HOST: 0.0.0.0
       UAI_FORGE_PORT: "8000"
-      UAI_FORGE_SEED_DEMO: ${UAI_FORGE_SEED_DEMO:-true}
     init: true
     ports:
       - "${UAI_FORGE_BIND_ADDRESS:-127.0.0.1}:${UAI_FORGE_API_PORT:-8000}:8000"

@@ -306,6 +306,14 @@ THE SYSTEM SHALL 不创建、不读取也不追加 memory adapter。内置进程
 session 数据，但 retention 等策略必须按每个 binding 生效，不得由首次创建的 binding
 锁定后续 Agent 的配置。
 
+### EXT-007 — 生产 Provider 边界
+
+状态：`Implemented`，目标版本：`0.1`
+
+WHEN UAI Forge 以产品运行时启动
+THE SYSTEM SHALL 只在 registry 中暴露真实可调用的 provider 适配器；测试 provider、示例
+拓扑和伪造模型只能位于 `backend/tests` 测试边界，不得进入产品包、控制 API 或默认数据库。
+
 ## 安全、身份与隐私
 
 ### SEC-001 — Secret 只存引用
@@ -313,11 +321,11 @@ session 数据，但 retention 等策略必须按每个 binding 生效，不得�
 状态：`Partial`，目标版本：`0.3`
 
 WHEN 模型、工具或插件需要凭据
-THE SYSTEM SHALL 持久化 CredentialProfile/SecretRef 引用，在受信任边界解析，并保证 Secret 值
+THE SYSTEM SHALL 持久化 tenant-scoped ModelConfig，在受信任边界解析，并保证 Secret 值
 不进入配置响应、事件、日志、prompt、trace 或 HTML。
 
-当前 provider 仅通过数据库 CredentialProfile/ModelProfile 解引用并在运行时短暂解析；
-缺少数据库 profile 或凭据时 fail closed。Model、Tool、Memory、Middleware、Instance
+当前 provider 仅通过数据库 ModelConfig 解引用并在运行时短暂解析；缺少数据库配置或凭据时
+fail closed。Model、Tool、Memory、Middleware、Instance
 override、Run metadata 和 RuntimeConfig 已递归拒绝常见明文 credential key；Agent/Instance
 PATCH 会重建完整模型以避免跳过校验。生产级 Secret Manager 轮换、插件自定义敏感字段和
 完整日志/异常/HTML 全输出泄露覆盖仍待后续版本。
@@ -398,10 +406,9 @@ WHEN Agent 构建者使用 Web 后台
 THE SYSTEM SHALL 可创建、查看、修订 Agent，管理多个 Instance、mount 模式和策略，并以
 插件 JSON Schema 在服务端驱动验证。
 
-`0.1.x` 已支持创建和发布不可变 Agent 修订，配置 provider/model、工具别名/权限/JSON、
+`0.1.x` 已支持创建和发布不可变 Agent 修订，选择 ModelConfig、工具别名/权限/JSON、
 memory、middleware、mount alias/固定 revision/并发/输入模板/下游工具插件范围和执行
-策略；也支持创建多个固定 revision 的 Instance、启停、真实 Run history 与 demo/live
-明示。
+策略；也支持创建多个固定 revision 的 Instance、启停、真实 Run history 与连接状态明示。
 
 当前仍为 `Partial`：第三方插件配置使用通用 JSON 对象而不是由 manifest JSON Schema
 自动生成控件；尚无 Instance policy override 编辑、revision diff、peer session 或
@@ -412,7 +419,7 @@ desired/observed deployment controller。
 状态：`Implemented`，目标版本：`0.1`
 
 WHEN Control API 不可用
-THE SYSTEM SHALL 明确显示 demo mode，且 demo 数据不得被标记为 live 或部署健康证据。
+THE SYSTEM SHALL 明确显示未连接状态，且不得生成或伪装 Agent、模型、凭据、运行事件或部署健康数据。
 
 ### OBS-001 — 可关联观测
 
@@ -439,12 +446,12 @@ Agent CRUD 与 bounded delegation。
 状态：`Implemented`，目标版本：`0.1`
 
 WHEN 使用容器部署 `0.1.x`
-THE SYSTEM SHALL 保持单 worker、持久 SQLite volume、健康检查和真实委派 smoke test，
+THE SYSTEM SHALL 保持单 worker、持久 SQLite volume、健康检查和不生成业务数据的启动 smoke test，
 并明确不支持水平扩 worker。
 
 可重复的 Compose 门禁构建两个生产镜像，启动并验证两个健康容器，运行后端 doctor，
-再通过 HTTP API 完成 bounded child 委派并校验从 1 连续到终态的事件；2026-07-30
-实测为 17 条。测试资源按唯一 project/volume 和动态测试端口隔离，并在结束时验证
+再通过 HTTP API 校验新数据库为空且 provider 注册表只有 `openai_compatible`。测试资源
+按唯一 project/volume 和动态测试端口隔离，并在结束时验证
 容器、network 与 volume 均已清理。
 
 ### DEP-003 — 可恢复云适配
@@ -454,3 +461,11 @@ THE SYSTEM SHALL 保持单 worker、持久 SQLite volume、健康检查和真实
 WHEN 部署多个 API/worker 副本
 THE SYSTEM SHALL 使用 PostgreSQL、durable bus、lease/fencing、checkpoint/outbox、
 Secret manager 和 OTel，并通过重复投递与 worker kill 测试。
+
+### DEP-004 — 可移植发布门禁
+
+状态：`Implemented`，目标版本：`0.1`
+
+WHEN 开发者从公开 checkout 构建或验收 UAI Forge
+THE SYSTEM SHALL 不要求仓库内托管平台 workflow；发布验证由版本化 Makefile、测试命令和
+容器 smoke 脚本显式运行，且删除 workflow 不影响应用构建或运行。

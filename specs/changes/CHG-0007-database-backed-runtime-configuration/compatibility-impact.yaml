@@ -4,8 +4,8 @@ contract_version: "0.1.x"
 breaking_changes:
   - "api_key_env and provider environment-variable credential lookup are removed."
 compatibility_notes:
-  - "ModelBinding.profile_id is optional only for offline mock/default test execution."
+  - "ModelBinding.profile_id remains optional at the domain boundary for test-only adapters; the built-in OpenAI-compatible provider requires it at runtime."
   - "Credential GET responses intentionally do not expose a secret field."
 migrations:
-  - "Create credential/model profiles and update every non-mock Agent revision before running it."
+  - "Create credential/model profiles and update every Agent revision before running it."
   - "Existing SQLite files receive tables via initialize() without destructive migration."

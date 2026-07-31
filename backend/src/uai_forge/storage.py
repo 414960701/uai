@@ -18,8 +18,7 @@ from typing import Any, Callable, List, Optional, TypeVar
 from .models import (
     AgentInstance,
     AgentSpec,
-    CredentialProfile,
-    ModelProfile,
+    ModelConfig,
     RuntimeConfigEntry,
     RunEvent,
     RunRecord,
@@ -137,37 +136,25 @@ class SQLiteRepository:
                     created_at TEXT NOT NULL,
                     PRIMARY KEY (tenant_id, run_id, sequence)
                 );
-                CREATE TABLE IF NOT EXISTS credential_profiles (
+                CREATE TABLE IF NOT EXISTS model_configs (
                     tenant_id TEXT NOT NULL,
                     id TEXT NOT NULL,
                     name TEXT NOT NULL,
                     provider TEXT NOT NULL,
-                    secret_ciphertext TEXT NOT NULL,
-                    masked_value TEXT NOT NULL,
-                    enabled INTEGER NOT NULL DEFAULT 1,
-                    metadata_json TEXT NOT NULL DEFAULT '{}',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY (tenant_id, id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_credentials_tenant_name
-                    ON credential_profiles (tenant_id, name COLLATE NOCASE);
-                CREATE TABLE IF NOT EXISTS model_profiles (
-                    tenant_id TEXT NOT NULL,
-                    id TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    provider TEXT NOT NULL,
+                    protocol TEXT NOT NULL,
                     model TEXT NOT NULL,
-                    credential_profile_id TEXT,
                     base_url TEXT,
+                    secret_ciphertext TEXT NOT NULL,
+                    masked_secret TEXT NOT NULL,
                     config_json TEXT NOT NULL DEFAULT '{}',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
                     enabled INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (tenant_id, id)
                 );
-                CREATE INDEX IF NOT EXISTS idx_model_profiles_tenant_name
-                    ON model_profiles (tenant_id, name COLLATE NOCASE);
+                CREATE INDEX IF NOT EXISTS idx_model_configs_tenant_name
+                    ON model_configs (tenant_id, name COLLATE NOCASE);
                 CREATE TABLE IF NOT EXISTS runtime_configs (
                     tenant_id TEXT NOT NULL,
                     key TEXT NOT NULL,
@@ -392,66 +379,50 @@ class SQLiteRepository:
     # sees them and the public profile object never contains plaintext.
 
     @staticmethod
-    def _credential_from_row(row: sqlite3.Row) -> CredentialProfile:
-        return CredentialProfile(
+    def _model_config_from_row(row: sqlite3.Row) -> ModelConfig:
+        return ModelConfig(
             id=row["id"],
             tenant_id=row["tenant_id"],
             name=row["name"],
             provider=row["provider"],
-            masked_value=row["masked_value"],
-            enabled=bool(row["enabled"]),
-            metadata=json.loads(row["metadata_json"] or "{}"),
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-        )
-
-    @staticmethod
-    def _model_profile_from_row(row: sqlite3.Row) -> ModelProfile:
-        return ModelProfile(
-            id=row["id"],
-            tenant_id=row["tenant_id"],
-            name=row["name"],
-            provider=row["provider"],
+            protocol=row["protocol"],
             model=row["model"],
-            credential_profile_id=row["credential_profile_id"],
             base_url=row["base_url"],
+            masked_secret=row["masked_secret"],
             config=json.loads(row["config_json"] or "{}"),
+            metadata=json.loads(row["metadata_json"] or "{}"),
             enabled=bool(row["enabled"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
 
-    async def list_credentials(self, tenant_id: str) -> List[CredentialProfile]:
+    async def list_model_configs(self, tenant_id: str) -> List[ModelConfig]:
         rows = await self._read(
             lambda connection: connection.execute(
-                """
-                SELECT * FROM credential_profiles
-                WHERE tenant_id = ? ORDER BY name COLLATE NOCASE
-                """,
+                "SELECT * FROM model_configs WHERE tenant_id = ? ORDER BY name COLLATE NOCASE",
                 (tenant_id,),
             ).fetchall()
         )
-        return [self._credential_from_row(row) for row in rows]
+        return [self._model_config_from_row(row) for row in rows]
 
-    async def get_credential(
-        self, tenant_id: str, credential_id: str
-    ) -> Optional[CredentialProfile]:
+    async def get_model_config(
+        self, tenant_id: str, config_id: str
+    ) -> Optional[ModelConfig]:
         row = await self._read(
             lambda connection: connection.execute(
-                "SELECT * FROM credential_profiles WHERE tenant_id = ? AND id = ?",
-                (tenant_id, credential_id),
+                "SELECT * FROM model_configs WHERE tenant_id = ? AND id = ?",
+                (tenant_id, config_id),
             ).fetchone()
         )
-        return self._credential_from_row(row) if row else None
+        return self._model_config_from_row(row) if row else None
 
-    async def resolve_credential(self, tenant_id: str, credential_id: str) -> Optional[str]:
+    async def resolve_model_config_secret(
+        self, tenant_id: str, config_id: str
+    ) -> Optional[str]:
         row = await self._read(
             lambda connection: connection.execute(
-                """
-                SELECT secret_ciphertext, enabled FROM credential_profiles
-                WHERE tenant_id = ? AND id = ?
-                """,
-                (tenant_id, credential_id),
+                "SELECT secret_ciphertext, enabled FROM model_configs WHERE tenant_id = ? AND id = ?",
+                (tenant_id, config_id),
             ).fetchone()
         )
         if not row or not bool(row["enabled"]):
@@ -459,156 +430,53 @@ class SQLiteRepository:
         try:
             return decrypt_secret(self.credential_master_key, row["secret_ciphertext"])
         except SecretDecryptionError as exc:
-            raise RuntimeError("credential could not be decrypted") from exc
+            raise RuntimeError("model configuration secret could not be decrypted") from exc
 
-    async def save_credential(
+    async def save_model_config(
         self,
         tenant_id: str,
-        profile: CredentialProfile,
+        config: ModelConfig,
         secret: Optional[str] = None,
-    ) -> CredentialProfile:
+    ) -> ModelConfig:
         now = utc_now()
 
-        def operation(connection: sqlite3.Connection) -> CredentialProfile:
+        def operation(connection: sqlite3.Connection) -> ModelConfig:
             current = connection.execute(
-                """
-                SELECT created_at, secret_ciphertext, masked_value
-                FROM credential_profiles WHERE tenant_id = ? AND id = ?
-                """,
-                (tenant_id, profile.id),
+                "SELECT created_at, secret_ciphertext, masked_secret FROM model_configs WHERE tenant_id = ? AND id = ?",
+                (tenant_id, config.id),
             ).fetchone()
-            if secret is None and current is None:
-                raise RecordNotFoundError("credential profile not found")
-            created_at = (
-                datetime.fromisoformat(current["created_at"]) if current else now
-            )
+            created_at = datetime.fromisoformat(current["created_at"]) if current else now
             encrypted = (
                 encrypt_secret(self.credential_master_key, secret)
                 if secret is not None
-                else current["secret_ciphertext"]
+                else (current["secret_ciphertext"] if current else "")
             )
-            masked = mask_secret(secret) if secret is not None else current["masked_value"]
-            saved = profile.model_copy(
+            masked = mask_secret(secret) if secret is not None else (current["masked_secret"] if current else "")
+            saved = config.model_copy(
                 update={
                     "tenant_id": tenant_id,
-                    "masked_value": masked,
+                    "masked_secret": masked,
                     "created_at": created_at,
                     "updated_at": now,
                 }
             )
             connection.execute(
                 """
-                INSERT INTO credential_profiles (
-                    tenant_id, id, name, provider, secret_ciphertext,
-                    masked_value, enabled, metadata_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO model_configs (
+                    tenant_id, id, name, provider, protocol, model, base_url,
+                    secret_ciphertext, masked_secret, config_json, metadata_json,
+                    enabled, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(tenant_id, id) DO UPDATE SET
                     name=excluded.name,
                     provider=excluded.provider,
-                    secret_ciphertext=excluded.secret_ciphertext,
-                    masked_value=excluded.masked_value,
-                    enabled=excluded.enabled,
-                    metadata_json=excluded.metadata_json,
-                    updated_at=excluded.updated_at
-                """,
-                (
-                    tenant_id,
-                    saved.id,
-                    saved.name,
-                    saved.provider,
-                    encrypted,
-                    saved.masked_value,
-                    int(saved.enabled),
-                    json.dumps(saved.metadata, ensure_ascii=False),
-                    saved.created_at.isoformat(),
-                    saved.updated_at.isoformat(),
-                ),
-            )
-            return saved
-
-        return await self._write(operation)
-
-    async def delete_credential(self, tenant_id: str, credential_id: str) -> bool:
-        def operation(connection: sqlite3.Connection) -> bool:
-            used = connection.execute(
-                """
-                SELECT 1 FROM model_profiles
-                WHERE tenant_id = ? AND credential_profile_id = ? LIMIT 1
-                """,
-                (tenant_id, credential_id),
-            ).fetchone()
-            if used:
-                raise ConfigurationInUseError("credential profile is used by a model profile")
-            return connection.execute(
-                "DELETE FROM credential_profiles WHERE tenant_id = ? AND id = ?",
-                (tenant_id, credential_id),
-            ).rowcount > 0
-
-        return await self._write(operation)
-
-    async def list_model_profiles(self, tenant_id: str) -> List[ModelProfile]:
-        rows = await self._read(
-            lambda connection: connection.execute(
-                "SELECT * FROM model_profiles WHERE tenant_id = ? ORDER BY name COLLATE NOCASE",
-                (tenant_id,),
-            ).fetchall()
-        )
-        return [self._model_profile_from_row(row) for row in rows]
-
-    async def get_model_profile(
-        self, tenant_id: str, profile_id: str
-    ) -> Optional[ModelProfile]:
-        row = await self._read(
-            lambda connection: connection.execute(
-                "SELECT * FROM model_profiles WHERE tenant_id = ? AND id = ?",
-                (tenant_id, profile_id),
-            ).fetchone()
-        )
-        return self._model_profile_from_row(row) if row else None
-
-    async def save_model_profile(
-        self, tenant_id: str, profile: ModelProfile
-    ) -> ModelProfile:
-        now = utc_now()
-
-        def operation(connection: sqlite3.Connection) -> ModelProfile:
-            if profile.provider == "openai_compatible" and not profile.credential_profile_id:
-                raise ValueError(
-                    "openai_compatible model profiles require a credential profile"
-                )
-            if profile.credential_profile_id:
-                credential = connection.execute(
-                    """
-                    SELECT 1 FROM credential_profiles
-                    WHERE tenant_id = ? AND id = ?
-                    """,
-                    (tenant_id, profile.credential_profile_id),
-                ).fetchone()
-                if credential is None:
-                    raise RecordNotFoundError("credential profile not found")
-            current = connection.execute(
-                "SELECT created_at FROM model_profiles WHERE tenant_id = ? AND id = ?",
-                (tenant_id, profile.id),
-            ).fetchone()
-            created_at = (
-                datetime.fromisoformat(current["created_at"]) if current else now
-            )
-            saved = profile.model_copy(
-                update={"tenant_id": tenant_id, "created_at": created_at, "updated_at": now}
-            )
-            connection.execute(
-                """
-                INSERT INTO model_profiles (
-                    tenant_id, id, name, provider, model, credential_profile_id,
-                    base_url, config_json, enabled, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(tenant_id, id) DO UPDATE SET
-                    name=excluded.name,
-                    provider=excluded.provider,
+                    protocol=excluded.protocol,
                     model=excluded.model,
-                    credential_profile_id=excluded.credential_profile_id,
                     base_url=excluded.base_url,
+                    secret_ciphertext=excluded.secret_ciphertext,
+                    masked_secret=excluded.masked_secret,
                     config_json=excluded.config_json,
+                    metadata_json=excluded.metadata_json,
                     enabled=excluded.enabled,
                     updated_at=excluded.updated_at
                 """,
@@ -617,10 +485,13 @@ class SQLiteRepository:
                     saved.id,
                     saved.name,
                     saved.provider,
+                    saved.protocol,
                     saved.model,
-                    saved.credential_profile_id,
                     saved.base_url,
+                    encrypted,
+                    saved.masked_secret,
                     json.dumps(saved.config, ensure_ascii=False),
+                    json.dumps(saved.metadata, ensure_ascii=False),
                     int(saved.enabled),
                     saved.created_at.isoformat(),
                     saved.updated_at.isoformat(),
@@ -630,29 +501,26 @@ class SQLiteRepository:
 
         return await self._write(operation)
 
-    async def delete_model_profile(self, tenant_id: str, profile_id: str) -> bool:
+    async def delete_model_config(self, tenant_id: str, config_id: str) -> bool:
         return await self._write(
             lambda connection: connection.execute(
-                "DELETE FROM model_profiles WHERE tenant_id = ? AND id = ?",
-                (tenant_id, profile_id),
+                "DELETE FROM model_configs WHERE tenant_id = ? AND id = ?",
+                (tenant_id, config_id),
             ).rowcount
             > 0
         )
 
-    async def model_profile_is_referenced(
-        self, tenant_id: str, profile_id: str
-    ) -> bool:
+    async def model_config_is_referenced(self, tenant_id: str, config_id: str) -> bool:
         rows = await self._read(
             lambda connection: connection.execute(
                 "SELECT spec_json FROM agent_revisions WHERE tenant_id = ?",
                 (tenant_id,),
             ).fetchall()
         )
-        for row in rows:
-            spec = AgentSpec.model_validate_json(row["spec_json"])
-            if spec.model.profile_id == profile_id:
-                return True
-        return False
+        return any(
+            AgentSpec.model_validate_json(row["spec_json"]).model.model_config_id == config_id
+            for row in rows
+        )
 
     async def list_runtime_configs(self, tenant_id: str) -> List[RuntimeConfigEntry]:
         rows = await self._read(

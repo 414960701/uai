@@ -8,12 +8,6 @@ from pathlib import Path
 from typing import List, Optional
 
 
-def _truthy(value: str, default: bool) -> bool:
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 @dataclass
 class Settings:
     database_path: str = field(
@@ -40,9 +34,6 @@ class Settings:
             ).split(",")
             if item.strip()
         ]
-    )
-    seed_demo: bool = field(
-        default_factory=lambda: _truthy(os.environ.get("UAI_FORGE_SEED_DEMO"), True)
     )
     host: str = field(default_factory=lambda: os.environ.get("UAI_FORGE_HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: int(os.environ.get("UAI_FORGE_PORT", "8000")))

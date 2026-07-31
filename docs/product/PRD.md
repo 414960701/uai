@@ -3,7 +3,7 @@ kind: normative
 id: PRD-UAI-FORGE
 status: approved
 version: 0.1.0
-last_reviewed: 2026-07-30
+last_reviewed: 2026-07-31
 ---
 
 # UAI Forge 产品需求
@@ -54,8 +54,8 @@ last_reviewed: 2026-07-30
 ## 成功标准
 
 - 后端单测/集成测、前端 lint/typecheck/build/SSR 测试全部通过。
-- 从后台可看到三个真实 API Agent 和一个实例。
-- 通过后台发起 `delegate:analyst ...` 后，Run 成功且事件包含
+- 从后台可创建多个数据库 Agent 和 Instance。
+- 在完成真实模型配置后，通过后台发起委派 Run，事件包含
   `delegation.started`、`delegation.completed`、`run.completed`。
 - 静态环用例不能运行。
 - 全局 step 预算对子 Agent 生效。

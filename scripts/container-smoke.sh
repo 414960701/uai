@@ -72,7 +72,6 @@ export UAI_FORGE_BACKEND_IMAGE="$SMOKE_BACKEND_IMAGE"
 export UAI_FORGE_FRONTEND_IMAGE="$SMOKE_FRONTEND_IMAGE"
 export UAI_FORGE_ALLOWED_ORIGINS="http://localhost:${SMOKE_WEB_PORT},http://127.0.0.1:${SMOKE_WEB_PORT}"
 export UAI_FORGE_CONTROL_API_KEY=""
-export UAI_FORGE_SEED_DEMO="true"
 
 cleanup() {
   local exit_code=$?
@@ -152,104 +151,73 @@ with open(sys.argv[1], encoding="utf-8") as source:
     doctor = json.load(source)
 if doctor.get("status") != "ok":
     raise SystemExit(f"doctor failed: {doctor}")
-if doctor.get("agents", 0) < 3 or doctor.get("plugins", 0) < 1:
-    raise SystemExit(f"doctor reported incomplete seed/registry state: {doctor}")
+if doctor.get("agents") != 0 or doctor.get("plugins", 0) < 1:
+    raise SystemExit(f"doctor reported unexpected fresh database state: {doctor}")
+if doctor.get("providers") != ["anthropic_messages", "openai_compatible"]:
+    raise SystemExit(f"doctor reported unexpected provider registry: {doctor}")
 if doctor.get("plugin_errors"):
     raise SystemExit(f"doctor reported plugin errors: {doctor['plugin_errors']}")
 PY
 
 curl --fail --silent --show-error \
-  --request POST \
-  --header "Content-Type: application/json" \
-  --data '{"instance_id":"ins_research_local","input":"delegate:analyst verify the containerized multi-agent extension boundary"}' \
-  "http://127.0.0.1:${SMOKE_API_PORT}/api/v1/runs" \
-  >"$SMOKE_TMP/run-start.json"
-
-SMOKE_RUN_ID="$(
-  python3 - "$SMOKE_TMP/run-start.json" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as source:
-    record = json.load(source)
-run_id = record.get("id")
-if not isinstance(run_id, str) or not run_id.startswith("run_"):
-    raise SystemExit(f"invalid run response: {record}")
-print(run_id)
-PY
-)"
-
-SMOKE_STATUS=""
-for _ in $(seq 1 120); do
-  curl --fail --silent --show-error \
-    "http://127.0.0.1:${SMOKE_API_PORT}/api/v1/runs/${SMOKE_RUN_ID}" \
-    >"$SMOKE_TMP/run-terminal.json"
-  SMOKE_STATUS="$(
-    python3 - "$SMOKE_TMP/run-terminal.json" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as source:
-    print(json.load(source).get("status", ""))
-PY
-  )"
-  if [[ "$SMOKE_STATUS" == "succeeded" || "$SMOKE_STATUS" == "failed" || "$SMOKE_STATUS" == "cancelled" ]]; then
-    break
-  fi
-  sleep 1
-done
-
-if [[ "$SMOKE_STATUS" != "succeeded" ]]; then
-  echo "Container delegation run did not succeed: ${SMOKE_STATUS}" >&2
-  sed -n '1,200p' "$SMOKE_TMP/run-terminal.json" >&2
-  exit 1
-fi
-
+  "http://127.0.0.1:${SMOKE_API_PORT}/api/v1/plugins?kind=provider" \
+  >"$SMOKE_TMP/providers.json"
 curl --fail --silent --show-error \
-  "http://127.0.0.1:${SMOKE_API_PORT}/api/v1/runs/${SMOKE_RUN_ID}/events/history" \
-  >"$SMOKE_TMP/events.json"
+  "http://127.0.0.1:${SMOKE_API_PORT}/api/v1/agents" \
+  >"$SMOKE_TMP/agents.json"
+curl --fail --silent --show-error \
+  "http://127.0.0.1:${SMOKE_API_PORT}/api/v1/instances" \
+  >"$SMOKE_TMP/instances.json"
+curl --fail --silent --show-error \
+  "http://127.0.0.1:${SMOKE_API_PORT}/api/v1/model-configs" \
+  >"$SMOKE_TMP/model-configs.json"
+curl --fail --silent --show-error \
+  "http://127.0.0.1:${SMOKE_API_PORT}/api/v1/model-catalog" \
+  >"$SMOKE_TMP/model-catalog.json"
+curl --fail --silent --show-error \
+  "http://127.0.0.1:${SMOKE_API_PORT}/api/v1/runtime-config" \
+  >"$SMOKE_TMP/runtime-config.json"
 
-python3 - "$SMOKE_TMP/doctor.json" "$SMOKE_TMP/run-terminal.json" "$SMOKE_TMP/events.json" \
-  >"$SMOKE_TMP/summary.json" <<'PY'
+python3 - "$SMOKE_TMP/doctor.json" "$SMOKE_TMP/providers.json" \
+  "$SMOKE_TMP/agents.json" "$SMOKE_TMP/instances.json" \
+  "$SMOKE_TMP/model-configs.json" "$SMOKE_TMP/model-catalog.json" \
+  "$SMOKE_TMP/runtime-config.json" >"$SMOKE_TMP/summary.json" <<'PY'
 import json
 import sys
 
-with open(sys.argv[1], encoding="utf-8") as source:
-    doctor = json.load(source)
-with open(sys.argv[2], encoding="utf-8") as source:
-    run = json.load(source)
-with open(sys.argv[3], encoding="utf-8") as source:
-    events = json.load(source)
+records = []
+for path in sys.argv[1:]:
+    with open(path, encoding="utf-8") as source:
+        records.append(json.load(source))
+doctor, providers, agents, instances, model_configs, model_catalog, runtime_config = records
 
-sequences = [event["sequence"] for event in events]
-if sequences != list(range(1, len(events) + 1)):
-    raise SystemExit(f"event sequence is not contiguous: {sequences}")
-
-event_types = [event["type"] for event in events]
-required = [
-    "run.started",
-    "delegation.started",
-    "delegation.completed",
-    "run.completed",
-]
-missing = [event_type for event_type in required if event_type not in event_types]
-if missing:
-    raise SystemExit(f"missing required events: {missing}")
-
-output = run.get("output") or ""
-if "市场分析 Agent" not in output:
-    raise SystemExit(f"child result is missing from run output: {output!r}")
+provider_ids = [item.get("id") for item in providers]
+if provider_ids != ["anthropic_messages", "openai_compatible"]:
+    raise SystemExit(f"unexpected provider catalog: {providers}")
+catalog_provider_ids = [item.get("id") for item in model_catalog.get("providers", [])]
+if catalog_provider_ids != provider_ids:
+    raise SystemExit(f"model catalog is out of sync: {model_catalog}")
+if not all(item.get("models") for item in model_catalog.get("providers", [])):
+    raise SystemExit(f"provider catalog has no recommended models: {model_catalog}")
+for label, value in {
+    "agents": agents,
+    "instances": instances,
+    "model_configs": model_configs,
+    "runtime_config": runtime_config,
+}.items():
+    if value != []:
+        raise SystemExit(f"fresh database contains {label}: {value}")
 
 print(
     json.dumps(
         {
             "status": "passed",
-            "run_id": run["id"],
-            "run_status": run["status"],
-            "event_count": len(events),
-            "first_sequence": sequences[0],
-            "last_sequence": sequences[-1],
-            "required_events": required,
+            "database_state": "empty and database-backed",
+            "provider_ids": provider_ids,
+            "model_catalog": {
+                "providers": catalog_provider_ids,
+                "non_empty": True,
+            },
             "frontend_dependencies": {
                 "development_tools_pruned": True,
                 "production_audit": "passed during image build",
@@ -258,6 +226,7 @@ print(
                 "status": doctor["status"],
                 "agents": doctor["agents"],
                 "plugins": doctor["plugins"],
+                "providers": doctor["providers"],
                 "plugin_errors": doctor["plugin_errors"],
             },
         },
