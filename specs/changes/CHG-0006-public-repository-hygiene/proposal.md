@@ -1,7 +1,7 @@
 ---
 kind: change-proposal
 id: CHG-0006
-status: accepted
+status: implemented
 target: 0.1.x
 requirements:
   - SEC-007

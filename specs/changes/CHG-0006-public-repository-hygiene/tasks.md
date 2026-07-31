@@ -11,4 +11,4 @@ status: accepted
 - [x] 让 Vite、CI 和容器构建不依赖真实 hosting 文件。
 - [x] 增加仓库卫生回归测试和部署文档说明。
 - [x] 扫描当前树与历史，复跑前后端和发布门禁。
-- [ ] 推送公开仓库并验证 GitHub Actions。
+- [x] 推送公开仓库并验证 GitHub Actions。
