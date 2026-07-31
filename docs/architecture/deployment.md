@@ -104,8 +104,11 @@ Redis/NATS 只能传递引用和小型事件；大 payload 放入对象存储并
 
 ## Web 托管边界
 
-`.openai/hosting.json` 存在并不证明已部署。只有持久化的 `project_id`、保存的版本和
-成功的部署状态才构成 Sites 发布证据。
+`.openai/hosting.json` 是部署者本机的 Sites 项目标识与 binding 配置，必须由 Git 和
+Docker build context 忽略；公开源码只提供不含 `project_id` 的
+`.openai/hosting.example.json`。普通 checkout 在真实文件不存在时按无 D1/R2 binding
+构建。该本地文件存在也不证明已部署；只有持久化的 `project_id`、保存的版本和成功的
+部署状态才构成 Sites 发布证据。
 
 Sites 可托管控制后台，但 Python Runtime 必须部署到可由浏览器访问的 HTTPS API：
 

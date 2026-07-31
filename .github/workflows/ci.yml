@@ -40,10 +40,6 @@ jobs:
         with:
           node-version: 22.13.0
           cache: npm
-      - name: Prepare portable build configuration
-        run: |
-          mkdir -p .openai
-          test -f .openai/hosting.json || printf '%s\n' '{"d1":null,"r2":null}' > .openai/hosting.json
       - name: Install
         run: npm ci
       - name: Audit production dependencies

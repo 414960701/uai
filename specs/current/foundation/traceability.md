@@ -3,7 +3,7 @@ kind: evidence-index
 id: SPEC-FOUNDATION-TRACEABILITY
 status: active
 version: 1.0.0
-last_reviewed: 2026-07-30
+last_reviewed: 2026-07-31
 ---
 
 # Foundation traceability
@@ -48,6 +48,7 @@ last_reviewed: 2026-07-30
 | `SEC-004` | Partial | confirm fail-closed；服务端清空客户端审批声明 | 伪造防护有测；缺 Approval API 与恢复流程 |
 | `SEC-005` | Partial | 未持久化专门 CoT block | 缺 provider raw/log 泄露测试 |
 | `SEC-006` | Implemented | 锁定兼容依赖、CI production audit、裁剪 Web 运行镜像 | `npm ci`、production-only audit、lint/typecheck/test 与镜像内 audit 通过；完整开发链剩余项记录在 CHG-0005 |
+| `SEC-007` | Implemented | 忽略真实 hosting 元数据、提交中性示例、Vite 缺省加载 | 无真实 hosting 文件的 lint/typecheck/build/4 项测试、容器 smoke 与当前树/历史扫描通过；证据见 CHG-0006 |
 | `UI-001` | Partial | 高级 revision/mount plugin scope/plugin/Instance 编辑与真实 history | SSR/源合同测试 + rev 2、第二 Instance、17 条事件浏览器 E2E；缺 Schema 自动表单、Instance override、revision diff 与 peer |
 | `UI-002` | Implemented | live/demo state | `rendered-html.test.mjs` 静态连接契约 |
 | `OBS-001` | Partial | Run Event/metrics | 缺 OTel/correlation/脱敏 |

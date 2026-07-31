@@ -1,6 +1,6 @@
 schema_version: "uai-forge.traceability/1.0"
 spec_id: "SPEC-FOUNDATION"
-reviewed_at: "2026-07-30"
+reviewed_at: "2026-07-31"
 status_definitions:
   implemented: "Current implementation and repeatable automated evidence exist."
   partial: "Some implementation exists, but one or more acceptance conditions are missing."
@@ -344,6 +344,25 @@ requirements:
       - "specs/changes/CHG-0005-container-release-evidence/acceptance.md"
     limits:
       - "Full development dependency audit is reviewed and recorded but is not required to be zero"
+  - id: "SEC-007"
+    status: "implemented"
+    target: "0.1"
+    implementation:
+      - ".gitignore"
+      - ".dockerignore"
+      - ".openai/hosting.example.json"
+      - "vite.config.ts"
+      - "Dockerfile"
+      - ".github/workflows/ci.yml"
+    verification:
+      - "tests/rendered-html.test.mjs::keeps account-specific hosting metadata out of portable source"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+      - "scripts/container-smoke.sh"
+      - "specs/changes/CHG-0006-public-repository-hygiene/acceptance.md"
+    limits:
+      - "Historical commits retain a previously public non-secret Sites project ID"
   - id: "UI-001"
     status: "partial"
     target: "0.2"

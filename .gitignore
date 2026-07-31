@@ -32,6 +32,9 @@ yarn-error.log*
 .env*
 !.env.example
 
+# Local OpenAI Sites deployment identity and resource bindings
+/.openai/hosting.json
+
 # vercel
 .vercel
 

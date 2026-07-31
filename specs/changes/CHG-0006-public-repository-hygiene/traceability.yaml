@@ -1,0 +1,19 @@
+change_id: CHG-0006
+requirements:
+  SEC-007A:
+    implementation:
+      - .gitignore
+      - .dockerignore
+      - .openai/hosting.example.json
+    verification:
+      - tests/rendered-html.test.mjs
+      - specs/changes/CHG-0006-public-repository-hygiene/acceptance.md
+  SEC-007B:
+    implementation:
+      - vite.config.ts
+      - Dockerfile
+      - .github/workflows/ci.yml
+    verification:
+      - npm run lint
+      - npm run typecheck
+      - npm test

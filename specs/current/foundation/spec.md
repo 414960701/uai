@@ -3,7 +3,7 @@ kind: normative
 id: SPEC-FOUNDATION
 status: active
 version: 1.0.0
-last_reviewed: 2026-07-30
+last_reviewed: 2026-07-31
 ---
 
 # Foundation capability

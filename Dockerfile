@@ -8,13 +8,7 @@ RUN --mount=type=cache,target=/root/.npm \
 
 FROM dependencies AS build
 COPY . .
-# Local/container builds do not require a Sites project. Keep the build portable
-# when the deployment-owned hosting file is intentionally absent from source.
-RUN mkdir -p .openai && \
-    if [ ! -f .openai/hosting.json ]; then \
-      printf '%s\n' '{"d1":null,"r2":null}' > .openai/hosting.json; \
-    fi && \
-    npm run build
+RUN npm run build
 
 FROM dependencies AS runtime-dependencies
 RUN npm prune --omit=dev && \

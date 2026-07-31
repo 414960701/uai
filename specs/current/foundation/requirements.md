@@ -3,7 +3,7 @@ kind: normative
 id: SPEC-FOUNDATION-REQUIREMENTS
 status: active
 version: 1.0.0
-last_reviewed: 2026-07-30
+last_reviewed: 2026-07-31
 ---
 
 # Foundation requirements
@@ -15,7 +15,7 @@ last_reviewed: 2026-07-30
 - `Specified`：行为已冻结，等待实现。
 - `Planned`：方向存在，公共合同尚未稳定。
 
-所有 SHALL 都是验收条件；状态只描述 2026-07-30 的工作树事实。
+所有 SHALL 都是验收条件；状态只描述 2026-07-31 的工作树事实。
 
 ## 核心资源
 
@@ -373,6 +373,19 @@ THE SYSTEM SHALL 裁剪仅构建和开发时使用的依赖，并对镜像内 pr
 
 完整开发依赖 audit SHALL 被审查并记录剩余范围；不得使用未经审查的
 `npm audit fix --force`、静默降级依赖或升级到未经兼容测试的破坏性主版本。
+
+### SEC-007 — 公开仓库环境元数据隔离
+
+状态：`Implemented`，目标版本：`0.1`
+
+WHEN UAI Forge 源码发布到公开仓库
+THE SYSTEM SHALL 不跟踪个人或环境专属的部署项目 ID、真实 Secret、本机绝对路径、运行
+数据库或构建状态；真实 `.openai/hosting.json` SHALL 保持本地并被 Git 与 Docker build
+context 忽略，公开源码只提供不含 `project_id` 的中性示例。
+
+WHEN 开发者从干净 checkout 检查或构建 Web 控制后台
+THE SYSTEM SHALL 在 `.openai/hosting.json` 不存在时使用无 D1/R2 binding 的默认值，且
+lint、typecheck、production build/test 和容器构建不得依赖维护者个人部署配置。
 
 ## 控制后台与观测
 

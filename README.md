@@ -141,6 +141,9 @@ production-only audit、连续真实委派事件和隔离资源清理。完整�
 Compose 默认把 `OPENAI_API_KEY` 从宿主环境传给后端；使用其他变量名时，通过私有
 Compose override/Secret 注入同名环境变量，不要把值写入 Agent 配置或版本库。
 
+OpenAI Sites 的 `.openai/hosting.json` 同样只保存在部署者本机；公开源码提供
+`.openai/hosting.example.json`，干净 checkout 没有真实 hosting 文件也可直接构建。
+
 ## 扩展
 
 第三方 Python 包在 `pyproject.toml` 中声明：

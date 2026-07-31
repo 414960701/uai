@@ -1,12 +1,48 @@
 import vinext from "vinext";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
-import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
 
-const { d1, r2 } = hostingConfig;
+type HostingConfig = {
+  d1: string | null;
+  r2: string | null;
+};
+
+function loadHostingConfig(): HostingConfig {
+  const configPath = fileURLToPath(
+    new URL("./.openai/hosting.json", import.meta.url),
+  );
+
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(configPath, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new TypeError(".openai/hosting.json must contain a JSON object");
+    }
+
+    const values = parsed as Record<string, unknown>;
+    for (const key of ["d1", "r2"] as const) {
+      if (values[key] !== undefined && values[key] !== null && typeof values[key] !== "string") {
+        throw new TypeError(`.openai/hosting.json ${key} must be a string or null`);
+      }
+    }
+
+    return {
+      d1: (values.d1 as string | null | undefined) ?? null,
+      r2: (values.r2 as string | null | undefined) ?? null,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { d1: null, r2: null };
+    }
+    throw error;
+  }
+}
+
+const { d1, r2 } = loadHostingConfig();
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";

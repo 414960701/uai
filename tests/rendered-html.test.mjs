@@ -93,3 +93,23 @@ test("keeps advanced Agent configuration and real event history wired", async ()
   assert.doesNotMatch(controlCenter, /尚未真实启动验收/);
   assert.doesNotMatch(controlCenter, /function SettingToggle/);
 });
+
+test("keeps account-specific hosting metadata out of portable source", async () => {
+  const [gitIgnore, dockerIgnore, hostingExample, viteConfig] = await Promise.all([
+    readFile(new URL("../.gitignore", import.meta.url), "utf8"),
+    readFile(new URL("../.dockerignore", import.meta.url), "utf8"),
+    readFile(
+      new URL("../.openai/hosting.example.json", import.meta.url),
+      "utf8",
+    ),
+    readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(gitIgnore, /^\/\.openai\/hosting\.json$/m);
+  assert.match(dockerIgnore, /^\.openai\/\*$/m);
+  assert.doesNotMatch(dockerIgnore, /!\.openai\/hosting\.json/);
+  assert.deepEqual(JSON.parse(hostingExample), { d1: null, r2: null });
+  assert.doesNotMatch(hostingExample, /project_id/);
+  assert.match(viteConfig, /readFileSync\(configPath, "utf8"\)/);
+  assert.match(viteConfig, /code === "ENOENT"/);
+});

@@ -1,0 +1,15 @@
+change_id: CHG-0006
+api:
+  payload_changed: false
+runtime:
+  execution_semantics_changed: false
+deployment:
+  local_hosting_file_becomes_untracked: true
+  clean_checkout_without_hosting_file_supported: true
+storage:
+  schema_change: false
+plugins:
+  protocol_change: false
+rollback:
+  data_migration_required: false
+  note: "Restore the tracked hosting file and static import; no runtime or storage data changes are involved"

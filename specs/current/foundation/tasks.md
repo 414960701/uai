@@ -3,7 +3,7 @@ kind: plan
 id: SPEC-FOUNDATION-TASKS
 status: active
 version: 1.0.0
-last_reviewed: 2026-07-30
+last_reviewed: 2026-07-31
 ---
 
 # Foundation tasks
@@ -55,6 +55,9 @@ last_reviewed: 2026-07-30
 - [x] `TASK-020` 锁定公开发布 Web 依赖，在 CI 和裁剪后的 Web 运行镜像加入
   production-only high/critical audit 门禁，审查完整开发工具链 audit 并复跑兼容性门禁。
   需求：`SEC-006`
+- [x] `TASK-021` 将个人 Sites 元数据移出公开源码和 Docker context，提供中性示例与
+  缺省构建路径，并增加仓库卫生测试和发布扫描。
+  需求：`SEC-007`
 
 ## Wave 1：可恢复执行 `0.2`
 
