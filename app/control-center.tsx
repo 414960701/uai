@@ -4085,6 +4085,7 @@ function ChatWorkspace({
   const streamEvents = stream.runId === selectedRunId ? stream.events : [];
   const streamOutput = stream.runId === selectedRunId ? stream.output : "";
   const streamProgress = stream.runId === selectedRunId ? stream.progress : null;
+  const streamCacheHitValue = totalReportedCacheHits(streamEvents);
   const activeRun = activeSessionRuns.some((run) => run.status === "running" || run.status === "queued");
   const taskRailVisible = !detailsOpen && Boolean(selectedRun?.todo || selectedRun?.plan);
   const [chatNowMs, setChatNowMs] = useState(0);
@@ -4593,6 +4594,7 @@ function ChatWorkspace({
               <div className="chat-run-code"><span>Trace ID</span><code>{String(selectedRun.metrics?.trace_id || streamEvents.find((event) => event.trace_id)?.trace_id || "历史事件未携带")}</code></div>
               <div className="chat-run-code"><span>思考模式</span><code>{thinkingModeLabel(selectedRun.metrics?.thinking_mode || thinkingMode)}</code></div>
               <div className="chat-run-code"><span>运行方式</span><code>{executionModeLabel(selectedRun.metrics?.execution_mode || executionMode)}</code></div>
+              <div className="chat-run-code"><span>缓存命中</span><code>{formatTokenCount(streamCacheHitValue)}</code></div>
               {((selectedRun.metrics?.execution_mode || executionMode) === "plan") && <div className="chat-plan-notice"><Workflow size={15} /><span>计划模式只生成可审阅计划，不调用工具或子 Agent。</span></div>}
               {selectedRun.plan && <PlanCard
                 plan={selectedRun.plan}
@@ -4803,6 +4805,7 @@ function RunsView({
   );
   const eventsError = historyMatchesSelection ? eventHistory.error : "";
   const timelineEvents = mode === "live" && historyMatchesSelection ? eventHistory.events : [];
+  const cacheHitValue = totalReportedCacheHits(timelineEvents);
   const visibleRuns = useMemo(() => {
     const query = runQuery.trim().toLowerCase();
     return runs.filter((run) => {
@@ -5044,6 +5047,7 @@ function RunsView({
                 <div><small>步骤</small><strong>{String(selected.metrics?.steps || "—")}</strong></div>
                 <div><small>工具调用</small><strong>{String(selected.metrics?.tool_calls || "—")}</strong></div>
                 <div><small>Token</small><strong>{String(selected.metrics?.tokens || "—")}</strong></div>
+                <div><small>缓存命中</small><strong>{formatTokenCount(cacheHitValue)}</strong></div>
                 <div><small>Session</small><strong className="mono-small">{selected.session_id.slice(0, 12)}</strong></div>
                 <div><small>运行方式</small><strong>{executionModeLabel(selected.metrics?.execution_mode)}</strong></div>
                 <div><small>思考模式</small><strong>{thinkingModeLabel(selected.metrics?.thinking_mode)}</strong></div>

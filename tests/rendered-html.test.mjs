@@ -202,6 +202,18 @@ test("keeps advanced Agent configuration and real event history wired", async ()
   assert.doesNotMatch(controlCenter, /mock|demoEvents|delegate:analyst/i);
 });
 
+test("shows cache-hit status in run inspector metrics", async () => {
+  const controlCenter = await readFile(
+    new URL("../app/control-center.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(controlCenter, /const streamCacheHitValue = totalReportedCacheHits\(streamEvents\)/);
+  assert.match(controlCenter, /const cacheHitValue = totalReportedCacheHits\(timelineEvents\)/);
+  assert.match(controlCenter, /<span>缓存命中<\/span><code>\{formatTokenCount\(streamCacheHitValue\)\}<\/code>/);
+  assert.match(controlCenter, /<small>缓存命中<\/small><strong>\{formatTokenCount\(cacheHitValue\)\}<\/strong>/);
+});
+
 test("removes instance navigation and keeps revision run selectors", async () => {
   const controlCenter = await readFile(
     new URL("../app/control-center.tsx", import.meta.url),

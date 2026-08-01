@@ -26,8 +26,11 @@ requirements:
       - app/control-center.tsx::eventDetail
       - app/control-center.tsx::publicOperationTerminalDetail
       - app/control-center.tsx::TracePanel
+      - app/control-center.tsx::ChatWorkspace
+      - app/control-center.tsx::RunsView
     verification:
       - tests/rendered-html.test.mjs::keeps advanced Agent configuration and real event history wired
+      - tests/rendered-html.test.mjs::shows cache-hit status in run inspector metrics
       - npm run lint
       - npm run typecheck
       - npm test
