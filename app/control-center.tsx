@@ -344,6 +344,13 @@ type ModelOption = {
   sourceUrl?: string;
 };
 
+type EndpointPreset = {
+  value: string;
+  label: string;
+  provider: string;
+  defaultModel: string;
+};
+
 const CUSTOM_MODEL_VALUE = "__custom_model__";
 
 const PROVIDER_METADATA: Record<string, Omit<ProviderOption, "id">> = {
@@ -494,23 +501,105 @@ const MODEL_PRESETS: Record<string, ModelOption[]> = {
   ],
 };
 
-const OPENAI_ENDPOINT_PRESETS = [
-  { value: "https://api.openai.com/v1", label: "OpenAI 官方" },
-  { value: "https://api.deepseek.com/v1", label: "DeepSeek 兼容接口" },
+const OPENAI_ENDPOINT_PRESETS: EndpointPreset[] = [
+  {
+    value: "https://api.openai.com/v1",
+    label: "OpenAI 官方",
+    provider: "openai_compatible",
+    defaultModel: "gpt-5.6-terra",
+  },
+  {
+    value: "https://api.deepseek.com/v1",
+    label: "DeepSeek 兼容接口",
+    provider: "openai_compatible",
+    defaultModel: "deepseek-chat",
+  },
   {
     value: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     label: "阿里云百炼兼容接口",
+    provider: "openai_compatible",
+    defaultModel: "qwen3.7-plus",
   },
-  { value: "https://api.moonshot.cn/v1", label: "Moonshot 兼容接口" },
-  { value: "https://open.bigmodel.cn/api/paas/v4", label: "智谱 BigModel 兼容接口" },
-  { value: "https://ark.cn-beijing.volces.com/api/v3", label: "火山引擎方舟兼容接口" },
-  { value: "https://api.hunyuan.cloud.tencent.com/v1", label: "腾讯混元兼容接口" },
-  { value: "https://api.minimax.chat/v1", label: "MiniMax 兼容接口" },
-  { value: "https://api.stepfun.com/v1", label: "阶跃星辰兼容接口" },
-  { value: "https://api.baichuan-ai.com/v1", label: "百川智能兼容接口" },
-  { value: "https://api.lingyiwanwu.com/v1", label: "零一万物兼容接口" },
-  { value: "https://api.siliconflow.cn/v1", label: "硅基流动聚合接口" },
-  { value: "https://openrouter.ai/api/v1", label: "OpenRouter 兼容接口" },
+  {
+    value: "https://api.moonshot.cn/v1",
+    label: "Moonshot 兼容接口",
+    provider: "openai_compatible",
+    defaultModel: "kimi-k2.5",
+  },
+  {
+    value: "https://open.bigmodel.cn/api/paas/v4",
+    label: "智谱 BigModel 兼容接口",
+    provider: "openai_compatible",
+    defaultModel: "glm-4.7",
+  },
+  {
+    value: "https://ark.cn-beijing.volces.com/api/v3",
+    label: "火山引擎方舟兼容接口",
+    provider: "openai_compatible",
+    defaultModel: "doubao-seed-1-6-250615",
+  },
+  {
+    value: "https://api.hunyuan.cloud.tencent.com/v1",
+    label: "腾讯混元兼容接口",
+    provider: "openai_compatible",
+    defaultModel: "hunyuan-pro",
+  },
+  {
+    value: "https://api.minimax.chat/v1",
+    label: "MiniMax 兼容接口",
+    provider: "openai_compatible",
+    defaultModel: "MiniMax-M2.5",
+  },
+  {
+    value: "https://api.stepfun.com/v1",
+    label: "阶跃星辰兼容接口",
+    provider: "openai_compatible",
+    defaultModel: "step-2-16k",
+  },
+  {
+    value: "https://api.baichuan-ai.com/v1",
+    label: "百川智能兼容接口",
+    provider: "openai_compatible",
+    defaultModel: "Baichuan4",
+  },
+  {
+    value: "https://api.lingyiwanwu.com/v1",
+    label: "零一万物兼容接口",
+    provider: "openai_compatible",
+    defaultModel: "yi-large",
+  },
+  {
+    value: "https://api.siliconflow.cn/v1",
+    label: "硅基流动聚合接口",
+    provider: "openai_compatible",
+    defaultModel: "deepseek-v3",
+  },
+  {
+    value: "https://openrouter.ai/api/v1",
+    label: "OpenRouter 兼容接口",
+    provider: "openai_compatible",
+    defaultModel: "gpt-4o",
+  },
+];
+
+const ANTHROPIC_ENDPOINT_PRESETS: EndpointPreset[] = [
+  {
+    value: "https://api.anthropic.com",
+    label: "Anthropic 官方",
+    provider: "anthropic_messages",
+    defaultModel: "claude-sonnet-5",
+  },
+  {
+    value: "https://api.anthropic.com/v1",
+    label: "Anthropic 官方（含 /v1）",
+    provider: "anthropic_messages",
+    defaultModel: "claude-sonnet-5",
+  },
+];
+
+const SERVICE_ENDPOINT_PRESETS: EndpointPreset[] = [
+  ...OPENAI_ENDPOINT_PRESETS,
+  ...ANTHROPIC_ENDPOINT_PRESETS,
 ];
 
 const MODEL_TIMEOUT_OPTIONS = [
@@ -642,21 +731,21 @@ function EndpointChoiceField({
 }: {
   provider: string;
   value: string;
-  onChange: (value: string) => void;
+  onChange: (value: string, preset?: EndpointPreset) => void;
 }) {
-  const presets = provider === "anthropic_messages"
-    ? [
-        { value: "https://api.anthropic.com", label: "Anthropic 官方" },
-        { value: "https://api.anthropic.com/v1", label: "Anthropic 官方（含 /v1）" },
-      ]
-    : OPENAI_ENDPOINT_PRESETS;
+  const presets = [
+    ...SERVICE_ENDPOINT_PRESETS.filter((item) => item.provider === provider),
+    ...SERVICE_ENDPOINT_PRESETS.filter((item) => item.provider !== provider),
+  ];
   const isPreset = presets.some((item) => item.value === value);
+  const selectPreset = (nextValue: string) =>
+    onChange(nextValue, presets.find((item) => item.value === nextValue));
   return (
     <label className="form-field">
       <span>服务地址（可选）</span>
       <select
         value={isPreset ? value : ""}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => selectPreset(event.target.value)}
       >
         <option value="">快速选择常用地址…</option>
         {presets.map((item) => (
@@ -668,10 +757,10 @@ function EndpointChoiceField({
       <input
         type="url"
         value={value}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => selectPreset(event.target.value)}
         placeholder="也可以直接输入，例如 https://example.com/v1"
       />
-      <small>可从上方快速填入常用地址，也可以直接输入；留空使用服务商默认地址。</small>
+      <small>选择厂商地址会自动带出推荐模型；自定义地址会保留当前模型，留空使用服务商默认地址。</small>
     </label>
   );
 }
@@ -2780,6 +2869,24 @@ function ModelConfigsView({
     });
   }
 
+  function selectEndpoint(baseUrl: string, preset?: EndpointPreset) {
+    const nextProvider = preset?.provider || form.provider;
+    const option = providerOptionFor(nextProvider, plugins);
+    const providerChanged = nextProvider !== form.provider;
+    const nextModel =
+      preset?.defaultModel ||
+      (providerChanged
+        ? option.defaultModel || modelOptionsForProvider(nextProvider, plugins)[0]?.value
+        : form.model) ||
+      "";
+    updateForm({
+      provider: nextProvider,
+      baseUrl,
+      model: nextModel,
+      secretAction: editingId && providerChanged ? "clear" : form.secretAction,
+    });
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -2905,7 +3012,7 @@ function ModelConfigsView({
         </div>
         <div className="form-row">
           <ModelChoiceField provider={form.provider} plugins={plugins} model={form.model} onChange={(model) => updateForm({ model })} />
-          <EndpointChoiceField provider={form.provider} value={form.baseUrl} onChange={(baseUrl) => updateForm({ baseUrl })} />
+          <EndpointChoiceField provider={form.provider} value={form.baseUrl} onChange={selectEndpoint} />
         </div>
         <div className="form-row">
           <label className="form-field"><span>{selectedProvider.requiresCredential === false ? "访问凭证（可选）" : "访问凭证"}</span><input type="password" value={form.secret} onChange={(event) => updateForm({ secret: event.target.value, secretAction: event.target.value ? "replace" : form.secretAction })} placeholder={editingId ? "留空表示沿用原密钥" : "粘贴 API Key，仅提交一次"} autoComplete="new-password" /><small>{selectedProvider.apiProtocol || "由 Provider manifest 决定协议"} · {selectedProvider.description}</small></label>

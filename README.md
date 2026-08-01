@@ -18,6 +18,7 @@ UAI Forge 是一个以扩展契约为中心的 Python Agent 框架和多 Agent �
 - OpenAI-compatible Chat Completions 与 Anthropic Messages 模型适配器；没有内置演示或伪造模型。
 - SQLite 持久化、按 Run 单调排序的事件和可重连 SSE。
 - 租户级统一 `ModelConfig`（provider、protocol、model、endpoint 与加密凭证）；支持草稿、连接检查、版本/CAS、启用/停用和显式 Secret `keep|replace|clear`，控制台仅展示脱敏信息。
+- 支持多个独立 ModelConfig/AK；选择厂商或已知服务地址会自动带出对应推荐模型，自定义地址保留当前模型。
 - SetupStatus、CapabilityStatus、Agent Readiness、Problem Details 与 schema compatibility doctor，帮助空库沿真实前置条件完成首个任务。
 - React/TypeScript 管理后台：可发布 Agent 修订，配置模型、工具权限、记忆、中间件、
   子 Agent 固定修订/并发/输入模板，管理多个实例，并查看真实运行事件。

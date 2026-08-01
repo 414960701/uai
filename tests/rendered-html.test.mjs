@@ -123,6 +123,21 @@ test("keeps advanced Agent configuration and real event history wired", async ()
   assert.doesNotMatch(controlCenter, /mock|demoEvents|delegate:analyst/i);
 });
 
+test("model configuration selection auto-fills model from provider or known endpoint", async () => {
+  const controlCenter = await readFile(
+    new URL("../app/control-center.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(controlCenter, /type EndpointPreset/);
+  assert.match(controlCenter, /defaultModel: "deepseek-chat"/);
+  assert.match(controlCenter, /function selectProvider\(provider: string\)/);
+  assert.match(controlCenter, /function selectEndpoint\(baseUrl: string, preset\?: EndpointPreset\)/);
+  assert.match(controlCenter, /选择厂商地址会自动带出推荐模型/);
+  assert.match(controlCenter, /providerChanged/);
+  assert.match(controlCenter, /onChange=\{selectEndpoint\}/);
+});
+
 test("keeps account-specific hosting metadata out of portable source", async () => {
   const [gitIgnore, dockerIgnore, hostingExample, viteConfig] = await Promise.all([
     readFile(new URL("../.gitignore", import.meta.url), "utf8"),

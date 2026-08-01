@@ -1,0 +1,20 @@
+change_id: CHG-0011
+status: implemented
+implementation_status: implemented
+requirements:
+  CFG-007:
+    contracts:
+      - requirements.md
+      - design.md
+    implementation:
+      - app/control-center.tsx::EndpointPreset
+      - app/control-center.tsx::EndpointChoiceField
+      - app/control-center.tsx::ModelConfigsView.selectProvider
+      - app/control-center.tsx::ModelConfigsView.selectEndpoint
+    verification:
+      - tests/rendered-html.test.mjs::model configuration selection auto-fills model from provider or known endpoint
+      - npm run lint
+      - npm run typecheck
+      - python -m pytest backend/tests -q
+    limits:
+      - 未登记自定义 endpoint 不做 DNS/Provider 自动发现；需要用户填写模型 ID 或选择目录项

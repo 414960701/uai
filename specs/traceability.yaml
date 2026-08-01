@@ -626,3 +626,21 @@ requirements:
       - "tests/rendered-html.test.mjs::keeps advanced Agent configuration and real event history wired"
     gaps:
       - "未知 code、完整错误合同和前端字段级映射尚无独立自动化测试"
+  - id: "CFG-007"
+    status: "implemented"
+    target: "0.2"
+    contracts:
+      - "specs/changes/CHG-0011-model-config-autofill/requirements.md"
+      - "specs/changes/CHG-0011-model-config-autofill/design.md"
+    implementation:
+      - "app/control-center.tsx::EndpointPreset"
+      - "app/control-center.tsx::EndpointChoiceField"
+      - "app/control-center.tsx::ModelConfigsView.selectProvider"
+      - "app/control-center.tsx::ModelConfigsView.selectEndpoint"
+    verification:
+      - "tests/rendered-html.test.mjs::model configuration selection auto-fills model from provider or known endpoint"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "python -m pytest backend/tests -q"
+    limits:
+      - "未登记自定义 endpoint 不做 DNS/Provider 自动发现；需要用户填写模型 ID 或选择目录项"
