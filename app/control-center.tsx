@@ -624,6 +624,22 @@ const DEFAULT_AGENT_TOOL_PLUGIN_IDS = [
   "tool.utc_now",
 ];
 
+const SANDBOX_EXEC_TOOL_PLUGIN_ID = "tool.sandbox_exec";
+const DEFAULT_SANDBOX_PLUGIN_ID = "sandbox.docker";
+const DEFAULT_SANDBOX_IMAGE = "alpine:3.20";
+
+function defaultToolConfig(pluginId: string): Record<string, unknown> {
+  if (pluginId !== SANDBOX_EXEC_TOOL_PLUGIN_ID) return {};
+  return {
+    sandbox_plugin_id: DEFAULT_SANDBOX_PLUGIN_ID,
+    sandbox_config: { image: DEFAULT_SANDBOX_IMAGE },
+  };
+}
+
+function defaultToolConfigText(pluginId: string): string {
+  return JSON.stringify(defaultToolConfig(pluginId), null, 2);
+}
+
 function defaultAgentToolBindings(plugins: PluginManifest[]): ToolBindingSpec[] {
   const available = new Set(
     plugins
@@ -6009,7 +6025,7 @@ function NewAgentModal({
             </div>
           <fieldset className="child-picker tool-picker">
             <legend>工具绑定 <span>默认已选只读基础工具</span></legend>
-            <p>新 Agent 默认挂载 Web 搜索、网页访问、公开 JSON、RSS / Atom、计算器和 UTC 时间；沙箱执行需要显式添加并配置，默认不挂载。</p>
+            <p>新 Agent 默认挂载 Web 搜索、网页访问、公开 JSON、RSS / Atom、计算器和 UTC 时间；沙箱执行需要显式添加，勾选后会预填 sandbox.docker 与 alpine:3.20 配置，默认不挂载。</p>
             <div className="picker-grid">
               {toolPlugins.map((plugin) => {
                 const selected = tools.some((tool) => tool.plugin_id === plugin.id);
@@ -6028,6 +6044,7 @@ function NewAgentModal({
                         ));
                         return;
                       }
+                      const config = defaultToolConfig(plugin.id);
                       setTools((current) => [
                         ...current,
                         {
@@ -6037,10 +6054,13 @@ function NewAgentModal({
                             plugin.id,
                           enabled: true,
                           permission: "auto",
-                          config: {},
+                          config,
                         },
                       ]);
-                      setToolConfigTexts((current) => [...current, "{}"]);
+                      setToolConfigTexts((current) => [
+                        ...current,
+                        defaultToolConfigText(plugin.id),
+                      ]);
                     }}
                   >
                     <span className="node-avatar amber"><TerminalSquare size={14} /></span>
@@ -6638,7 +6658,7 @@ function EditAgentModal({
           </label>
           <fieldset className="child-picker tool-picker">
             <legend>工具绑定</legend>
-            <p>已有别名、权限和配置会保留；新绑定工具默认使用 auto 策略。</p>
+            <p>已有别名、权限和配置会保留；新绑定工具默认使用 auto 策略。勾选沙箱执行时会预填 sandbox.docker 与 alpine:3.20 配置，可按部署镜像修改。</p>
             <div className="picker-grid">
               {toolPlugins.map((plugin) => {
                 const selected = tools.some((tool) => tool.plugin_id === plugin.id);
@@ -6657,6 +6677,7 @@ function EditAgentModal({
                         ));
                         return;
                       }
+                      const config = defaultToolConfig(plugin.id);
                       setTools((current) => [
                         ...current,
                         {
@@ -6666,10 +6687,13 @@ function EditAgentModal({
                             plugin.id,
                           enabled: true,
                           permission: "auto",
-                          config: {},
+                          config,
                         },
                       ]);
-                      setToolConfigTexts((current) => [...current, "{}"]);
+                      setToolConfigTexts((current) => [
+                        ...current,
+                        defaultToolConfigText(plugin.id),
+                      ]);
                     }}
                   >
                     <span className="node-avatar amber"><TerminalSquare size={14} /></span>

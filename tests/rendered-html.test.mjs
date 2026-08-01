@@ -253,9 +253,24 @@ test("new Agent defaults mount remote read-only tools", async () => {
   assert.match(controlCenter, /tool\.web_json/);
   assert.match(controlCenter, /tool\.web_rss/);
   assert.match(controlCenter, /tool\.sandbox_exec/);
-  assert.match(controlCenter, /沙箱执行需要显式添加并配置/);
+  assert.match(controlCenter, /沙箱执行需要显式添加，勾选后会预填 sandbox\.docker 与 alpine:3\.20 配置/);
   assert.match(controlCenter, /默认已选只读基础工具/);
   assert.match(controlCenter, /defaultAgentToolBindings\(plugins\)/);
+});
+
+test("sandbox tool pre-fills a runnable binding configuration", async () => {
+  const controlCenter = await readFile(
+    new URL("../app/control-center.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(controlCenter, /const SANDBOX_EXEC_TOOL_PLUGIN_ID = "tool\.sandbox_exec"/);
+  assert.match(controlCenter, /const DEFAULT_SANDBOX_PLUGIN_ID = "sandbox\.docker"/);
+  assert.match(controlCenter, /const DEFAULT_SANDBOX_IMAGE = "alpine:3\.20"/);
+  assert.match(controlCenter, /sandbox_plugin_id: DEFAULT_SANDBOX_PLUGIN_ID/);
+  assert.match(controlCenter, /sandbox_config: \{ image: DEFAULT_SANDBOX_IMAGE \}/);
+  assert.match(controlCenter, /defaultToolConfigText\(plugin\.id\)/);
+  assert.match(controlCenter, /勾选后会预填 sandbox\.docker 与 alpine:3\.20 配置/);
 });
 
 test("new Agent defaults use usable execution budgets", async () => {

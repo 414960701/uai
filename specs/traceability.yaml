@@ -1570,9 +1570,14 @@ requirements:
       - "backend/src/uai_forge/registry.py::register_sandbox"
       - "backend/src/uai_forge/sandbox.py::DockerSandbox"
       - "backend/src/uai_forge/sandbox_tools.py::SandboxExecTool"
+      - "app/control-center.tsx::defaultToolConfig"
+      - "app/control-center.tsx::NewAgentModal"
+      - "app/control-center.tsx::EditAgentModal"
     verification:
       - "backend/tests/test_sandbox.py"
       - "backend/tests/test_registry.py::test_builtin_tool_catalog_contains_remote_read_only_baseline"
+      - "tests/rendered-html.test.mjs::sandbox tool pre-fills a runnable binding configuration"
+      - "npm run typecheck"
     limits:
       - "单进程 adapter 边界已实现；rootless/dedicated executor、VM/Wasm/remote adapter 和生产 TCK 未完成"
   - id: "SEC-008"

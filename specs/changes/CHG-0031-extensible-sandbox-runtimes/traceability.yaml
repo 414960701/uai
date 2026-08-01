@@ -12,9 +12,14 @@ requirements:
       - backend/src/uai_forge/ports.py::SandboxProvider
       - backend/src/uai_forge/registry.py::register_sandbox
       - backend/src/uai_forge/sandbox.py::DockerSandbox
+      - app/control-center.tsx::defaultToolConfig
+      - app/control-center.tsx::NewAgentModal
+      - app/control-center.tsx::EditAgentModal
     verification:
       - backend/tests/test_registry.py::test_builtin_tool_catalog_contains_remote_read_only_baseline
       - backend/tests/test_sandbox.py
+      - tests/rendered-html.test.mjs::sandbox tool pre-fills a runnable binding configuration
+      - npm run typecheck
   SEC-008:
     contracts:
       - requirements.md
