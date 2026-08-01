@@ -1,0 +1,18 @@
+change_id: CHG-0012
+status: proposed
+api:
+  additive: []
+  behavior_change:
+    - "前端新增 RunRequest.session_id 的显式传递；既有 API 合同保持兼容"
+storage:
+  schema_change: false
+  additions: []
+frontend:
+  additions:
+    - "Agent 对话导航与工作区"
+    - "session_id 聚合投影"
+    - "中文展示层映射"
+plugins:
+  manifest_change: false
+rollback:
+  note: "删除 chat 视图与映射即可回退；不需要数据库迁移"

@@ -17,6 +17,9 @@ from .models import (
     PluginManifest,
     RunEvent,
     RunRecord,
+    ExecutionMode,
+    ThinkingMode,
+    ThinkingResolution,
     StrictModel,
 )
 
@@ -147,6 +150,8 @@ class ModelRequest(StrictModel):
     model: str
     messages: List[ModelMessage]
     tools: List[Dict[str, Any]] = Field(default_factory=list)
+    thinking_mode: ThinkingMode = ThinkingMode.AUTO
+    execution_mode: ExecutionMode = ExecutionMode.EXECUTE
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -157,12 +162,34 @@ class ModelOutput(StrictModel):
     raw: Dict[str, Any] = Field(default_factory=dict)
 
 
+class ModelStreamChunk(StrictModel):
+    """Provider-neutral text increment emitted during a model response."""
+
+    text: str = ""
+    usage: Optional[TokenUsage] = None
+
+
 class ModelProvider(ABC):
     manifest: PluginManifest
 
     @abstractmethod
     async def complete(self, request: ModelRequest) -> ModelOutput:
         raise NotImplementedError
+
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamChunk]:
+        """Compatibility fallback for providers without native streaming."""
+
+        output = await self.complete(request)
+        yield ModelStreamChunk(text=output.content, usage=output.usage)
+
+    def thinking_resolution(self, request: ModelRequest) -> ThinkingResolution:
+        """Return a safe, provider-neutral mapping outcome for observability."""
+
+        return (
+            ThinkingResolution.AUTO
+            if request.thinking_mode is ThinkingMode.AUTO
+            else ThinkingResolution.UNSUPPORTED
+        )
 
     async def check_connection(
         self,

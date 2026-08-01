@@ -1,6 +1,6 @@
 import pytest
 
-from uai_forge.models import ModelBinding
+from uai_forge.models import ModelBinding, ThinkingMode, ThinkingResolution
 from uai_forge.ports import ModelMessage, ModelRequest, ToolCall
 from uai_forge.providers import (
     AnthropicMessagesProvider,
@@ -40,6 +40,49 @@ class FakeAsyncClient:
             "timeout": self.kwargs.get("timeout"),
         }
         return FakeResponse(self.__class__.response_payload)
+
+
+class FakeStreamingResponse:
+    lines = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    def raise_for_status(self):
+        return None
+
+    async def aiter_lines(self):
+        for line in self.lines:
+            yield line
+
+
+class FakeStreamingClient:
+    lines = []
+    last_request = None
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    def stream(self, method, url, *, headers, json):
+        self.__class__.last_request = {
+            "method": method,
+            "url": url,
+            "headers": headers,
+            "json": json,
+            "timeout": self.kwargs.get("timeout"),
+        }
+        response = FakeStreamingResponse()
+        response.lines = self.__class__.lines
+        return response
 
 
 @pytest.mark.asyncio
@@ -161,3 +204,180 @@ async def test_anthropic_messages_provider_maps_tools_and_usage(monkeypatch):
     assert output.content == "先查一下。"
     assert output.tool_calls[0].arguments == {"q": "uai"}
     assert output.usage.total_tokens == 24
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_provider_maps_reasoning_effort_without_leaking_preference(monkeypatch):
+    FakeAsyncClient.response_payload = {
+        "choices": [{"message": {"role": "assistant", "content": "深度回答"}}],
+        "usage": {"prompt_tokens": 2, "completion_tokens": 3},
+    }
+    monkeypatch.setattr("uai_forge.providers.httpx.AsyncClient", FakeAsyncClient)
+    binding = ModelBinding(
+        model_config_id="cfg_reasoning",
+        config={"base_url": "https://api.openai.com/v1"},
+    )
+    binding._runtime_provider = "openai_compatible"
+    binding._runtime_model = "gpt-5.6-terra"
+    binding._runtime_credential = "reasoning-secret"
+    provider = OpenAICompatibleProvider(binding)
+
+    output = await provider.complete(
+        ModelRequest(
+            model="gpt-5.6-terra",
+            thinking_mode=ThinkingMode.ON,
+            messages=[ModelMessage(role="user", content="请深度分析")],
+        )
+    )
+
+    assert output.content == "深度回答"
+    assert provider.thinking_resolution(
+        ModelRequest(model="gpt-5.6-terra", messages=[], thinking_mode=ThinkingMode.ON)
+    ) is ThinkingResolution.MAPPED
+    assert FakeAsyncClient.last_request["json"]["reasoning_effort"] == "high"
+    assert "thinking_mode" not in FakeAsyncClient.last_request["json"]
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_provider_maps_qwen_thinking_and_unknown_is_fail_safe(monkeypatch):
+    FakeAsyncClient.response_payload = {"choices": [{"message": {"content": "回答"}}]}
+    monkeypatch.setattr("uai_forge.providers.httpx.AsyncClient", FakeAsyncClient)
+    binding = ModelBinding(
+        model_config_id="cfg_qwen",
+        config={"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"},
+    )
+    binding._runtime_provider = "openai_compatible"
+    binding._runtime_model = "qwen3.7-max"
+    binding._runtime_credential = "qwen-secret"
+    provider = OpenAICompatibleProvider(binding)
+
+    await provider.complete(
+        ModelRequest(
+            model="qwen3.7-max",
+            thinking_mode=ThinkingMode.OFF,
+            messages=[ModelMessage(role="user", content="回答")],
+        )
+    )
+    assert FakeAsyncClient.last_request["json"]["enable_thinking"] is False
+    assert provider.thinking_resolution(
+        ModelRequest(model="qwen3.7-max", messages=[], thinking_mode=ThinkingMode.OFF)
+    ) is ThinkingResolution.MAPPED
+
+    binding._runtime_model = "deepseek-chat"
+    unknown_provider = OpenAICompatibleProvider(binding)
+    await unknown_provider.complete(
+        ModelRequest(
+            model="deepseek-chat",
+            thinking_mode=ThinkingMode.ON,
+            messages=[ModelMessage(role="user", content="回答")],
+        )
+    )
+    assert unknown_provider.thinking_resolution(
+        ModelRequest(model="deepseek-chat", messages=[], thinking_mode=ThinkingMode.ON)
+    ) is ThinkingResolution.UNSUPPORTED
+    assert "reasoning_effort" not in FakeAsyncClient.last_request["json"]
+    assert "enable_thinking" not in FakeAsyncClient.last_request["json"]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_bounds_extended_thinking_budget(monkeypatch):
+    FakeAsyncClient.response_payload = {
+        "content": [
+            {"type": "thinking", "thinking": "private reasoning"},
+            {"type": "text", "text": "公开回答"},
+        ],
+        "usage": {"input_tokens": 3, "output_tokens": 4},
+    }
+    monkeypatch.setattr("uai_forge.providers.httpx.AsyncClient", FakeAsyncClient)
+    binding = ModelBinding(
+        model_config_id="cfg_anthropic_thinking",
+        config={"base_url": "https://api.anthropic.com", "max_tokens": 2048},
+    )
+    binding._runtime_provider = "anthropic_messages"
+    binding._runtime_model = "claude-sonnet-5"
+    binding._runtime_credential = "anthropic-secret"
+    provider = AnthropicMessagesProvider(binding)
+
+    output = await provider.complete(
+        ModelRequest(
+            model="claude-sonnet-5",
+            thinking_mode=ThinkingMode.ON,
+            messages=[ModelMessage(role="user", content="请分析")],
+        )
+    )
+
+    assert FakeAsyncClient.last_request["json"]["thinking"] == {
+        "type": "enabled",
+        "budget_tokens": 2047,
+    }
+    assert output.content == "公开回答"
+    assert "private reasoning" not in output.content
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_provider_streams_text_and_usage(monkeypatch):
+    FakeStreamingClient.lines = [
+        'data: {"choices":[{"delta":{"content":"先"}}]}',
+        'data: {"choices":[{"delta":{"content":"回答"}}]}',
+        'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3}}',
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr("uai_forge.providers.httpx.AsyncClient", FakeStreamingClient)
+    binding = ModelBinding(
+        model_config_id="cfg_stream_openai",
+        config={"base_url": "https://api.deepseek.com/v1"},
+    )
+    binding._runtime_provider = "openai_compatible"
+    binding._runtime_model = "deepseek-chat"
+    binding._runtime_credential = "stream-secret"
+    provider = OpenAICompatibleProvider(binding)
+
+    chunks = [
+        chunk
+        async for chunk in provider.stream(
+            ModelRequest(
+                model="deepseek-chat",
+                messages=[ModelMessage(role="user", content="hello")],
+            )
+        )
+    ]
+
+    assert "".join(chunk.text for chunk in chunks) == "先回答"
+    usage = next(chunk.usage for chunk in chunks if chunk.usage is not None)
+    assert usage.total_tokens == 10
+    assert FakeStreamingClient.last_request["json"]["stream"] is True
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_provider_streams_text_and_usage(monkeypatch):
+    FakeStreamingClient.lines = [
+        'event: message_start',
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":11}}}',
+        'event: content_block_delta',
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"流式"}}',
+        'data: {"type":"message_delta","usage":{"output_tokens":5}}',
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"完成"}}',
+    ]
+    monkeypatch.setattr("uai_forge.providers.httpx.AsyncClient", FakeStreamingClient)
+    binding = ModelBinding(
+        model_config_id="cfg_stream_anthropic",
+        config={"base_url": "https://api.anthropic.com"},
+    )
+    binding._runtime_provider = "anthropic_messages"
+    binding._runtime_model = "claude-sonnet-5"
+    binding._runtime_credential = "stream-secret"
+    provider = AnthropicMessagesProvider(binding)
+
+    chunks = [
+        chunk
+        async for chunk in provider.stream(
+            ModelRequest(
+                model="claude-sonnet-5",
+                messages=[ModelMessage(role="user", content="hello")],
+            )
+        )
+    ]
+
+    assert "".join(chunk.text for chunk in chunks) == "流式完成"
+    assert any(chunk.usage and chunk.usage.input_tokens == 11 for chunk in chunks)
+    assert any(chunk.usage and chunk.usage.output_tokens == 5 for chunk in chunks)

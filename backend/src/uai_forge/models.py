@@ -657,11 +657,37 @@ class RunStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class ThinkingMode(str, Enum):
+    """Provider-neutral request preference; never a chain-of-thought payload."""
+
+    OFF = "off"
+    AUTO = "auto"
+    ON = "on"
+
+
+class ThinkingResolution(str, Enum):
+    """Safe public outcome of mapping a thinking preference at the provider edge."""
+
+    AUTO = "auto"
+    MAPPED = "mapped"
+    NATIVE = "native"
+    UNSUPPORTED = "unsupported"
+
+
+class ExecutionMode(str, Enum):
+    """Run intent; plan mode never grants execution capabilities."""
+
+    EXECUTE = "execute"
+    PLAN = "plan"
+
+
 class RunRequest(StrictModel):
     agent_id: Optional[str] = None
     instance_id: Optional[str] = None
     input: str = Field(min_length=1, max_length=100_000)
     session_id: str = Field(default_factory=lambda: new_id("ses"))
+    thinking_mode: ThinkingMode = ThinkingMode.AUTO
+    execution_mode: ExecutionMode = ExecutionMode.EXECUTE
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("metadata")
@@ -700,8 +726,11 @@ class EventType(str, Enum):
     AGENT_STARTED = "agent.started"
     AGENT_COMPLETED = "agent.completed"
     AGENT_FAILED = "agent.failed"
+    AGENT_PROGRESS = "agent.progress"
     MODEL_STARTED = "model.started"
+    MODEL_DELTA = "model.delta"
     MODEL_COMPLETED = "model.completed"
+    MODEL_FAILED = "model.failed"
     TOOL_STARTED = "tool.started"
     TOOL_COMPLETED = "tool.completed"
     TOOL_FAILED = "tool.failed"
@@ -721,6 +750,12 @@ class RunEvent(StrictModel):
     parent_agent_id: Optional[str] = None
     depth: int = 0
     payload: Dict[str, Any] = Field(default_factory=dict)
+    # Optional trace correlation keeps the v1 event contract compatible with
+    # historical events while allowing the runtime to expose a complete
+    # parent/child execution chain without leaking provider objects.
+    trace_id: Optional[str] = None
+    span_id: Optional[str] = None
+    parent_span_id: Optional[str] = None
 
 
 class GraphIssue(StrictModel):

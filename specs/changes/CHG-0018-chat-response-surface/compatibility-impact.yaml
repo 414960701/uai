@@ -1,0 +1,14 @@
+change_id: CHG-0018
+status: implemented
+api:
+  additive: []
+  behavior_change:
+    - "聊天助手消息从有框气泡改为连续正文表面"
+storage:
+  schema_change: false
+frontend:
+  additions:
+    - "安全的基础 Markdown 正文投影"
+    - "轻量可折叠公开执行活动条"
+rollback:
+  note: "回退 app/control-center.tsx 和 app/globals.css 即可恢复原消息表面；Run/Event 合同不受影响"

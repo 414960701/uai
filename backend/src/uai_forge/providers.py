@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
-from typing import Any, Dict, List
+from typing import Any, AsyncIterator, Dict, List
 
 import httpx
 
@@ -17,9 +18,19 @@ from .models import (
     ModelConnectionCheckResult,
     PluginKind,
     PluginManifest,
+    ThinkingMode,
+    ThinkingResolution,
     utc_now,
 )
-from .ports import ModelMessage, ModelOutput, ModelProvider, ModelRequest, TokenUsage, ToolCall
+from .ports import (
+    ModelMessage,
+    ModelOutput,
+    ModelProvider,
+    ModelRequest,
+    ModelStreamChunk,
+    TokenUsage,
+    ToolCall,
+)
 
 
 OPENAI_COMPATIBLE_MANIFEST = PluginManifest(
@@ -28,7 +39,7 @@ OPENAI_COMPATIBLE_MANIFEST = PluginManifest(
     display_name="OpenAI-compatible HTTP",
     version="1.0.0",
     description="Adapter for OpenAI-compatible chat-completions endpoints.",
-    capabilities=["tool_calling", "structured_messages", "usage_reporting"],
+    capabilities=["tool_calling", "structured_messages", "usage_reporting", "streaming"],
     api_protocol="openai_chat_completions",
     credential_required=True,
     connection_check="remote",
@@ -306,6 +317,10 @@ OPENAI_COMPATIBLE_MANIFEST = PluginManifest(
             "max_tokens": {"type": "integer", "minimum": 1, "maximum": 200000},
             "temperature": {"type": "number", "minimum": 0, "maximum": 2},
             "top_p": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+            "thinking_protocol": {
+                "type": "string",
+                "enum": ["reasoning_effort", "enable_thinking", "native", "none"],
+            },
         },
         "additionalProperties": False,
     },
@@ -318,7 +333,7 @@ ANTHROPIC_MESSAGES_MANIFEST = PluginManifest(
     display_name="Anthropic Claude Messages",
     version="1.0.0",
     description="Adapter for Anthropic Claude Messages API.",
-    capabilities=["tool_calling", "structured_messages", "usage_reporting", "system_messages"],
+    capabilities=["tool_calling", "structured_messages", "usage_reporting", "system_messages", "streaming"],
     api_protocol="anthropic_messages",
     credential_required=True,
     connection_check="remote",
@@ -400,6 +415,8 @@ ANTHROPIC_MESSAGES_MANIFEST = PluginManifest(
             "max_tokens": {"type": "integer", "minimum": 1, "maximum": 200000},
             "temperature": {"type": "number", "minimum": 0, "maximum": 1},
             "top_p": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+            "thinking_budget_tokens": {"type": "integer", "minimum": 1, "maximum": 100000},
+            "thinking_protocol": {"type": "string", "enum": ["anthropic_extended", "none"]},
         },
         "additionalProperties": False,
     },
@@ -501,6 +518,45 @@ class OpenAICompatibleProvider(ModelProvider):
             str(key): str(value) for key, value in binding.config.get("headers", {}).items()
         }
 
+    @staticmethod
+    def _thinking_protocol(model: str, config: Dict[str, Any]) -> str:
+        explicit = str(config.get("thinking_protocol", "")).strip().lower()
+        if explicit in {"reasoning_effort", "enable_thinking", "native", "none"}:
+            return explicit
+        normalized = model.lower()
+        if "qwen" in normalized or normalized.startswith("qwq"):
+            return "enable_thinking"
+        if re.search(r"(?:^|[-_.])(?:gpt-5|o1|o3|o4)(?:[-_.]|$)", normalized):
+            return "reasoning_effort"
+        if any(token in normalized for token in ("reasoner", "r1", "thinking")):
+            return "native"
+        return "none"
+
+    def thinking_resolution(self, request: ModelRequest) -> ThinkingResolution:
+        if request.thinking_mode is ThinkingMode.AUTO:
+            return ThinkingResolution.AUTO
+        protocol = self._thinking_protocol(request.model, self.binding.config)
+        if protocol in {"reasoning_effort", "enable_thinking"}:
+            return ThinkingResolution.MAPPED
+        if protocol == "native" and request.thinking_mode is ThinkingMode.ON:
+            return ThinkingResolution.NATIVE
+        return ThinkingResolution.UNSUPPORTED
+
+    def _apply_thinking_mode(
+        self,
+        payload: Dict[str, Any],
+        request: ModelRequest,
+    ) -> None:
+        if request.thinking_mode is ThinkingMode.AUTO:
+            return
+        protocol = self._thinking_protocol(request.model, self.binding.config)
+        if protocol == "reasoning_effort":
+            payload["reasoning_effort"] = (
+                "high" if request.thinking_mode is ThinkingMode.ON else "none"
+            )
+        elif protocol == "enable_thinking":
+            payload["enable_thinking"] = request.thinking_mode is ThinkingMode.ON
+
     async def check_connection(
         self,
         request: ModelConnectionCheckRequest,
@@ -550,6 +606,7 @@ class OpenAICompatibleProvider(ModelProvider):
         }
         if request.tools:
             payload["tools"] = request.tools
+        self._apply_thinking_mode(payload, request)
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
@@ -593,6 +650,56 @@ class OpenAICompatibleProvider(ModelProvider):
         )
 
 
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamChunk]:
+        if not self.api_key:
+            raise RuntimeError("provider credential profile is unavailable")
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            **self.extra_headers,
+        }
+        payload: Dict[str, Any] = {
+            "model": request.model,
+            "messages": [self._message_payload(item) for item in request.messages],
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        self._apply_thinking_mode(payload, request)
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with client.stream(
+                "POST",
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        continue
+                    try:
+                        raw = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = raw.get("choices") or []
+                    delta = choices[0].get("delta") if choices else {}
+                    text = delta.get("content") if isinstance(delta, dict) else ""
+                    usage_raw = raw.get("usage") or {}
+                    usage = None
+                    if usage_raw:
+                        usage = TokenUsage(
+                            input_tokens=int(usage_raw.get("prompt_tokens") or 0),
+                            output_tokens=int(usage_raw.get("completion_tokens") or 0),
+                        )
+                    if text or usage is not None:
+                        yield ModelStreamChunk(text=text or "", usage=usage)
+
+
 class AnthropicMessagesProvider(ModelProvider):
     manifest = ANTHROPIC_MESSAGES_MANIFEST
 
@@ -605,6 +712,25 @@ class AnthropicMessagesProvider(ModelProvider):
         self.extra_headers = {
             str(key): str(value) for key, value in binding.config.get("headers", {}).items()
         }
+
+    def thinking_resolution(self, request: ModelRequest) -> ThinkingResolution:
+        if request.thinking_mode is ThinkingMode.AUTO:
+            return ThinkingResolution.AUTO
+        return ThinkingResolution.MAPPED
+
+    def _apply_thinking_mode(
+        self,
+        payload: Dict[str, Any],
+        request: ModelRequest,
+    ) -> None:
+        if request.thinking_mode is not ThinkingMode.ON:
+            return
+        max_tokens = int(payload.get("max_tokens", 4096))
+        if max_tokens < 2:
+            return
+        configured_budget = int(self.binding.config.get("thinking_budget_tokens", 4096))
+        budget_tokens = max(1, min(configured_budget, max_tokens - 1))
+        payload["thinking"] = {"type": "enabled", "budget_tokens": budget_tokens}
 
     async def check_connection(
         self,
@@ -698,6 +824,7 @@ class AnthropicMessagesProvider(ModelProvider):
         for key in ("temperature", "top_p"):
             if key in self.binding.config:
                 payload[key] = self.binding.config[key]
+        self._apply_thinking_mode(payload, request)
 
         headers = {
             "x-api-key": self.api_key,
@@ -738,6 +865,64 @@ class AnthropicMessagesProvider(ModelProvider):
                 "model": raw.get("model"),
             },
         )
+
+
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamChunk]:
+        if not self.api_key:
+            raise RuntimeError("model configuration secret is unavailable")
+
+        system, messages = self._messages_payload(request.messages)
+        payload: Dict[str, Any] = {
+            "model": request.model,
+            "max_tokens": int(self.binding.config.get("max_tokens", 4096)),
+            "messages": messages,
+            "stream": True,
+        }
+        if system:
+            payload["system"] = system
+        for key in ("temperature", "top_p"):
+            if key in self.binding.config:
+                payload[key] = self.binding.config[key]
+        self._apply_thinking_mode(payload, request)
+
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": self.anthropic_version,
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            **self.extra_headers,
+        }
+        endpoint = f"{self.base_url}/messages" if self.base_url.endswith("/v1") else f"{self.base_url}/v1/messages"
+        input_tokens = 0
+        output_tokens = 0
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with client.stream("POST", endpoint, headers=headers, json=payload) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    try:
+                        raw = json.loads(line[5:].strip())
+                    except json.JSONDecodeError:
+                        continue
+                    if raw.get("type") == "message_start":
+                        input_tokens = int(
+                            (raw.get("message") or {}).get("usage", {}).get("input_tokens") or 0
+                        )
+                    elif raw.get("type") == "message_delta":
+                        output_tokens = int(
+                            (raw.get("usage") or {}).get("output_tokens") or 0
+                        )
+                    delta = raw.get("delta") or {}
+                    text = delta.get("text") if delta.get("type") == "text_delta" else ""
+                    usage = None
+                    if input_tokens or output_tokens:
+                        usage = TokenUsage(
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                        )
+                    if text or usage is not None:
+                        yield ModelStreamChunk(text=text or "", usage=usage)
 
 
 def create_openai_compatible_provider(binding: ModelBinding) -> ModelProvider:

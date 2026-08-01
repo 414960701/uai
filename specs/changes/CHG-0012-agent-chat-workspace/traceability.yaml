@@ -1,0 +1,63 @@
+change_id: CHG-0012
+status: proposed
+implementation_status: partial
+requirements:
+  CHAT-001:
+    contracts:
+      - requirements.md
+      - design.md#1-信息架构
+    implementation:
+      - app/control-center.tsx
+      - app/globals.css
+    verification:
+      - tests/rendered-html.test.mjs
+  CHAT-002:
+    contracts:
+      - requirements.md
+      - design.md#2-数据模型与边界
+    implementation:
+      - app/control-center.tsx
+    verification:
+      - tests/rendered-html.test.mjs
+  CHAT-003:
+    contracts:
+      - requirements.md
+      - design.md#3-交互状态
+    implementation:
+      - app/control-center.tsx
+      - backend/src/uai_forge/models.py::RunRequest
+    verification:
+      - backend/tests/test_api.py::test_run_lifecycle_from_instance
+      - tests/rendered-html.test.mjs
+  CHAT-004:
+    contracts:
+      - requirements.md
+      - design.md#1-信息架构
+    implementation:
+      - app/control-center.tsx
+      - app/control-center/api.ts
+      - app/control-center/features/runs/reducer.ts
+    verification:
+      - backend/tests/test_runtime.py::test_subscriber_closes_replay_live_registration_window_without_loss
+      - tests/rendered-html.test.mjs
+  CHAT-005:
+    contracts:
+      - requirements.md
+      - design.md#4-中文化规则
+    implementation:
+      - app/control-center.tsx
+    verification:
+      - tests/rendered-html.test.mjs
+  CHAT-006:
+    contracts:
+      - requirements.md
+      - threat-delta.md
+    implementation:
+      - app/control-center.tsx
+      - app/globals.css
+    verification:
+      - npm run lint
+      - npm run typecheck
+      - npm test
+    gaps:
+      - "真实浏览器键盘、390px 和 reconnect smoke 仍需单独留证"

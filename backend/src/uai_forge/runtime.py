@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -11,14 +12,26 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from .models import (
     AgentSpec,
     ChildMount,
+    ExecutionMode,
     EventType,
     ExecutionPolicy,
     ModelBinding,
     PluginKind,
     RunEvent,
     RunRecord,
+    ThinkingMode,
+    ThinkingResolution,
+    new_id,
 )
-from .ports import EventBusPort, ModelMessage, ModelRequest, RepositoryPort, ToolCall
+from .ports import (
+    EventBusPort,
+    ModelMessage,
+    ModelOutput,
+    ModelRequest,
+    RepositoryPort,
+    TokenUsage,
+    ToolCall,
+)
 from .registry import PluginBindingError, PluginRegistry
 from .schema_validation import (
     InvalidJsonSchema,
@@ -162,6 +175,16 @@ class RootConcurrencyLease:
 
 
 class AgentRuntime:
+    _FAST_PATH_LABEL = "weather_missing_location"
+    _WEATHER_INTENT = re.compile(
+        r"(?:天气|天氣|气温|氣溫|温度|溫度|降雨|下雨|weather|temperature|forecast)",
+        re.IGNORECASE,
+    )
+    _LOCATION_FREE_WORDS = re.compile(
+        r"(?:今天|明天|后天|後天|现在|現在|当前|當前|本周|这周|這周|最近|查询|查詢|查看|告诉我|告訴我|帮我|幫我|请问|請問|怎么样|怎麼樣|如何|情况|情況|信息|資訊|预报|預報|一下|好吗|好嗎|呢|吗|嗎|的|weather|temperature|forecast|today|tomorrow|now|please|what(?:'s| is)?|the|in|at|near)",
+        re.IGNORECASE,
+    )
+
     def __init__(
         self,
         repository: RepositoryPort,
@@ -179,6 +202,27 @@ class AgentRuntime:
         """Expose the runtime binding gate to run submission."""
 
         self.registry.validate_agent_spec(spec)
+
+    @classmethod
+    def _fast_path_for_input(cls, spec: AgentSpec, input_text: str, depth: int) -> Optional[str]:
+        """Return a bounded response for an explicitly declared clarification path.
+
+        Labels are data, not executable policy.  Only this one allowlisted value is
+        interpreted, and only on the root frame.  The detector is intentionally
+        conservative: uncertain input stays on the normal model path.
+        """
+
+        if depth != 0 or spec.labels.get("routing.fast_path") != cls._FAST_PATH_LABEL:
+            return None
+        if not cls._WEATHER_INTENT.search(input_text):
+            return None
+        remaining = cls._WEATHER_INTENT.sub(" ", input_text)
+        remaining = cls._LOCATION_FREE_WORDS.sub(" ", remaining)
+        remaining = re.sub(r"[^\w\u3400-\u9fff]+", " ", remaining, flags=re.UNICODE)
+        remaining = re.sub(r"\b\d+(?:\.\d+)?\b", " ", remaining)
+        if re.search(r"[\u3400-\u9fffA-Za-z]{2,}", remaining):
+            return None
+        return "请告诉我你要查询的城市或地区（例如：北京），我就能继续查询天气。"
 
     async def _resolve_model_binding(
         self, tenant_id: str, binding: ModelBinding
@@ -244,6 +288,7 @@ class AgentRuntime:
     async def execute(self, run: RunRecord, root_spec: AgentSpec) -> Tuple[str, Dict[str, Any]]:
         ledger = BudgetLedger(root_spec.policy)
         root_semaphore = asyncio.Semaphore(root_spec.policy.max_parallel_children)
+        fast_path = self._fast_path_for_input(root_spec, run.input, 0)
         output = await self._execute_agent(
             run=run,
             spec=root_spec,
@@ -256,8 +301,12 @@ class AgentRuntime:
             path=[],
             allowed_tool_plugins=None,
             absolute_depth_limit=root_spec.policy.max_depth,
+            parent_span_id=run.metrics.get("run_span_id"),
         )
-        return output, ledger.snapshot()
+        metrics = ledger.snapshot()
+        if fast_path is not None:
+            metrics["fast_path"] = self._FAST_PATH_LABEL
+        return output, metrics
 
     async def _emit(
         self,
@@ -267,6 +316,8 @@ class AgentRuntime:
         depth: int,
         payload: Dict[str, Any] = None,
         parent_agent_id: Optional[str] = None,
+        span_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
     ) -> None:
         await self.events.publish(
             run.tenant_id,
@@ -277,8 +328,62 @@ class AgentRuntime:
                 parent_agent_id=parent_agent_id,
                 depth=depth,
                 payload=payload or {},
+                trace_id=run.metrics.get("trace_id"),
+                span_id=span_id,
+                parent_span_id=parent_span_id,
             ),
         )
+
+    async def _complete_model(
+        self,
+        *,
+        provider: Any,
+        request: ModelRequest,
+        run: RunRecord,
+        agent_id: str,
+        depth: int,
+        parent_agent_id: Optional[str],
+        span_id: Optional[str],
+        parent_span_id: Optional[str],
+    ) -> ModelOutput:
+        """Collect a provider text stream behind the owned runtime boundary."""
+
+        # Keep tool-call JSON on the complete path. A partial function call must
+        # never be mistaken for assistant text by the chat projection.
+        manifest = getattr(provider, "manifest", None)
+        capabilities = getattr(manifest, "capabilities", ())
+        if request.tools or "streaming" not in capabilities:
+            return await provider.complete(request)
+
+        parts: List[str] = []
+        usage: Optional[TokenUsage] = None
+        try:
+            async for chunk in provider.stream(request):
+                if chunk.text:
+                    parts.append(chunk.text)
+                    await self._emit(
+                        run,
+                        EventType.MODEL_DELTA,
+                        agent_id,
+                        depth,
+                        {"text": chunk.text},
+                        parent_agent_id,
+                        span_id,
+                        parent_span_id,
+                    )
+                if chunk.usage is not None:
+                    usage = chunk.usage
+        except Exception:
+            # A stream can be retried only before any text was exposed. Once the
+            # user saw output, the original failure remains the source of truth.
+            if parts:
+                raise
+            return await provider.complete(request)
+
+        content = "".join(parts)
+        if usage is None or usage.total_tokens == 0:
+            usage = TokenUsage(output_tokens=max(0, len(content) // 4))
+        return ModelOutput(content=content, usage=usage)
 
     @staticmethod
     def _delegation_definition(mount: ChildMount) -> Dict[str, Any]:
@@ -348,6 +453,38 @@ class AgentRuntime:
             return encoded[:limit] + "…"
         return cleaned
 
+    @staticmethod
+    def _thinking_mode_for_run(run: RunRecord) -> ThinkingMode:
+        raw = run.metrics.get("thinking_mode", ThinkingMode.AUTO.value)
+        try:
+            return ThinkingMode(str(raw))
+        except ValueError:
+            # Historical/custom Run records remain executable with the safe
+            # native default instead of failing because of an unknown hint.
+            return ThinkingMode.AUTO
+
+    @staticmethod
+    def _thinking_resolution_for_provider(
+        provider: Any,
+        request: ModelRequest,
+    ) -> ThinkingResolution:
+        resolver = getattr(provider, "thinking_resolution", None)
+        if callable(resolver):
+            return resolver(request)
+        return (
+            ThinkingResolution.AUTO
+            if request.thinking_mode is ThinkingMode.AUTO
+            else ThinkingResolution.UNSUPPORTED
+        )
+
+    @staticmethod
+    def _execution_mode_for_run(run: RunRecord) -> ExecutionMode:
+        raw = run.metrics.get("execution_mode", ExecutionMode.EXECUTE.value)
+        try:
+            return ExecutionMode(str(raw))
+        except ValueError:
+            return ExecutionMode.EXECUTE
+
     async def _execute_agent(
         self,
         run: RunRecord,
@@ -361,6 +498,8 @@ class AgentRuntime:
         path: List[str],
         allowed_tool_plugins: Optional[Set[str]],
         absolute_depth_limit: int,
+        span_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
     ) -> str:
         # Repositories and historical revisions can bypass the current save
         # boundary. Revalidate every root and mounted child before side effects.
@@ -376,6 +515,11 @@ class AgentRuntime:
         if not spec.enabled:
             raise RuntimeGuardError(f"agent is disabled: {spec.id}")
 
+        span_id = span_id or new_id("span")
+        operation_started = time.monotonic()
+        thinking_mode = self._thinking_mode_for_run(run)
+        execution_mode = self._execution_mode_for_run(run)
+
         await self._emit(
             run,
             EventType.AGENT_STARTED,
@@ -383,8 +527,89 @@ class AgentRuntime:
             depth,
             {"name": spec.name, "revision": spec.revision},
             parent_agent_id,
+            span_id,
+            parent_span_id,
+        )
+        await self._emit(
+            run,
+            EventType.AGENT_PROGRESS,
+            spec.id,
+            depth,
+            {
+                "phase": "preparing",
+                "status": "active",
+                "message": "正在准备上下文",
+                "public": True,
+            },
+            parent_agent_id,
+            span_id,
+            parent_span_id,
         )
         try:
+            fast_path = self._fast_path_for_input(spec, input_text, depth)
+            if fast_path is not None:
+                await self._emit(
+                    run,
+                    EventType.AGENT_PROGRESS,
+                    spec.id,
+                    depth,
+                    {
+                        "phase": "preflight",
+                        "status": "active",
+                        "message": "已识别为缺少地点的天气请求，跳过模型链路",
+                        "fast_path": self._FAST_PATH_LABEL,
+                        "public": True,
+                    },
+                    parent_agent_id,
+                    span_id,
+                    parent_span_id,
+                )
+                await self._emit(
+                    run,
+                    EventType.AGENT_PROGRESS,
+                    spec.id,
+                    depth,
+                    {
+                        "phase": "clarifying",
+                        "status": "complete",
+                        "message": "先补充城市或地区，再继续查询",
+                        "fast_path": self._FAST_PATH_LABEL,
+                        "public": True,
+                    },
+                    parent_agent_id,
+                    span_id,
+                    parent_span_id,
+                )
+                await self._emit(
+                    run,
+                    EventType.AGENT_COMPLETED,
+                    spec.id,
+                    depth,
+                    {
+                        "output": self._safe_preview(fast_path),
+                        "duration_ms": round((time.monotonic() - operation_started) * 1_000, 2),
+                        "fast_path": self._FAST_PATH_LABEL,
+                    },
+                    parent_agent_id,
+                    span_id,
+                    parent_span_id,
+                )
+                await self._emit(
+                    run,
+                    EventType.AGENT_PROGRESS,
+                    spec.id,
+                    depth,
+                    {
+                        "phase": "completed",
+                        "status": "complete",
+                        "message": "已完成",
+                        "public": True,
+                    },
+                    parent_agent_id,
+                    span_id,
+                    parent_span_id,
+                )
+                return fast_path
             memory = (
                 self.registry.create_memory(spec.memory)
                 if spec.memory.enabled
@@ -399,6 +624,17 @@ class AgentRuntime:
                 ),
                 ModelMessage(role="user", content=input_text),
             ]
+            if execution_mode is ExecutionMode.PLAN:
+                history.insert(
+                    -1,
+                    ModelMessage(
+                        role="system",
+                        content=(
+                            "当前是计划模式：只生成可审阅的执行计划，不调用工具、"
+                            "不委派子 Agent，也不执行外部副作用。"
+                        ),
+                    ),
+                )
             model_binding = await self._resolve_model_binding(run.tenant_id, spec.model)
             provider = self.registry.create_provider(model_binding)
             middlewares = self.registry.create_middlewares(spec.middlewares)
@@ -416,11 +652,19 @@ class AgentRuntime:
                 )
                 and binding.permission != "deny"
             }
-            tools = {
-                name: self.registry.create_tool(binding)
-                for name, binding in tool_bindings.items()
-            }
-            mounts = {mount.alias: mount for mount in spec.children}
+            tools = (
+                {
+                    name: self.registry.create_tool(binding)
+                    for name, binding in tool_bindings.items()
+                }
+                if execution_mode is ExecutionMode.EXECUTE
+                else {}
+            )
+            mounts = (
+                {mount.alias: mount for mount in spec.children}
+                if execution_mode is ExecutionMode.EXECUTE
+                else {}
+            )
             local_child_semaphore = asyncio.Semaphore(
                 spec.policy.max_parallel_children
             )
@@ -446,6 +690,7 @@ class AgentRuntime:
                     model=model_binding.model,
                     messages=history,
                     tools=tool_definitions,
+                    thinking_mode=thinking_mode,
                     metadata={
                         "run_id": run.id,
                         "agent_id": spec.id,
@@ -454,6 +699,7 @@ class AgentRuntime:
                         "environment": run.metrics.get("environment"),
                         "depth": depth,
                         "local_step": local_step + 1,
+                        "execution_mode": execution_mode.value,
                     },
                 )
                 context = {
@@ -467,6 +713,7 @@ class AgentRuntime:
                 }
                 for middleware in middlewares:
                     request = await middleware.before_model(context, request)
+                thinking_resolution = self._thinking_resolution_for_provider(provider, request)
                 await self._emit(
                     run,
                     EventType.MODEL_STARTED,
@@ -475,13 +722,132 @@ class AgentRuntime:
                     {
                         "provider": model_binding.provider,
                         "model": model_binding.model,
+                        "thinking_mode": thinking_mode.value,
+                        "thinking_resolution": thinking_resolution.value,
+                        "execution_mode": execution_mode.value,
                         "step": local_step + 1,
                     },
                     parent_agent_id,
+                    span_id,
+                    parent_span_id,
                 )
-                output = await provider.complete(request)
+                await self._emit(
+                    run,
+                    EventType.AGENT_PROGRESS,
+                    spec.id,
+                    depth,
+                    {
+                        "phase": "analyzing",
+                        "status": "active",
+                        "message": "正在分析任务",
+                        "step": local_step + 1,
+                        "public": True,
+                    },
+                    parent_agent_id,
+                    span_id,
+                    parent_span_id,
+                )
+                if thinking_mode is not ThinkingMode.AUTO:
+                    if thinking_resolution.value == "mapped":
+                        thinking_message = (
+                            "已开启思考模式"
+                            if thinking_mode is ThinkingMode.ON
+                            else "已关闭思考模式"
+                        )
+                        thinking_status = "active"
+                    elif thinking_resolution.value == "native":
+                        thinking_message = "当前模型使用原生思考能力"
+                        thinking_status = "active"
+                    else:
+                        thinking_message = "当前模型未声明可控思考参数，已按模型默认行为运行"
+                        thinking_status = "degraded"
+                    await self._emit(
+                        run,
+                        EventType.AGENT_PROGRESS,
+                        spec.id,
+                        depth,
+                        {
+                            "phase": "thinking_mode",
+                            "status": thinking_status,
+                            "message": thinking_message,
+                            "thinking_mode": thinking_mode.value,
+                            "thinking_resolution": thinking_resolution.value,
+                            "public": True,
+                        },
+                        parent_agent_id,
+                        span_id,
+                        parent_span_id,
+                    )
+                if execution_mode is ExecutionMode.PLAN:
+                    await self._emit(
+                        run,
+                        EventType.AGENT_PROGRESS,
+                        spec.id,
+                        depth,
+                        {
+                            "phase": "plan",
+                            "status": "active",
+                            "message": "计划模式：只生成计划，不调用工具或子 Agent",
+                            "execution_mode": execution_mode.value,
+                            "public": True,
+                        },
+                        parent_agent_id,
+                        span_id,
+                        parent_span_id,
+                    )
+                model_started = time.monotonic()
+                try:
+                    output = await self._complete_model(
+                        provider=provider,
+                        request=request,
+                        run=run,
+                        agent_id=spec.id,
+                        depth=depth,
+                        parent_agent_id=parent_agent_id,
+                        span_id=span_id,
+                        parent_span_id=parent_span_id,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    await self._emit(
+                        run,
+                        EventType.MODEL_FAILED,
+                        spec.id,
+                        depth,
+                        {
+                            "provider": model_binding.provider,
+                            "model": model_binding.model,
+                            "step": local_step + 1,
+                            "duration_ms": round((time.monotonic() - model_started) * 1_000, 2),
+                            "error_type": type(exc).__name__,
+                        },
+                        parent_agent_id,
+                        span_id,
+                        parent_span_id,
+                    )
+                    raise
                 for middleware in reversed(middlewares):
                     output = await middleware.after_model(context, output)
+                if execution_mode is ExecutionMode.PLAN and output.tool_calls:
+                    await self._emit(
+                        run,
+                        EventType.AGENT_PROGRESS,
+                        spec.id,
+                        depth,
+                        {
+                            "phase": "plan",
+                            "status": "degraded",
+                            "message": "计划模式已阻止模型工具调用",
+                            "blocked_tool_calls": len(output.tool_calls),
+                            "execution_mode": execution_mode.value,
+                            "public": True,
+                        },
+                        parent_agent_id,
+                        span_id,
+                        parent_span_id,
+                    )
+                    output = ModelOutput(content=output.content, usage=output.usage)
                 try:
                     await budget.add_tokens(output.usage.total_tokens)
                 except BudgetExceededError:
@@ -492,6 +858,8 @@ class AgentRuntime:
                         depth,
                         budget.event_snapshot(),
                         parent_agent_id,
+                        span_id,
+                        parent_span_id,
                     )
                     raise
                 await self._emit(
@@ -502,10 +870,30 @@ class AgentRuntime:
                     {
                         "provider": model_binding.provider,
                         "model": model_binding.model,
+                        "step": local_step + 1,
                         "tool_calls": len(output.tool_calls),
                         "usage": output.usage.model_dump(),
+                        "duration_ms": round((time.monotonic() - model_started) * 1_000, 2),
                     },
                     parent_agent_id,
+                    span_id,
+                    parent_span_id,
+                )
+                await self._emit(
+                    run,
+                    EventType.AGENT_PROGRESS,
+                    spec.id,
+                    depth,
+                    {
+                        "phase": "tool_call" if output.tool_calls else "composing",
+                        "status": "active",
+                        "message": "正在调用工具" if output.tool_calls else "正在整理回复",
+                        "count": len(output.tool_calls),
+                        "public": True,
+                    },
+                    parent_agent_id,
+                    span_id,
+                    parent_span_id,
                 )
                 await self._emit(
                     run,
@@ -514,11 +902,15 @@ class AgentRuntime:
                     depth,
                     budget.event_snapshot(),
                     parent_agent_id,
+                    span_id,
+                    parent_span_id,
                 )
 
                 if not output.tool_calls:
                     final = output.content
-                    if memory is not None:
+                    # A plan is review-only: do not persist it into agent memory,
+                    # so selecting plan mode cannot mutate later execution context.
+                    if memory is not None and execution_mode is ExecutionMode.EXECUTE:
                         await memory.append(
                             run.tenant_id,
                             run.session_id,
@@ -533,8 +925,31 @@ class AgentRuntime:
                         EventType.AGENT_COMPLETED,
                         spec.id,
                         depth,
-                        {"output": self._safe_preview(final)},
+                        {
+                            "output": self._safe_preview(final),
+                            "duration_ms": round(
+                                (time.monotonic() - operation_started) * 1_000,
+                                2,
+                            ),
+                        },
                         parent_agent_id,
+                        span_id,
+                        parent_span_id,
+                    )
+                    await self._emit(
+                        run,
+                        EventType.AGENT_PROGRESS,
+                        spec.id,
+                        depth,
+                        {
+                            "phase": "completed",
+                            "status": "complete",
+                            "message": "已完成",
+                            "public": True,
+                        },
+                        parent_agent_id,
+                        span_id,
+                        parent_span_id,
                     )
                     return final
 
@@ -563,6 +978,8 @@ class AgentRuntime:
                         path=path + [spec.id],
                         allowed_tool_plugins=allowed_tool_plugins,
                         absolute_depth_limit=absolute_depth_limit,
+                        span_id=span_id,
+                        parent_span_id=parent_span_id,
                     )
                     for call in output.tool_calls
                 ]
@@ -620,8 +1037,17 @@ class AgentRuntime:
                 EventType.AGENT_FAILED,
                 spec.id,
                 depth,
-                {"error": str(exc), "error_type": type(exc).__name__},
+                {
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                    "duration_ms": round(
+                        (time.monotonic() - operation_started) * 1_000,
+                        2,
+                    ),
+                },
                 parent_agent_id,
+                span_id,
+                parent_span_id,
             )
             raise
 
@@ -643,6 +1069,8 @@ class AgentRuntime:
         path: List[str],
         allowed_tool_plugins: Optional[Set[str]],
         absolute_depth_limit: int,
+        span_id: Optional[str],
+        parent_span_id: Optional[str],
     ) -> str:
         await budget.consume_tool()
         if call.name.startswith("delegate_"):
@@ -660,6 +1088,21 @@ class AgentRuntime:
                 argument_validator,
                 call.arguments,
             )
+            await self._emit(
+                run,
+                EventType.AGENT_PROGRESS,
+                spec.id,
+                depth,
+                {
+                    "phase": "delegating",
+                    "status": "active",
+                    "message": f"正在委派给子 Agent：{alias}",
+                    "alias": alias,
+                    "public": True,
+                },
+                span_id=span_id,
+                parent_span_id=parent_span_id,
+            )
             return await self._delegate(
                 run,
                 spec,
@@ -672,6 +1115,7 @@ class AgentRuntime:
                 path,
                 allowed_tool_plugins,
                 absolute_depth_limit,
+                span_id,
             )
 
         binding = configured_tool_bindings.get(call.name)
@@ -707,6 +1151,8 @@ class AgentRuntime:
                 spec.id,
                 depth,
                 {"tool": call.name, "call_id": call.id},
+                span_id=span_id,
+                parent_span_id=parent_span_id,
             )
             raise PermissionRequiredError(f"tool approval required: {call.name}")
 
@@ -727,12 +1173,15 @@ class AgentRuntime:
             argument_validator,
             arguments,
         )
+        tool_started = time.monotonic()
         await self._emit(
             run,
             EventType.TOOL_STARTED,
             spec.id,
             depth,
             {"tool": call.name, "call_id": call.id, "argument_keys": sorted(arguments)},
+            span_id,
+            parent_span_id,
         )
         try:
             result = await tool.invoke(arguments, context)
@@ -747,7 +1196,13 @@ class AgentRuntime:
                     "tool": call.name,
                     "call_id": call.id,
                     "result": self._safe_preview(result),
+                    "duration_ms": round(
+                        (time.monotonic() - tool_started) * 1_000,
+                        2,
+                    ),
                 },
+                span_id,
+                parent_span_id,
             )
             return json.dumps(result, ensure_ascii=False, default=str)
         except Exception as exc:
@@ -756,7 +1211,17 @@ class AgentRuntime:
                 EventType.TOOL_FAILED,
                 spec.id,
                 depth,
-                {"tool": call.name, "call_id": call.id, "error": str(exc)},
+                {
+                    "tool": call.name,
+                    "call_id": call.id,
+                    "error": str(exc),
+                    "duration_ms": round(
+                        (time.monotonic() - tool_started) * 1_000,
+                        2,
+                    ),
+                },
+                span_id,
+                parent_span_id,
             )
             raise
 
@@ -773,6 +1238,7 @@ class AgentRuntime:
         path: List[str],
         inherited_tool_plugins: Optional[Set[str]],
         parent_depth_limit: int,
+        parent_agent_span_id: Optional[str],
     ) -> str:
         target = await self.repository.get_agent(
             run.tenant_id,
@@ -806,6 +1272,7 @@ class AgentRuntime:
             parent_depth_limit,
             child_depth + target.policy.max_depth,
         )
+        child_span_id = new_id("span")
         await self._emit(
             run,
             EventType.DELEGATION_STARTED,
@@ -821,6 +1288,8 @@ class AgentRuntime:
                     else sorted(effective_tool_plugins)
                 ),
             },
+            span_id=child_span_id,
+            parent_span_id=parent_agent_span_id,
         )
 
         async def invoke_child() -> str:
@@ -846,10 +1315,13 @@ class AgentRuntime:
                             path=path,
                             allowed_tool_plugins=effective_tool_plugins,
                             absolute_depth_limit=child_depth_limit,
+                            span_id=child_span_id,
+                            parent_span_id=parent_agent_span_id,
                         )
                     finally:
                         root_lease.release()
 
+        delegation_started = time.monotonic()
         try:
             try:
                 result = await asyncio.wait_for(
@@ -870,7 +1342,13 @@ class AgentRuntime:
                     "alias": mount.alias,
                     "child_agent_id": target.id,
                     "result": self._safe_preview(result),
+                    "duration_ms": round(
+                        (time.monotonic() - delegation_started) * 1_000,
+                        2,
+                    ),
                 },
+                span_id=child_span_id,
+                parent_span_id=parent_agent_span_id,
             )
             return result
         except Exception as exc:
@@ -883,6 +1361,12 @@ class AgentRuntime:
                     "alias": mount.alias,
                     "child_agent_id": target.id,
                     "error": str(exc),
+                    "duration_ms": round(
+                        (time.monotonic() - delegation_started) * 1_000,
+                        2,
+                    ),
                 },
+                span_id=child_span_id,
+                parent_span_id=parent_agent_span_id,
             )
             raise

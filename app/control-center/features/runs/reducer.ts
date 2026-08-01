@@ -7,6 +7,9 @@ export type RunEvent = {
   parent_agent_id?: string;
   depth: number;
   payload: Record<string, unknown>;
+  trace_id?: string | null;
+  span_id?: string | null;
+  parent_span_id?: string | null;
 };
 
 export type RunTerminalStatus = "running" | "succeeded" | "failed" | "cancelled";

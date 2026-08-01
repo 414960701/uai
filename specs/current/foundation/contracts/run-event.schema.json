@@ -35,8 +35,11 @@
         "agent.started",
         "agent.completed",
         "agent.failed",
+        "agent.progress",
         "model.started",
+        "model.delta",
         "model.completed",
+        "model.failed",
         "tool.started",
         "tool.completed",
         "tool.failed",
@@ -67,6 +70,25 @@
     },
     "payload": {
       "type": "object"
+    },
+    "trace_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional Run trace correlation identifier; old events may omit it."
+    },
+    "span_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "parent_span_id": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   }
 }

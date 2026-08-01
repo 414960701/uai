@@ -15,6 +15,11 @@ services:
       UAI_FORGE_DATABASE_PATH: /data/forge.db
       UAI_FORGE_HOST: 0.0.0.0
       UAI_FORGE_PORT: "8000"
+    # Some Colima/Docker Desktop setups do not expose host DNS servers to
+    # containers. Keep the resolver configurable while giving the local stack
+    # a deterministic default so remote provider checks can reach their host.
+    dns:
+      - ${UAI_FORGE_DNS_SERVER:-1.1.1.1}
     init: true
     ports:
       - "${UAI_FORGE_BIND_ADDRESS:-127.0.0.1}:${UAI_FORGE_API_PORT:-8000}:8000"
@@ -61,4 +66,6 @@ services:
 
 volumes:
   uai-forge-data:
-    name: ${UAI_FORGE_DATA_VOLUME:-uai-forge-data}
+    # The v2 suffix keeps the current ADR-0007 ModelConfig schema separate
+    # from pre-ADR-0007 volumes, which the compatibility gate must reject.
+    name: ${UAI_FORGE_DATA_VOLUME:-uai-forge-data-v2}

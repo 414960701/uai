@@ -11,10 +11,12 @@ from uai_forge.models import (
     AgentSpec,
     ChildMount,
     EventType,
+    ExecutionMode,
     ExecutionPolicy,
     RunEvent,
     RunRequest,
     RunStatus,
+    ThinkingMode,
     ToolBinding,
 )
 from uai_forge.registry import PluginRegistry
@@ -24,18 +26,258 @@ from uai_forge.storage import SQLiteRepository
 from test_support import register_test_provider
 
 
-async def make_runtime(tmp_path: Path):
+async def make_runtime(tmp_path: Path, *, streaming: bool = False):
     repository = SQLiteRepository(str(tmp_path / "runtime.db"))
     await repository.initialize()
     registry = PluginRegistry()
     register_builtins(registry)
-    register_test_provider(registry)
+    register_test_provider(registry, streaming=streaming)
     register_test_provider(registry, "openai_compatible")
     events = EventBroker(repository)
     validator = AgentGraphValidator(repository)
     runtime = AgentRuntime(repository, registry, events)
     manager = RunManager(repository, runtime, events, validator)
     return repository, manager
+
+
+@pytest.mark.asyncio
+async def test_streaming_model_publishes_deltas_and_trace_chain(tmp_path):
+    repository, manager = await make_runtime(tmp_path, streaming=True)
+    agent = await repository.save_agent(
+        "default",
+        AgentSpec(
+            id="agt_streaming_trace",
+            name="Streaming Trace Agent",
+            system_prompt="Answer clearly.",
+            policy=ExecutionPolicy(max_steps=3),
+        ),
+    )
+
+    run = await manager.start(
+        "default",
+        RunRequest(agent_id=agent.id, input="stream this response"),
+    )
+    finished = await manager.wait("default", run.id)
+    events = await repository.list_events("default", run.id)
+
+    assert finished.status == RunStatus.SUCCEEDED
+    assert "stream this response" in finished.output
+    assert [event.type for event in events].count(EventType.MODEL_DELTA) == 2
+    assert any(event.type == EventType.AGENT_PROGRESS for event in events)
+    assert events[0].trace_id == f"trace_{run.id}"
+    assert events[0].span_id
+    assert all(event.trace_id == events[0].trace_id for event in events)
+    assert all(event.span_id for event in events)
+    assert events[-1].type == EventType.RUN_COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_weather_missing_location_fast_path_skips_model_and_child_calls(tmp_path):
+    repository, manager = await make_runtime(tmp_path)
+    child = await repository.save_agent(
+        "default",
+        AgentSpec(
+            id="agt_fast_weather_child",
+            name="天气子 Agent",
+            description="查询天气",
+            system_prompt="查询天气。",
+        ),
+    )
+    parent = await repository.save_agent(
+        "default",
+        AgentSpec(
+            id="agt_fast_weather_parent",
+            name="天气路由 Agent",
+            system_prompt="将天气请求交给合适的 Agent。",
+            children=[ChildMount(alias="weather", agent_id=child.id)],
+            labels={"routing.fast_path": "weather_missing_location"},
+        ),
+    )
+
+    run = await manager.start(
+        "default",
+        RunRequest(agent_id=parent.id, input="今天天气怎么样"),
+    )
+    finished = await manager.wait("default", run.id)
+    events = await repository.list_events("default", run.id)
+
+    assert finished.status == RunStatus.SUCCEEDED
+    assert finished.metrics["fast_path"] == "weather_missing_location"
+    assert "城市或地区" in finished.output
+    assert not any(event.type == EventType.MODEL_STARTED for event in events)
+    assert not any(event.type == EventType.DELEGATION_STARTED for event in events)
+    assert not any(event.type == EventType.AGENT_STARTED and event.agent_id == child.id for event in events)
+    assert any(
+        event.type == EventType.AGENT_PROGRESS
+        and event.payload.get("phase") == "preflight"
+        for event in events
+    )
+    agent_completed = next(event for event in events if event.type == EventType.AGENT_COMPLETED)
+    assert agent_completed.payload["duration_ms"] >= 0
+    assert events[-1].type == EventType.RUN_COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_trace_events_include_operation_durations(tmp_path):
+    repository, manager = await make_runtime(tmp_path)
+    child = await repository.save_agent(
+        "default",
+        AgentSpec(
+            id="agt_duration_child",
+            name="Duration Child",
+            system_prompt="Return the delegated task.",
+        ),
+    )
+    parent = await repository.save_agent(
+        "default",
+        AgentSpec(
+            id="agt_duration_parent",
+            name="Duration Parent",
+            system_prompt="Delegate when requested.",
+            children=[ChildMount(alias="child", agent_id=child.id)],
+            policy=ExecutionPolicy(max_steps=8, max_depth=3),
+        ),
+    )
+
+    run = await manager.start(
+        "default",
+        RunRequest(agent_id=parent.id, input="delegate:child measure this trace"),
+    )
+    finished = await manager.wait("default", run.id)
+    events = await repository.list_events("default", run.id)
+
+    assert finished.status == RunStatus.SUCCEEDED
+    for event_type in (
+        EventType.MODEL_COMPLETED,
+        EventType.DELEGATION_COMPLETED,
+        EventType.AGENT_COMPLETED,
+    ):
+        matching = [event for event in events if event.type == event_type]
+        assert matching
+        assert all(event.payload["duration_ms"] >= 0 for event in matching)
+    model_steps = {
+        event.payload["step"]
+        for event in events
+        if event.type == EventType.MODEL_STARTED
+    }
+    assert model_steps
+    assert all(
+        event.payload["step"] in model_steps
+        for event in events
+        if event.type == EventType.MODEL_COMPLETED
+    )
+
+
+@pytest.mark.asyncio
+async def test_thinking_mode_is_carried_into_run_metrics_and_public_resolution(tmp_path):
+    repository, manager = await make_runtime(tmp_path)
+    agent = await repository.save_agent(
+        "default",
+        AgentSpec(
+            id="agt_thinking_preference",
+            name="Thinking Preference Agent",
+            system_prompt="Answer clearly.",
+            policy=ExecutionPolicy(max_steps=3),
+        ),
+    )
+
+    run = await manager.start(
+        "default",
+        RunRequest(
+            agent_id=agent.id,
+            input="use the selected thinking preference",
+            thinking_mode=ThinkingMode.ON,
+        ),
+    )
+    finished = await manager.wait("default", run.id)
+    events = await repository.list_events("default", run.id)
+
+    assert finished.status == RunStatus.SUCCEEDED
+    assert finished.metrics["thinking_mode"] == "on"
+    model_started = next(event for event in events if event.type == EventType.MODEL_STARTED)
+    assert model_started.payload["thinking_mode"] == "on"
+    assert model_started.payload["thinking_resolution"] == "unsupported"
+    assert any(
+        event.payload.get("phase") == "thinking_mode"
+        and event.payload.get("status") == "degraded"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_blocks_tools_and_child_delegation(tmp_path):
+    repository, manager = await make_runtime(tmp_path)
+    child = await repository.save_agent(
+        "default",
+        AgentSpec(
+            id="agt_plan_child",
+            name="Plan Child",
+            system_prompt="Return the delegated task.",
+            policy=ExecutionPolicy(max_steps=3),
+        ),
+    )
+    parent = await repository.save_agent(
+        "default",
+        AgentSpec(
+            id="agt_plan_parent",
+            name="Plan Parent",
+            system_prompt="Plan the requested work.",
+            tools=[ToolBinding(plugin_id="tool.echo", alias="echo")],
+            children=[ChildMount(alias="child", agent_id=child.id)],
+            policy=ExecutionPolicy(max_steps=3, max_depth=3),
+        ),
+    )
+
+    run = await manager.start(
+        "default",
+        RunRequest(
+            agent_id=parent.id,
+            input='tool:echo {"input":"must remain a plan"} delegate:child do not run',
+            execution_mode=ExecutionMode.PLAN,
+        ),
+    )
+    finished = await manager.wait("default", run.id)
+    events = await repository.list_events("default", run.id)
+
+    assert finished.status == RunStatus.SUCCEEDED
+    assert finished.metrics["execution_mode"] == "plan"
+    assert not any(event.type == EventType.TOOL_STARTED for event in events)
+    assert not any(event.type == EventType.DELEGATION_STARTED for event in events)
+    started = next(event for event in events if event.type == EventType.RUN_STARTED)
+    assert started.payload["execution_mode"] == "plan"
+    model_started = next(event for event in events if event.type == EventType.MODEL_STARTED)
+    assert model_started.payload["execution_mode"] == "plan"
+    assert any(
+        event.type == EventType.AGENT_PROGRESS
+        and event.payload.get("phase") == "plan"
+        and "不调用工具或子 Agent" in event.payload.get("message", "")
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_streaming_model_does_not_emit_deltas_when_tools_are_available(tmp_path):
+    repository, manager = await make_runtime(tmp_path, streaming=True)
+    agent = await repository.save_agent(
+        "default",
+        AgentSpec(
+            id="agt_streaming_tools",
+            name="Streaming Tool Agent",
+            system_prompt="Use tools when requested.",
+            tools=[ToolBinding(plugin_id="tool.echo", alias="echo")],
+            policy=ExecutionPolicy(max_steps=3),
+        ),
+    )
+
+    run = await manager.start(
+        "default",
+        RunRequest(agent_id=agent.id, input='tool:echo {"input":"safe"}'),
+    )
+    await manager.wait("default", run.id)
+    events = await repository.list_events("default", run.id)
+
+    assert all(event.type != EventType.MODEL_DELTA for event in events)
+    assert any(event.type == EventType.TOOL_STARTED for event in events)
 
 
 @pytest.mark.asyncio

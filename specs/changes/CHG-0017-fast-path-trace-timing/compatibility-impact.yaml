@@ -1,0 +1,17 @@
+change_id: CHG-0017
+status: implemented
+api:
+  additive:
+    - "模型、工具、委派和 Agent 完成/失败事件 payload 新增可选 duration_ms"
+    - "Run metrics 增加非敏感 fast_path 标识（仅在命中时）"
+  behavior_change:
+    - "声明 routing.fast_path=weather_missing_location 且地点缺失时跳过模型/工具/子 Agent"
+storage:
+  schema_change: false
+  additions:
+    - "duration_ms 复用既有 run_events payload 和 sequence"
+frontend:
+  additions:
+    - "Trace 阶段耗时分解和进行中计时"
+rollback:
+  note: "删除或清空 routing.fast_path 标签即可回到原有模型链路；新增 duration_ms 为可选字段"

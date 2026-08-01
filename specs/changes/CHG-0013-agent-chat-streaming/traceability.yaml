@@ -1,0 +1,51 @@
+change_id: CHG-0013
+status: proposed
+implementation_status: partial
+requirements:
+  CHAT-007:
+    contracts:
+      - requirements.md
+      - design.md
+    implementation:
+      - backend/src/uai_forge/ports.py
+      - backend/src/uai_forge/providers.py
+      - backend/src/uai_forge/runtime.py
+      - backend/src/uai_forge/models.py
+      - app/control-center.tsx
+    verification:
+      - backend/tests/test_providers.py
+      - backend/tests/test_runtime.py
+      - tests/rendered-html.test.mjs
+  CHAT-008:
+    contracts:
+      - requirements.md
+      - design.md#5-公开阶段安全替代思考展示
+    implementation:
+      - backend/src/uai_forge/models.py
+      - backend/src/uai_forge/runtime.py
+      - app/control-center.tsx
+    verification:
+      - backend/tests/test_runtime.py
+      - tests/rendered-html.test.mjs
+  CHAT-009:
+    contracts:
+      - requirements.md
+      - design.md#7-协作拓扑
+    implementation:
+      - app/control-center.tsx
+      - app/globals.css
+    verification:
+      - tests/rendered-html.test.mjs
+  CHAT-010:
+    contracts:
+      - requirements.md
+      - design.md#6-trace-关联与运行记录
+      - specs/current/foundation/contracts/run-event.schema.json
+    implementation:
+      - backend/src/uai_forge/models.py
+      - backend/src/uai_forge/run_manager.py
+      - backend/src/uai_forge/runtime.py
+      - app/control-center.tsx
+    verification:
+      - backend/tests/test_runtime.py
+      - tests/rendered-html.test.mjs

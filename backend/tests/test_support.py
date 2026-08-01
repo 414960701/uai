@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from typing import List
+from typing import AsyncIterator, List
 
 from uai_forge.models import (
     AgentInstance,
@@ -24,7 +24,7 @@ from uai_forge.models import (
     PluginManifest,
     ToolBinding,
 )
-from uai_forge.ports import ModelMessage, ModelOutput, ModelProvider, ModelRequest, TokenUsage, ToolCall
+from uai_forge.ports import ModelMessage, ModelOutput, ModelProvider, ModelRequest, ModelStreamChunk, TokenUsage, ToolCall
 from uai_forge.registry import PluginRegistry
 from uai_forge.storage import SQLiteRepository
 
@@ -44,6 +44,9 @@ TEST_PROVIDER_MANIFEST = PluginManifest(
 
 class DeterministicTestProvider(ModelProvider):
     manifest = TEST_PROVIDER_MANIFEST
+
+    def __init__(self, manifest: PluginManifest = TEST_PROVIDER_MANIFEST):
+        self.manifest = manifest
 
     @staticmethod
     def _estimate_tokens(messages: List[ModelMessage], output: str) -> TokenUsage:
@@ -118,27 +121,36 @@ class DeterministicTestProvider(ModelProvider):
             usage=self._estimate_tokens(request.messages, output),
         )
 
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamChunk]:
+        output = await self.complete(request)
+        midpoint = max(1, len(output.content) // 2)
+        yield ModelStreamChunk(text=output.content[:midpoint])
+        yield ModelStreamChunk(text=output.content[midpoint:], usage=output.usage)
+
 
 def register_test_provider(
     registry: PluginRegistry,
     provider_id: str = TEST_PROVIDER_ID,
+    streaming: bool = False,
 ) -> None:
     manifest = (
         TEST_PROVIDER_MANIFEST
         if provider_id == TEST_PROVIDER_ID
-    else TEST_PROVIDER_MANIFEST.model_copy(
+        else TEST_PROVIDER_MANIFEST.model_copy(
             update={
                 "id": provider_id,
                 "display_name": f"Deterministic test provider ({provider_id})",
             }
         )
     )
+    if streaming and "streaming" not in manifest.capabilities:
+        manifest = manifest.model_copy(update={"capabilities": [*manifest.capabilities, "streaming"]})
     key = (PluginKind.PROVIDER, provider_id)
     if key in registry._manifests:  # type: ignore[attr-defined]
         registry._manifests.pop(key)  # type: ignore[attr-defined]
         registry._config_validators.pop(key, None)  # type: ignore[attr-defined]
         registry._providers.pop(provider_id, None)  # type: ignore[attr-defined]
-    registry.register_provider(manifest, lambda binding: DeterministicTestProvider())
+    registry.register_provider(manifest, lambda binding, selected=manifest: DeterministicTestProvider(selected))
 
 
 async def seed_test_topology(repository: SQLiteRepository, tenant_id: str = "default") -> None:

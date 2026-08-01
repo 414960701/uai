@@ -93,8 +93,13 @@ class RunManager:
                 "root_revision": spec.revision,
                 "instance_id": instance.id if instance else None,
                 "environment": instance.environment if instance else None,
+                "thinking_mode": request.thinking_mode.value,
+                "execution_mode": request.execution_mode.value,
                 "effective_policy": spec.policy.model_dump(mode="json"),
             },
+        )
+        run = run.model_copy(
+            update={"metrics": {**run.metrics, "trace_id": f"trace_{run.id}"}}
         )
         await self.repository.create_run(run)
         task = asyncio.create_task(
@@ -128,9 +133,18 @@ class RunManager:
 
         async def execute() -> None:
             running = run.model_copy(
-                update={"status": RunStatus.RUNNING, "started_at": utc_now()}
+                update={
+                    "status": RunStatus.RUNNING,
+                    "started_at": utc_now(),
+                    "metrics": {
+                        **run.metrics,
+                        "run_span_id": f"span_{run.id}_run",
+                    },
+                }
             )
             await self.repository.update_run(running)
+            trace_id = str(running.metrics.get("trace_id") or f"trace_{run.id}")
+            run_span_id = str(running.metrics.get("run_span_id") or f"span_{run.id}_run")
             await self.events.publish(
                 run.tenant_id,
                 RunEvent(
@@ -142,7 +156,11 @@ class RunManager:
                         "instance_id": run.instance_id,
                         "environment": running.metrics.get("environment"),
                         "session_id": run.session_id,
+                        "thinking_mode": running.metrics.get("thinking_mode", "auto"),
+                        "execution_mode": running.metrics.get("execution_mode", "execute"),
                     },
+                    trace_id=trace_id,
+                    span_id=run_span_id,
                 ),
             )
             output, metrics = await asyncio.wait_for(
@@ -165,6 +183,8 @@ class RunManager:
                     type=EventType.RUN_COMPLETED,
                     agent_id=spec.id,
                     payload={"output": output, "metrics": metrics},
+                    trace_id=trace_id,
+                    span_id=run_span_id,
                 ),
             )
 
@@ -187,6 +207,8 @@ class RunManager:
                     type=EventType.RUN_CANCELLED,
                     agent_id=spec.id,
                     payload={"reason": "cancelled by caller"},
+                    trace_id=str((current or run).metrics.get("trace_id") or f"trace_{run.id}"),
+                    span_id=str((current or run).metrics.get("run_span_id") or f"span_{run.id}_run"),
                 ),
             )
         except Exception as exc:
@@ -206,6 +228,8 @@ class RunManager:
                     type=EventType.RUN_FAILED,
                     agent_id=spec.id,
                     payload={"error": str(exc), "error_type": type(exc).__name__},
+                    trace_id=str((current or run).metrics.get("trace_id") or f"trace_{run.id}"),
+                    span_id=str((current or run).metrics.get("run_span_id") or f"span_{run.id}_run"),
                 ),
             )
 

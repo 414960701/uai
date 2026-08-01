@@ -1,0 +1,23 @@
+change_id: CHG-0013
+status: proposed
+api:
+  additive:
+    - "RunEvent 新增 model.delta、agent.progress 类型和可选 trace/span 关联字段；现有事件和 Run API 字段保持兼容"
+  behavior_change:
+    - "声明 streaming 且无工具的 Provider 请求开始逐段发布文本事件"
+storage:
+  schema_change: false
+  additions:
+    - "model.delta 复用既有 run_events 表和 sequence"
+frontend:
+  additions:
+    - "聊天消息的增量正文投影"
+    - "安全公开阶段投影"
+    - "React Flow 协作拓扑"
+    - "全链路 Trace 运行记录"
+plugins:
+  manifest_change: true
+  additions:
+    - "Provider manifest capabilities 可声明 streaming"
+rollback:
+  note: "移除 streaming capability 后回到 complete 路径；新增事件字段为可选，无需数据库迁移"

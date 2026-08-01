@@ -17,20 +17,27 @@ import {
   Code2,
   Cpu,
   Database,
+  FileJson,
+  Filter,
   GitBranch,
   KeyRound,
   Layers3,
   LayoutDashboard,
   Link2,
   LoaderCircle,
+  Maximize2,
   Menu,
+  MessageSquare,
   Network,
   OctagonAlert,
+  PanelRightClose,
+  PanelRightOpen,
   Play,
   Plus,
   RefreshCw,
   RotateCcw,
   Search,
+  Send,
   Server,
   Settings,
   ShieldCheck,
@@ -42,7 +49,22 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Background,
+  Controls,
+  Handle,
+  MarkerType,
+  MiniMap,
+  Position,
+  ReactFlow,
+  useEdgesState,
+  useNodesState,
+  type Edge,
+  type Node,
+  type NodeProps,
+  type ReactFlowInstance,
+} from "@xyflow/react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ApiProblem,
   apiRequest,
@@ -65,6 +87,7 @@ import { markResourceError, type ResourceState } from "./control-center/resource
 
 type View =
   | "overview"
+  | "chat"
   | "agents"
   | "instances"
   | "topology"
@@ -190,6 +213,7 @@ type RunRecord = {
   output?: string;
   error?: string;
   created_at: string;
+  started_at?: string;
   finished_at?: string;
   metrics?: Record<string, unknown>;
 };
@@ -291,9 +315,82 @@ type ActivityItem = {
   icon: LucideIcon;
 };
 
+type ChatStreamState = {
+  runId: string;
+  events: RunEvent[];
+  output: string;
+  progress?: PublicProgress | null;
+  error: string;
+  lastSequence: number;
+  status: "idle" | "loading" | "live" | "reconnecting" | "degraded" | "complete";
+};
+
+type PublicProgress = {
+  phase: string;
+  status?: string;
+  message: string;
+  agentId: string;
+  depth: number;
+  timestamp: string;
+};
+
+type PublicReasoningStep = {
+  id: string;
+  title: string;
+  phase: string;
+  detail: string;
+  status: "active" | "complete" | "degraded" | "failed" | "cancelled";
+  sequence: number;
+  agentId: string;
+  depth: number;
+  timestamp: string;
+  eventType?: string;
+};
+
+type TraceFilter = "all" | "agents" | "models" | "tools" | "errors";
+type ThinkingMode = "off" | "auto" | "on";
+type ExecutionMode = "execute" | "plan";
+
+const THINKING_MODE_OPTIONS: Array<{ value: ThinkingMode; label: string; hint: string }> = [
+  { value: "auto", label: "自动", hint: "跟随当前模型" },
+  { value: "on", label: "开启", hint: "请求深度推理" },
+  { value: "off", label: "关闭", hint: "优先快速回答" },
+];
+
+const EXECUTION_MODE_OPTIONS: Array<{ value: ExecutionMode; label: string; hint: string }> = [
+  { value: "execute", label: "执行", hint: "运行工具与子 Agent" },
+  { value: "plan", label: "计划模式", hint: "只生成计划，不调用工具" },
+];
+
+function thinkingModeLabel(value: unknown): string {
+  return THINKING_MODE_OPTIONS.find((item) => item.value === value)?.label || "自动";
+}
+
+function thinkingModeHint(value: ThinkingMode): string {
+  return THINKING_MODE_OPTIONS.find((item) => item.value === value)?.hint || "跟随当前模型";
+}
+
+function executionModeLabel(value: unknown): string {
+  return EXECUTION_MODE_OPTIONS.find((item) => item.value === value)?.label || "执行";
+}
+
+function executionModeHint(value: ExecutionMode): string {
+  return EXECUTION_MODE_OPTIONS.find((item) => item.value === value)?.hint || "运行工具与子 Agent";
+}
+
+type AgentFlowNodeData = {
+  agent: AgentSpec;
+  mount?: ChildMount;
+  root?: boolean;
+  onSelect: (agent: AgentSpec) => void;
+};
+
+type AgentFlowNode = Node<AgentFlowNodeData, "agent-node">;
+
 
 const NAV_ITEMS: Array<{ id: View; label: string; icon: LucideIcon }> = [
   { id: "overview", label: "总览", icon: LayoutDashboard },
+  { id: "chat", label: "Agent 对话", icon: MessageSquare },
   { id: "agents", label: "Agent", icon: Bot },
   { id: "instances", label: "运行实例", icon: Server },
   { id: "topology", label: "协作拓扑", icon: Network },
@@ -324,6 +421,68 @@ const PLUGIN_KIND_LABELS: Record<string, string> = {
   middleware: "中间件",
   ui: "界面扩展",
 };
+
+const PLUGIN_LOCALIZED_COPY: Record<string, { name: string; description: string }> = {
+  openai_compatible: {
+    name: "OpenAI 兼容模型接口",
+    description: "连接 OpenAI 兼容的对话模型服务，支持模型目录与连接检查。",
+  },
+  anthropic_messages: {
+    name: "Claude 消息接口",
+    description: "使用 Anthropic Messages 协议连接 Claude 模型。",
+  },
+  "tool.calculator": {
+    name: "安全计算器",
+    description: "在受限表达式范围内执行算术计算，不使用不安全的动态执行。",
+  },
+  "tool.echo": {
+    name: "回声工具",
+    description: "返回结构化输入，适合验证工具调用和中间件链路。",
+  },
+  "tool.utc_now": {
+    name: "UTC 时间",
+    description: "返回当前 UTC 时间，适合验证时间和工具事件。",
+  },
+  "memory.in_process": {
+    name: "进程内记忆",
+    description: "用于本地开发和测试的有界短期会话记忆。",
+  },
+  "middleware.audit_tags": {
+    name: "审计标签",
+    description: "为模型和工具请求附加非敏感执行标签。",
+  },
+  "storage.sqlite": {
+    name: "SQLite 控制面存储",
+    description: "提供带版本历史和事件回放的单节点持久存储。",
+  },
+  "event_bus.in_process": {
+    name: "进程内事件总线",
+    description: "提供 SQLite 回放和按运行实时分发的事件能力。",
+  },
+  "scheduler.local": {
+    name: "本地调度器",
+    description: "本地 asyncio 调度能力占位扩展。",
+  },
+  "ui.control_center": {
+    name: "UAI Forge 控制中心",
+    description: "提供面向协议的配置、运行观测和扩展目录界面。",
+  },
+};
+
+function pluginPresentation(plugin: PluginManifest): { name: string; description: string } {
+  const localized = PLUGIN_LOCALIZED_COPY[plugin.id];
+  return localized || {
+    name: plugin.display_name || plugin.id,
+    description: plugin.description || "由扩展 manifest 提供的能力。",
+  };
+}
+
+function localizedPluginName(pluginId: string, plugins: PluginManifest[] = []): string {
+  const localized = PLUGIN_LOCALIZED_COPY[pluginId];
+  if (localized) return localized.name;
+  const manifest = plugins.find((plugin) => plugin.id === pluginId);
+  return manifest ? pluginPresentation(manifest).name : pluginId;
+}
 
 type ProviderOption = {
   id: string;
@@ -835,6 +994,69 @@ function statusLabel(status: string): string {
   return labels[status] || status;
 }
 
+function chatInlineNodes(value: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const tokenPattern = /(\*\*[^*\n]+\*\*|__[^_\n]+__|`[^`\n]+`)/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = tokenPattern.exec(value))) {
+    if (match.index > cursor) nodes.push(value.slice(cursor, match.index));
+    const token = match[0];
+    if (token.startsWith("`")) {
+      nodes.push(<code key={`inline-code-${match.index}`}>{token.slice(1, -1)}</code>);
+    } else {
+      nodes.push(<strong key={`inline-strong-${match.index}`}>{token.slice(2, -2)}</strong>);
+    }
+    cursor = tokenPattern.lastIndex;
+  }
+  if (cursor < value.length) nodes.push(value.slice(cursor));
+  return nodes;
+}
+
+function chatOutputBlock(value: string, index: number): ReactNode {
+  const lines = value.trim().split("\n");
+  const heading = lines[0].match(/^#{1,3}\s+(.+)$/);
+  if (heading && lines.length === 1) {
+    return <h4 className="chat-output-heading" key={`chat-heading-${index}`}>{chatInlineNodes(heading[1])}</h4>;
+  }
+
+  const isList = lines.length > 0 && lines.every((line) => /^\s*(?:[-*]|\d+[.)])\s+/.test(line));
+  if (isList) {
+    const ordered = /^\s*\d+[.)]\s+/.test(lines[0]);
+    const List = ordered ? "ol" : "ul";
+    return (
+      <List className="chat-output-list" key={`chat-list-${index}`}>
+        {lines.map((line, lineIndex) => (
+          <li key={`chat-list-item-${index}-${lineIndex}`}>
+            {chatInlineNodes(line.replace(/^\s*(?:[-*]|\d+[.)])\s+/, ""))}
+          </li>
+        ))}
+      </List>
+    );
+  }
+
+  return (
+    <p className="chat-output-paragraph" key={`chat-paragraph-${index}`}>
+      {lines.map((line, lineIndex) => (
+        <span key={`chat-line-${index}-${lineIndex}`}>
+          {chatInlineNodes(line)}
+          {lineIndex < lines.length - 1 ? <br /> : null}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+function ChatOutput({ value, streaming = false }: { value: string; streaming?: boolean }) {
+  if (!value) return null;
+  return (
+    <div className={`chat-output ${streaming ? "chat-stream-output" : ""}`}>
+      {value.split(/\n\s*\n/).map((block, index) => chatOutputBlock(block, index))}
+      {streaming ? <span className="stream-caret" aria-hidden="true" /> : null}
+    </div>
+  );
+}
+
 function agentInitials(name: string): string {
   return name.replace(/\s*Agent\s*/gi, "").slice(0, 2);
 }
@@ -861,23 +1083,26 @@ function parseJsonObject(value: string, label: string): Record<string, unknown> 
 
 function eventTitle(type: string): string {
   const labels: Record<string, string> = {
-    "run.started": "Run started",
-    "run.completed": "Run completed",
-    "run.failed": "Run failed",
-    "run.cancelled": "Run cancelled",
-    "agent.started": "Agent started",
-    "agent.completed": "Agent completed",
-    "agent.failed": "Agent failed",
-    "model.started": "Model started",
-    "model.completed": "Model completed",
-    "tool.started": "Tool started",
-    "tool.completed": "Tool completed",
-    "tool.failed": "Tool failed",
-    "delegation.started": "Delegation started",
-    "delegation.completed": "Delegation completed",
-    "delegation.failed": "Delegation failed",
-    "permission.required": "Permission required",
-    "budget.updated": "Budget updated",
+    "run.started": "运行已开始",
+    "run.completed": "运行已完成",
+    "run.failed": "运行失败",
+    "run.cancelled": "运行已取消",
+    "agent.started": "Agent 已启动",
+    "agent.completed": "Agent 已完成",
+    "agent.failed": "Agent 失败",
+    "agent.progress": "执行阶段更新",
+    "model.started": "模型调用开始",
+    "model.delta": "正文增量",
+    "model.completed": "模型调用完成",
+    "model.failed": "模型调用失败",
+    "tool.started": "工具调用开始",
+    "tool.completed": "工具调用完成",
+    "tool.failed": "工具调用失败",
+    "delegation.started": "子 Agent 已委派",
+    "delegation.completed": "子 Agent 已完成",
+    "delegation.failed": "子 Agent 失败",
+    "permission.required": "需要工具授权",
+    "budget.updated": "预算已更新",
   };
   return labels[type] || type;
 }
@@ -885,31 +1110,583 @@ function eventTitle(type: string): string {
 function eventTone(type: string): "green" | "blue" | "violet" | "amber" {
   if (type.includes("failed") || type.includes("permission")) return "amber";
   if (type.startsWith("delegation")) return "violet";
+  if (type === "agent.progress" || type === "model.delta") return "blue";
   if (type.startsWith("model") || type.startsWith("budget")) return "blue";
   return "green";
 }
 
-function eventDetail(event: RunEvent): string {
+const PUBLIC_PROGRESS_COPY: Record<string, string> = {
+  preparing: "正在准备上下文",
+  preflight: "正在做输入预检",
+  analyzing: "正在分析任务",
+  tool_call: "正在调用工具",
+  delegating: "正在委派子 Agent",
+  composing: "正在整理回复",
+  clarifying: "正在补充必要信息",
+  completed: "已完成",
+};
+
+function publicProgressFromEvent(event: RunEvent): PublicProgress | null {
+  if (event.type !== "agent.progress") return null;
+  const payload = event.payload || {};
+  const phase = typeof payload.phase === "string" ? payload.phase : "working";
+  const message =
+    typeof payload.message === "string"
+      ? payload.message
+      : PUBLIC_PROGRESS_COPY[phase] || "执行阶段更新";
+  return {
+    phase,
+    status: typeof payload.status === "string" ? payload.status : undefined,
+    message,
+    agentId: event.agent_id,
+    depth: event.depth,
+    timestamp: event.timestamp,
+  };
+}
+
+function streamProjectionFromEvents(events: RunEvent[]): {
+  output: string;
+  progress: PublicProgress | null;
+} {
+  let output = "";
+  let progress: PublicProgress | null = null;
+  for (const event of events) {
+    if (event.type === "model.delta" && typeof event.payload.text === "string") {
+      output += event.payload.text;
+    }
+    const nextProgress = publicProgressFromEvent(event);
+    if (nextProgress) progress = nextProgress;
+  }
+  return { output, progress };
+}
+
+function traceCategory(type: string): TraceFilter {
+  if (type.includes("failed") || type.includes("permission")) return "errors";
+  if (type.startsWith("tool")) return "tools";
+  if (type.startsWith("model")) return "models";
+  if (type.startsWith("agent") || type.startsWith("delegation")) return "agents";
+  return "all";
+}
+
+function traceDuration(events: RunEvent[], run: RunRecord, nowMs = Date.now()): string {
+  const start = run.started_at || events[0]?.timestamp || run.created_at;
+  const isActive = run.status === "queued" || run.status === "running";
+  const end = run.finished_at || (isActive ? new Date(nowMs).toISOString() : events[events.length - 1]?.timestamp);
+  if (!start || !end) return "运行中";
+  const milliseconds = Math.max(0, new Date(end).getTime() - new Date(start).getTime());
+  if (milliseconds < 1_000) return `${milliseconds} ms`;
+  return `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 2 : 1)} s`;
+}
+
+function durationLabel(milliseconds: number | null | undefined): string {
+  if (milliseconds === null || milliseconds === undefined || !Number.isFinite(milliseconds)) return "—";
+  if (milliseconds < 1_000) return `${Math.max(0, Math.round(milliseconds))} ms`;
+  return `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 1 : 0)} 秒`;
+}
+
+function durationValue(event: RunEvent): number | null {
+  const value = event.payload?.duration_ms;
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : null;
+}
+
+function operationKey(event: RunEvent): string {
+  const span = event.span_id || `${event.agent_id}:${event.depth}`;
+  if (event.type.startsWith("model.")) return `${span}:model:${String(event.payload?.step || "")}`;
+  if (event.type.startsWith("tool.")) return `${span}:tool:${String(event.payload?.call_id || event.payload?.tool || "")}`;
+  if (event.type.startsWith("delegation.")) return `${span}:delegation:${String(event.payload?.child_agent_id || event.payload?.alias || "")}`;
+  return `${span}:agent`;
+}
+
+function completionTypeFor(event: RunEvent): string | null {
+  if (event.type === "model.started") return "model.completed";
+  if (event.type === "tool.started") return "tool.completed";
+  if (event.type === "delegation.started") return "delegation.completed";
+  if (event.type === "agent.started") return "agent.completed";
+  return null;
+}
+
+function failureTypeFor(event: RunEvent): string | null {
+  if (event.type === "model.started") return "model.failed";
+  if (event.type === "tool.started") return "tool.failed";
+  if (event.type === "delegation.started") return "delegation.failed";
+  if (event.type === "agent.started") return "agent.failed";
+  return null;
+}
+
+function traceEventDuration(event: RunEvent, events: RunEvent[], nowMs = Date.now()): number | null {
+  const direct = durationValue(event);
+  if (direct !== null) return direct;
+  if (event.type === "agent.progress") {
+    const nextStage = events.find((candidate) => (
+      candidate.sequence > event.sequence
+      && candidate.type === "agent.progress"
+      && candidate.agent_id === event.agent_id
+      && candidate.depth === event.depth
+    ));
+    const terminal = events.find((candidate) => (
+      candidate.sequence > event.sequence
+      && ["agent.completed", "agent.failed"].includes(candidate.type)
+      && candidate.agent_id === event.agent_id
+      && candidate.depth === event.depth
+    ));
+    const endEvent = [nextStage, terminal]
+      .filter((candidate): candidate is RunEvent => Boolean(candidate))
+      .sort((left, right) => left.sequence - right.sequence)[0];
+    if (endEvent) {
+      return Math.max(0, new Date(endEvent.timestamp).getTime() - new Date(event.timestamp).getTime());
+    }
+    const runTerminal = events.find((candidate) => (
+      candidate.sequence > event.sequence
+      && ["run.completed", "run.failed", "run.cancelled"].includes(candidate.type)
+    ));
+    return Math.max(
+      0,
+      new Date(runTerminal?.timestamp || new Date(nowMs).toISOString()).getTime()
+        - new Date(event.timestamp).getTime(),
+    );
+  }
+  const completionType = completionTypeFor(event);
+  const failureType = failureTypeFor(event);
+  if (!completionType && !failureType) return null;
+  const key = operationKey(event);
+  const terminal = events.find((candidate) => (
+    candidate.sequence > event.sequence
+    && (candidate.type === completionType || candidate.type === failureType)
+    && operationKey(candidate) === key
+  ));
+  if (terminal) {
+    return durationValue(terminal)
+      ?? Math.max(0, new Date(terminal.timestamp).getTime() - new Date(event.timestamp).getTime());
+  }
+  return Math.max(0, nowMs - new Date(event.timestamp).getTime());
+}
+
+function traceStageLabel(event: RunEvent, plugins: PluginManifest[], agents: AgentSpec[]): string {
+  if (event.type === "model.started") {
+    return `模型 · ${previewValue(event.payload?.model, "当前模型")}`;
+  }
+  if (event.type === "tool.started") {
+    const tool = String(event.payload?.tool || "tool");
+    return `工具 · ${localizedPluginName(tool, plugins)}`;
+  }
+  if (event.type === "delegation.started") {
+    return `委派 · ${previewValue(event.payload?.alias, "子 Agent")}`;
+  }
+  const agent = agents.find((item) => item.id === event.agent_id);
+  return `Agent · ${agent?.name || event.agent_id}`;
+}
+
+function traceStageSummaries(
+  events: RunEvent[],
+  plugins: PluginManifest[],
+  agents: AgentSpec[],
+  nowMs = Date.now(),
+): Array<{ id: string; label: string; detail: string; duration: number; active: boolean; depth: number }> {
+  return events
+    .filter((event) => ["agent.started", "model.started", "tool.started", "delegation.started"].includes(event.type))
+    .map((event) => {
+      const duration = traceEventDuration(event, events, nowMs) ?? 0;
+      const terminal = events.some((candidate) => (
+        candidate.sequence > event.sequence
+        && [completionTypeFor(event), failureTypeFor(event)].includes(candidate.type)
+        && operationKey(candidate) === operationKey(event)
+      ));
+      return {
+        id: `${event.run_id}-${event.sequence}`,
+        label: traceStageLabel(event, plugins, agents),
+        detail: `${event.type} · Agent ${event.agent_id}`,
+        duration,
+        active: !terminal,
+        depth: event.depth,
+      };
+    });
+}
+
+function tracePayloadForDisplay(event: RunEvent): string {
+  const scrub = (value: unknown, key = ""): unknown => {
+    if (key === "text") return "[正文增量已投影到聊天]";
+    if (/secret|token|authorization|api[_-]?key|credential|prompt|headers?/i.test(key)) {
+      return "[已隐藏]";
+    }
+    if (Array.isArray(value)) return value.slice(0, 30).map((item) => scrub(item));
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([nestedKey, nested]) => [
+          nestedKey,
+          scrub(nested, nestedKey),
+        ]),
+      );
+    }
+    return value;
+  };
+  return JSON.stringify(scrub(event.payload), null, 2);
+}
+
+function traceEventsForFilter(events: RunEvent[], filter: TraceFilter): RunEvent[] {
+  return events.filter((event) => {
+    if (event.type === "model.delta") return false;
+    return filter === "all" || traceCategory(event.type) === filter;
+  });
+}
+
+function eventDetail(
+  event: RunEvent,
+  plugins: PluginManifest[] = [],
+  agents: AgentSpec[] = [],
+): string {
   const payload = event.payload || {};
   if (event.type === "run.started") {
-    return `root rev ${previewValue(payload.agent_revision, "—")} · ${previewValue(payload.session_id, event.agent_id)}`;
+    const mode = payload.execution_mode === "plan" ? " · 计划模式" : " · 执行模式";
+    return `根版本 ${previewValue(payload.agent_revision, "—")} · 会话 ${previewValue(payload.session_id, event.agent_id)}${mode}`;
   }
   if (event.type === "model.started") {
-    return `${previewValue(payload.provider, "provider")} / ${previewValue(payload.model, "model")} · step ${previewValue(payload.step, "—")}`;
+    const thinking = payload.thinking_mode && payload.thinking_mode !== "auto"
+      ? ` · 思考${thinkingModeLabel(payload.thinking_mode)}${payload.thinking_resolution === "unsupported" ? "（兼容降级）" : ""}`
+      : "";
+    const execution = payload.execution_mode === "plan" ? " · 计划模式" : "";
+    return `${previewValue(payload.provider, "provider")} / ${previewValue(payload.model, "model")} · 步骤 ${previewValue(payload.step, "—")}${thinking}${execution}`;
+  }
+  if (event.type === "model.delta") {
+    return "正文增量已并入聊天消息；Trace 默认按片段计数，不展开逐 token 文本";
+  }
+  if (event.type === "agent.progress") {
+    return `${previewValue(payload.message, "执行阶段更新")} · ${previewValue(payload.phase, "working")}`;
   }
   if (event.type === "model.completed") {
-    return `${previewValue(payload.provider, "provider")} / ${previewValue(payload.model, "model")} · usage ${previewValue(payload.usage, "未报告")}`;
+    return `${previewValue(payload.provider, "provider")} / ${previewValue(payload.model, "model")} · 用量 ${previewValue(payload.usage, "未报告")}`;
+  }
+  if (event.type === "model.failed") {
+    return `${previewValue(payload.provider, "provider")} / ${previewValue(payload.model, "model")} · ${previewValue(payload.error_type, "模型调用失败")}`;
   }
   if (event.type.startsWith("delegation.")) {
-    return `${previewValue(payload.alias, "child")} · ${previewValue(payload.child_agent_id, event.agent_id)} · depth ${event.depth + 1}`;
+    return `${previewValue(payload.alias, "子 Agent")} · ${previewValue(payload.child_agent_id, event.agent_id)} · 深度 ${event.depth + 1}`;
   }
   if (event.type.startsWith("tool.")) {
-    return `${previewValue(payload.tool, "tool")} · ${previewValue(payload.result ?? payload.error, "调用已记录")}`;
+    const toolId = String(payload.tool || "tool");
+    const owner = agents.find((agent) => agent.id === event.agent_id);
+    const binding = owner?.tools.find((tool) => (
+      tool.alias === toolId
+      || tool.plugin_id === toolId
+      || tool.plugin_id.replace(/^[^.]+\./, "") === toolId
+      || tool.plugin_id.replace(/[.-]/g, "_") === toolId
+    ));
+    const pluginId = binding?.plugin_id
+      || plugins.find((plugin) => (
+        plugin.id === toolId
+        || plugin.id.replace(/^[^.]+\./, "") === toolId
+        || plugin.id.replace(/[.-]/g, "_") === toolId
+      ))?.id
+      || toolId;
+    return `${localizedPluginName(pluginId, plugins)} · ${pluginId} · ${previewValue(payload.result ?? payload.error, "调用已记录")}`;
   }
   return previewValue(
     payload.output ?? payload.error ?? payload.metrics ?? payload.name ?? payload,
-    `${event.agent_id} · depth ${event.depth}`,
+    `${event.agent_id} · 深度 ${event.depth}`,
   );
+}
+
+const PUBLIC_REASONING_TITLES: Record<string, string> = {
+  preparing: "准备上下文",
+  preflight: "输入预检",
+  analyzing: "分析任务",
+  thinking_mode: "应用思考模式",
+  plan: "整理执行计划",
+  tool_call: "决定调用工具",
+  delegating: "决定委派子 Agent",
+  clarifying: "补充必要信息",
+  composing: "整理公开回答",
+  completed: "完成任务",
+};
+
+function publicReasoningStatus(value: unknown): PublicReasoningStep["status"] {
+  if (value === "complete") return "complete";
+  if (value === "degraded") return "degraded";
+  if (value === "failed") return "failed";
+  return "active";
+}
+
+function publicReasoningStepFromEvent(
+  event: RunEvent,
+  plugins: PluginManifest[] = [],
+  agents: AgentSpec[] = [],
+): PublicReasoningStep | null {
+  const payload = event.payload || {};
+  if (event.type === "agent.progress") {
+    const phase = typeof payload.phase === "string" ? payload.phase : "working";
+    return {
+      id: `${event.run_id}-${event.sequence}`,
+      title: PUBLIC_REASONING_TITLES[phase] || "公开执行阶段",
+      phase,
+      detail: typeof payload.message === "string" ? payload.message : "执行阶段更新",
+      status: publicReasoningStatus(payload.status),
+    sequence: event.sequence,
+    agentId: event.agent_id,
+    depth: event.depth,
+    timestamp: event.timestamp,
+    eventType: event.type,
+  };
+  }
+  if (event.type === "model.started") {
+    const thinking = payload.thinking_mode && payload.thinking_mode !== "auto"
+      ? ` · 思考${thinkingModeLabel(payload.thinking_mode)}${payload.thinking_resolution === "unsupported" ? "（兼容降级）" : ""}`
+      : "";
+    const execution = payload.execution_mode === "plan" ? " · 计划模式" : "";
+    return {
+      id: `${event.run_id}-${event.sequence}`,
+      title: "模型分析",
+      phase: "model",
+      detail: `${previewValue(payload.provider, "模型服务")} / ${previewValue(payload.model, "当前模型")} · 第 ${previewValue(payload.step, "—")} 步${thinking}${execution}`,
+      status: "active",
+      sequence: event.sequence,
+      agentId: event.agent_id,
+      depth: event.depth,
+      timestamp: event.timestamp,
+      eventType: event.type,
+    };
+  }
+  if (event.type === "model.completed") {
+    return {
+      id: `${event.run_id}-${event.sequence}`,
+      title: "模型完成分析",
+      phase: "model",
+      detail: eventDetail(event, plugins, agents),
+      status: "complete",
+      sequence: event.sequence,
+      agentId: event.agent_id,
+      depth: event.depth,
+      timestamp: event.timestamp,
+      eventType: event.type,
+    };
+  }
+  if (event.type === "model.failed") {
+    return {
+      id: `${event.run_id}-${event.sequence}`,
+      title: "模型调用失败",
+      phase: "model",
+      detail: eventDetail(event, plugins, agents),
+      status: "failed",
+      sequence: event.sequence,
+      agentId: event.agent_id,
+      depth: event.depth,
+      timestamp: event.timestamp,
+      eventType: event.type,
+    };
+  }
+  if (event.type.startsWith("tool.") || event.type.startsWith("delegation.")) {
+    const failed = event.type.endsWith(".failed");
+    const completed = event.type.endsWith(".completed");
+    return {
+      id: `${event.run_id}-${event.sequence}`,
+      title: event.type.startsWith("tool") ? "工具决策" : "子 Agent 决策",
+      phase: event.type.startsWith("tool") ? "tool" : "delegation",
+      detail: eventDetail(event, plugins, agents),
+      status: failed ? "failed" : completed ? "complete" : "active",
+      sequence: event.sequence,
+      agentId: event.agent_id,
+      depth: event.depth,
+      timestamp: event.timestamp,
+      eventType: event.type,
+    };
+  }
+  return null;
+}
+
+function publicOperationTerminal(events: RunEvent[], start: RunEvent): RunEvent | undefined {
+  const completionType = completionTypeFor(start);
+  const failureType = failureTypeFor(start);
+  if (!completionType && !failureType) return undefined;
+  return events.find((candidate) => (
+    candidate.sequence > start.sequence
+    && (candidate.type === completionType || candidate.type === failureType)
+    && operationKey(candidate) === operationKey(start)
+  ));
+}
+
+function publicOperationTerminalDetail(
+  start: RunEvent,
+  terminal: RunEvent,
+  plugins: PluginManifest[],
+  agents: AgentSpec[],
+): string {
+  const payload = terminal.payload || {};
+  if (start.type === "model.started") {
+    const provider = previewValue(start.payload?.provider, "模型服务");
+    const model = previewValue(start.payload?.model, "当前模型");
+    return terminal.type === "model.failed"
+      ? `${provider} / ${model} · ${previewValue(payload.error_type, "模型调用失败")}`
+      : `${provider} / ${model} · 分析完成 · 用量 ${previewValue(payload.usage, "未报告")}`;
+  }
+  if (start.type === "tool.started") {
+    const toolId = String(start.payload?.tool || "tool");
+    const owner = agents.find((agent) => agent.id === start.agent_id);
+    const binding = owner?.tools.find((tool) => (
+      tool.alias === toolId
+      || tool.plugin_id === toolId
+      || tool.plugin_id.replace(/^[^.]+\./, "") === toolId
+      || tool.plugin_id.replace(/[.-]/g, "_") === toolId
+    ));
+    const pluginId = binding?.plugin_id
+      || plugins.find((plugin) => (
+        plugin.id === toolId
+        || plugin.id.replace(/^[^.]+\./, "") === toolId
+        || plugin.id.replace(/[.-]/g, "_") === toolId
+      ))?.id
+      || toolId;
+    return terminal.type === "tool.failed"
+      ? `${localizedPluginName(pluginId, plugins)} · 调用失败`
+      : `${localizedPluginName(pluginId, plugins)} · 调用完成`;
+  }
+  const alias = previewValue(start.payload?.alias, "子 Agent");
+  const child = previewValue(start.payload?.child_agent_id, "子 Agent");
+  return terminal.type === "delegation.failed"
+    ? `${alias} · ${child} · 子 Agent 失败`
+    : `${alias} · ${child} · 子 Agent 已完成`;
+}
+
+function publicReasoningSteps(
+  events: RunEvent[],
+  plugins: PluginManifest[] = [],
+  agents: AgentSpec[] = [],
+): PublicReasoningStep[] {
+  const operationStarts = new Set(["agent.started", "model.started", "tool.started", "delegation.started"]);
+  const operationTerminals = new Set([
+    "agent.completed",
+    "agent.failed",
+    "model.completed",
+    "model.failed",
+    "tool.completed",
+    "tool.failed",
+    "delegation.completed",
+    "delegation.failed",
+  ]);
+  const steps: PublicReasoningStep[] = [];
+  for (const event of events) {
+    if (operationTerminals.has(event.type)) {
+      const hasStart = events.some((candidate) => (
+        operationStarts.has(candidate.type)
+        && candidate.sequence < event.sequence
+        && operationKey(candidate) === operationKey(event)
+      ));
+      if (hasStart) continue;
+    }
+    const step = publicReasoningStepFromEvent(event, plugins, agents);
+    if (!step) continue;
+    if (operationStarts.has(event.type) && event.type !== "agent.started") {
+      const terminal = publicOperationTerminal(events, event);
+      if (terminal) {
+        step.status = terminal.type.endsWith(".failed") ? "failed" : "complete";
+        step.detail = publicOperationTerminalDetail(event, terminal, plugins, agents);
+      }
+    }
+    steps.push(step);
+  }
+
+  const runFailed = events.some((event) => event.type === "run.failed");
+  const runCancelled = events.some((event) => event.type === "run.cancelled");
+  return steps.map((step, index) => {
+    if (step.status !== "active") return step;
+    const laterProgress = steps.slice(index + 1).find((candidate) => (
+      candidate.eventType === "agent.progress"
+      && candidate.agentId === step.agentId
+      && candidate.depth === step.depth
+    ));
+    if (step.eventType === "agent.progress" && laterProgress) {
+      return {
+        ...step,
+        status: laterProgress.status === "failed"
+          ? "failed"
+          : laterProgress.status === "degraded"
+            ? "degraded"
+        : "complete",
+      };
+    }
+    if (runCancelled) return { ...step, status: "cancelled" };
+    if (runFailed) return { ...step, status: "failed" };
+    const hasTerminal = events.some((event) => (
+      event.sequence > step.sequence
+      && ["run.completed", "run.failed", "run.cancelled"].includes(event.type)
+    ));
+    return hasTerminal ? { ...step, status: "complete" } : step;
+  });
+}
+
+function publicReasoningStatusLabel(status: PublicReasoningStep["status"]): string {
+  if (status === "active") return "进行中";
+  if (status === "failed") return "失败";
+  if (status === "cancelled") return "已取消";
+  if (status === "degraded") return "降级";
+  return "已完成";
+}
+
+function PublicReasoningPanel({
+  events,
+  plugins,
+  agents,
+  compact = false,
+}: {
+  events: RunEvent[];
+  plugins?: PluginManifest[];
+  agents?: AgentSpec[];
+  compact?: boolean;
+}) {
+  const steps = publicReasoningSteps(events, plugins, agents);
+  const hasTerminal = events.some((event) => ["run.completed", "run.failed", "run.cancelled"].includes(event.type));
+  const [nowMs, setNowMs] = useState(0);
+  useEffect(() => {
+    if (hasTerminal || !events.length) return undefined;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [events.length, hasTerminal]);
+  const currentStep = [...steps].reverse().find((step) => step.status === "active");
+  const hasFailure = steps.some((step) => step.status === "failed") || events.some((event) => event.type === "run.failed");
+  const hasCancelled = steps.some((step) => step.status === "cancelled") || events.some((event) => event.type === "run.cancelled");
+  const summary = currentStep
+    ? `${currentStep.title} · 进行中`
+    : hasFailure
+      ? "已失败"
+      : hasCancelled
+        ? "已取消"
+      : steps.length
+        ? `已完成 · ${steps.length} 个阶段`
+        : "等待阶段";
+  return (
+    <details className={`public-reasoning ${compact ? "compact" : ""}`} open={!compact || Boolean(currentStep)}>
+      <summary className="public-reasoning-head">
+        <span className="public-reasoning-title"><span className="public-reasoning-spark"><Sparkles size={13} /></span><span><strong>思考过程</strong><small>公开阶段 · 公开摘要 · 不显示隐藏思维原文</small></span></span>
+        <span className={`public-reasoning-count ${currentStep ? "active" : hasFailure ? "failed" : "complete"}`}>{summary}</span>
+        <ChevronDown className="public-reasoning-chevron" size={14} aria-hidden="true" />
+      </summary>
+      {steps.length ? (
+        <ol className="public-reasoning-list">
+          {steps.map((step) => (
+            <li className={`public-reasoning-step ${step.status}`} key={step.id}>
+              <span className="public-reasoning-marker">{step.status === "complete" ? <Check size={11} /> : step.status === "failed" ? <X size={11} /> : step.status === "cancelled" ? <Clock3 size={11} /> : step.status === "active" ? <LoaderCircle size={11} className="spinning" /> : step.sequence}</span>
+              <span className="public-reasoning-copy"><span className="public-reasoning-step-head"><strong>{step.title}</strong><span className={`public-reasoning-step-state ${step.status}`}>{publicReasoningStatusLabel(step.status)}</span></span><small>{step.detail}</small><em>{durationLabel(traceEventDuration(events.find((event) => event.sequence === step.sequence) || events[0], events, nowMs))}{compact ? "" : ` · Agent ${step.agentId} · 深度 ${step.depth} · ${formatTraceClock(step.timestamp)}`}</em></span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <div className="public-reasoning-empty">等待模型发出公开阶段事件…</div>
+      )}
+      <p className="public-reasoning-note">这里展示可审阅的执行摘要、决策阶段和安全统计，不是模型的原始 reasoning 内容。</p>
+    </details>
+  );
+}
+
+function runProjectionFromTerminalEvent(event: RunEvent): Partial<RunRecord> | null {
+  const status = terminalStatusForEvent(event);
+  if (!status || status === "running") return null;
+  const patch: Partial<RunRecord> = { status };
+  if (event.type === "run.completed" && typeof event.payload.output === "string") {
+    patch.output = event.payload.output;
+    if (event.payload.metrics && typeof event.payload.metrics === "object") {
+      patch.metrics = event.payload.metrics as Record<string, unknown>;
+    }
+  }
+  if (event.type === "run.failed" && typeof event.payload.error === "string") {
+    patch.error = event.payload.error;
+  }
+  return patch;
 }
 
 function getDefaultApiBase(): string {
@@ -921,15 +1698,10 @@ function getDefaultApiBase(): string {
 }
 
 export function ControlCenter() {
-  const [view, setView] = useState<View>(() => {
-    if (typeof window === "undefined") return "overview";
-    const candidate = new URLSearchParams(window.location.search).get("view") as View | null;
-    return candidate && NAV_ITEMS.some((item) => item.id === candidate) ? candidate : "overview";
-  });
-  const [routeResourceId, setRouteResourceId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return new URLSearchParams(window.location.search).get("resource");
-  });
+  // Keep the server and first client render identical. The browser URL is
+  // applied after mount so direct deep links do not cause a hydration diff.
+  const [view, setView] = useState<View>("overview");
+  const [routeResourceId, setRouteResourceId] = useState<string | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
   const mobileMenuRef = useRef<HTMLButtonElement>(null);
   const mobileNavCloseRef = useRef<HTMLButtonElement>(null);
@@ -952,6 +1724,7 @@ export function ControlCenter() {
   const [newInstanceOpen, setNewInstanceOpen] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
   const [runBusy, setRunBusy] = useState(false);
+  const [chatBusy, setChatBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [agentQuery, setAgentQuery] = useState("");
@@ -995,6 +1768,7 @@ export function ControlCenter() {
       setView(candidate && NAV_ITEMS.some((item) => item.id === candidate) ? candidate : "overview");
       setRouteResourceId(params.get("resource"));
     }
+    onPopState();
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
@@ -1373,27 +2147,65 @@ export function ControlCenter() {
     setNotice(`${instance.name} 已${nextStatus === "ready" ? "启用" : "停止"}`);
   }
 
-  async function launchRun(targetId: string, targetKind: "agent" | "instance", input: string) {
+  async function submitRun(
+    targetId: string,
+    targetKind: "agent" | "instance",
+    input: string,
+    sessionId?: string,
+    thinkingMode: ThinkingMode = "auto",
+    executionMode: ExecutionMode = "execute",
+  ): Promise<RunRecord> {
+    if (mode !== "live") {
+      throw new Error("请先连接 Python 控制面；运行记录必须来自数据库");
+    }
+    const created = await apiRequest<RunRecord>(`${apiBase}/runs`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        [targetKind === "instance" ? "instance_id" : "agent_id"]: targetId,
+        input,
+        thinking_mode: thinkingMode,
+        execution_mode: executionMode,
+        ...(sessionId ? { session_id: sessionId } : {}),
+      }),
+    });
+    setRuns((current) => [created, ...current]);
+    return created;
+  }
+
+  async function launchRun(
+    targetId: string,
+    targetKind: "agent" | "instance",
+    input: string,
+    thinkingMode: ThinkingMode,
+    executionMode: ExecutionMode,
+  ) {
     setRunBusy(true);
     try {
-      if (mode === "live") {
-        const created = await apiRequest<RunRecord>(`${apiBase}/runs`, {
-          method: "POST",
-          headers: headers(),
-          body: JSON.stringify({
-            [targetKind === "instance" ? "instance_id" : "agent_id"]: targetId,
-            input,
-          }),
-        });
-        setRuns((current) => [created, ...current]);
-        setNotice("运行已提交，事件流正在记录");
-        setRunOpen(false);
-        navigate("runs", created.id);
-      } else {
-        throw new Error("请先连接 Python 控制面；运行记录必须来自数据库");
-      }
+      const created = await submitRun(targetId, targetKind, input, undefined, thinkingMode, executionMode);
+      setNotice("运行已提交，事件流正在记录");
+      setRunOpen(false);
+      navigate("runs", created.id);
     } finally {
       setRunBusy(false);
+    }
+  }
+
+  async function sendChatRun(
+    agentId: string,
+    input: string,
+    sessionId: string,
+    thinkingMode: ThinkingMode,
+    executionMode: ExecutionMode,
+  ) {
+    setChatBusy(true);
+    try {
+      const created = await submitRun(agentId, "agent", input, sessionId, thinkingMode, executionMode);
+      setNotice("消息已发送，Agent 正在运行");
+      navigate("chat", created.id);
+      return created;
+    } finally {
+      setChatBusy(false);
     }
   }
 
@@ -1437,7 +2249,7 @@ export function ControlCenter() {
 
         <nav className="main-nav" aria-label="主导航">
           <span className="nav-section-label">工作台</span>
-          {NAV_ITEMS.slice(0, 4).map((item) => (
+          {NAV_ITEMS.slice(0, 6).map((item) => (
             <button
               key={item.id}
               className={`nav-item ${view === item.id ? "active" : ""}`}
@@ -1454,7 +2266,7 @@ export function ControlCenter() {
             </button>
           ))}
           <span className="nav-section-label nav-section-spaced">系统</span>
-          {NAV_ITEMS.slice(4).map((item) => (
+          {NAV_ITEMS.slice(6).map((item) => (
             <button
               key={item.id}
               className={`nav-item ${view === item.id ? "active" : ""}`}
@@ -1586,6 +2398,24 @@ export function ControlCenter() {
             />
           )}
 
+          {view === "chat" && (
+            <ChatWorkspace
+              runs={runs}
+              agents={agents}
+              modelConfigs={modelConfigs}
+              plugins={plugins}
+              resourceId={routeResourceId}
+              apiBase={apiBase}
+              mode={mode}
+              busy={chatBusy}
+              requestHeaders={headers}
+              onSend={sendChatRun}
+              onCancel={(id) => void cancelRun(id)}
+              onRunProjection={projectRun}
+              onResourceSelect={(resourceId) => navigate("chat", resourceId)}
+            />
+          )}
+
           {view === "agents" && (
             <AgentsView
               agents={filteredAgents}
@@ -1622,6 +2452,7 @@ export function ControlCenter() {
               key={`${apiBase}:${routeResourceId || "latest"}`}
               runs={runs}
               agents={agents}
+              plugins={plugins}
               onRun={openRun}
               onCancel={(id) => void cancelRun(id)}
               apiBase={apiBase}
@@ -2256,6 +3087,33 @@ function InstancesView({
   );
 }
 
+function AgentFlowNode({ data }: NodeProps<AgentFlowNode>) {
+  const { agent, mount, root, onSelect } = data;
+  return (
+    <div className={`flow-agent-node ${root ? "flow-agent-node-root" : ""}`}>
+      {!root && <Handle type="target" position={Position.Top} className="flow-handle" />}
+      <button type="button" onClick={() => onSelect(agent)}>
+        <div className="flow-agent-node-head">
+          <span className={`node-avatar ${root ? "lime" : "blue"}`}>{agentInitials(agent.name)}</span>
+          <span className={`status-badge ${root ? "ready" : agent.enabled ? "partial" : "stopped"}`}>
+            {root ? "根 Agent" : mount?.alias || "子 Agent"}
+          </span>
+        </div>
+        <strong>{agent.name}</strong>
+        <small>{root ? `模型配置 · ${agent.model.model_config_id}` : mount?.description || agent.description}</small>
+        <div className="flow-agent-node-meta">
+          <span><TerminalSquare size={12} /> {agent.tools.length}</span>
+          <span><Link2 size={12} /> {agent.children.length}</span>
+          {!root && <span><Cpu size={12} /> ×{mount?.max_concurrency || 1}</span>}
+          <span>rev {mount?.revision || agent.revision}</span>
+        </div>
+      </button>
+      {root && <Handle type="source" position={Position.Bottom} className="flow-handle" />}
+      {!root && <Handle type="source" position={Position.Bottom} className="flow-handle flow-handle-source" />}
+    </div>
+  );
+}
+
 function TopologyView({
   rootAgent,
   mountedAgents,
@@ -2267,73 +3125,109 @@ function TopologyView({
   agents: AgentSpec[];
   onSelect: (agent: AgentSpec) => void;
 }) {
+  const initialNodes = useMemo<AgentFlowNode[]>(() => {
+    if (!rootAgent) return [];
+    const root: AgentFlowNode = {
+      id: rootAgent.id,
+      type: "agent-node",
+      position: { x: 330, y: 44 },
+      data: { agent: rootAgent, root: true, onSelect },
+    };
+    const children = mountedAgents.map((agent, index) => ({
+      id: agent.id,
+      type: "agent-node" as const,
+      position: { x: 80 + (index % 3) * 300, y: 265 + Math.floor(index / 3) * 190 },
+      data: {
+        agent,
+        mount: rootAgent.children.find((item) => item.agent_id === agent.id),
+        onSelect,
+      },
+    }));
+    return [root, ...children];
+  }, [mountedAgents, onSelect, rootAgent]);
+
+  const initialEdges = useMemo<Edge[]>(() => {
+    if (!rootAgent) return [];
+    return mountedAgents.map((agent) => {
+      const mount = rootAgent.children.find((item) => item.agent_id === agent.id);
+      return {
+        id: `${rootAgent.id}-${agent.id}-${mount?.alias || "mount"}`,
+        source: rootAgent.id,
+        target: agent.id,
+        type: "smoothstep",
+        animated: false,
+        markerEnd: { type: MarkerType.ArrowClosed, color: "#3f7562" },
+        label: mount?.alias || "delegate",
+        data: { alias: mount?.alias, revision: mount?.revision || agent.revision },
+      };
+    });
+  }, [mountedAgents, rootAgent]);
+
+  const [nodes, setNodes, onNodesChange] = useNodesState<AgentFlowNode>(initialNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [flow, setFlow] = useState<ReactFlowInstance<AgentFlowNode, Edge> | null>(null);
+  const nodeTypes = useMemo(() => ({ "agent-node": AgentFlowNode }), []);
+
+  useEffect(() => setNodes(initialNodes), [initialNodes, setNodes]);
+  useEffect(() => setEdges(initialEdges), [initialEdges, setEdges]);
+
+  const resetLayout = () => {
+    setNodes(initialNodes);
+    setEdges(initialEdges);
+    window.setTimeout(() => flow?.fitView({ padding: 0.2, duration: 320 }), 0);
+  };
+
   return (
     <div className="view-stack">
       <div className="view-heading">
         <div>
           <span className="section-kicker">DELEGATION GRAPH</span>
           <h2>协作拓扑</h2>
-          <p>发布前执行缺失节点、版本钉住和挂载环检测。</p>
+          <p>发布前执行缺失节点、版本钉住和挂载环检测；画布只读，不会改写 Agent 配置。</p>
         </div>
-        <div className="topology-health">
-          <CheckCircle2 size={17} />
-          拓扑有效 · 无循环
-        </div>
+        <div className="topology-health"><CheckCircle2 size={17} /> 拓扑有效 · {nodes.length} 个节点 · {edges.length} 条边</div>
       </div>
       <div className="topology-workbench">
         <div className="canvas-toolbar">
-          <div><Network size={16} /> Research team / current</div>
-          <div>
-            <button aria-label="适应画布"><Square size={15} /></button>
-            <button aria-label="重置视图"><RotateCcw size={15} /></button>
+          <div><Network size={16} /> Agent graph / current revision</div>
+          <div className="flow-toolbar-actions">
+            <span className="flow-toolbar-hint">拖拽节点 · 滚轮缩放 · 小地图定位</span>
+            <button aria-label="适应画布" title="适应画布" onClick={() => flow?.fitView({ padding: 0.2, duration: 320 })}><Maximize2 size={15} /></button>
+            <button aria-label="重置布局" title="重置布局" onClick={resetLayout}><RotateCcw size={15} /></button>
           </div>
         </div>
-        <div className="topology-canvas">
-          <div className="canvas-grid" />
-          {rootAgent && (
-            <button className="canvas-node canvas-root" onClick={() => onSelect(rootAgent)}>
-              <div className="canvas-node-header">
-                <span className="node-avatar lime">{agentInitials(rootAgent.name)}</span>
-                <span className="status-badge ready">Leader</span>
-              </div>
-              <strong>{rootAgent.name}</strong>
-              <small>模型配置 · {rootAgent.model.model_config_id}</small>
-              <div className="canvas-node-stats">
-                <span><TerminalSquare size={13} /> {rootAgent.tools.length}</span>
-                <span><Link2 size={13} /> {rootAgent.children.length}</span>
-                <span>rev {rootAgent.revision}</span>
-              </div>
-              <span className="port port-bottom" />
-            </button>
+        <div className="topology-flow-canvas" aria-label="Agent React Flow 协作拓扑">
+          {rootAgent ? (
+            <ReactFlow<AgentFlowNode, Edge>
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onInit={setFlow}
+              fitView
+              fitViewOptions={{ padding: 0.2 }}
+              minZoom={0.35}
+              maxZoom={1.6}
+              nodesConnectable={false}
+              edgesFocusable
+              nodesFocusable
+              defaultEdgeOptions={{ type: "smoothstep" }}
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background color="#dbe5e0" gap={20} size={1} />
+              <Controls showInteractive={false} position="bottom-left" />
+              <MiniMap
+                pannable
+                zoomable
+                nodeColor={(node) => node.id === rootAgent.id ? "#3f7562" : "#5278a3"}
+                maskColor="rgba(245,247,246,0.76)"
+                position="bottom-right"
+              />
+            </ReactFlow>
+          ) : (
+            <div className="topology-flow-empty"><Network size={28} /><strong>暂无可绘制的 Agent 图</strong><span>先创建并启用一个 Agent，拓扑会从真实挂载关系生成。</span></div>
           )}
-          <div className="canvas-connectors">
-            <span className="connector-main" />
-            <span className="connector-left" />
-            <span className="connector-right" />
-          </div>
-          <div className="canvas-children">
-            {mountedAgents.map((agent, index) => {
-              const mount = rootAgent?.children.find((item) => item.agent_id === agent.id);
-              return (
-                <button className="canvas-node" key={agent.id} onClick={() => onSelect(agent)}>
-                  <span className="port port-top" />
-                  <div className="canvas-node-header">
-                    <span className={`node-avatar ${index % 2 ? "violet" : "blue"}`}>
-                      {agentInitials(agent.name)}
-                    </span>
-                    <span className="mount-alias">{mount?.alias}</span>
-                  </div>
-                  <strong>{agent.name}</strong>
-                  <small>{mount?.description || agent.description}</small>
-                  <div className="canvas-node-stats">
-                    <span><TerminalSquare size={13} /> {agent.tools.length}</span>
-                    <span><Cpu size={13} /> ×{mount?.max_concurrency || 1}</span>
-                    <span>rev {agent.revision}</span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
         </div>
       </div>
       <div className="topology-summary-grid">
@@ -2360,6 +3254,7 @@ function TopologyView({
                   <Plus size={16} />
                 </button>
               ))}
+            {!agents.some((agent) => agent.id !== rootAgent?.id && !mountedAgents.some((item) => item.id === agent.id)) && <div className="empty-inline">所有 Agent 已在当前图中或暂无可用节点</div>}
           </div>
         </div>
       </div>
@@ -2367,9 +3262,682 @@ function TopologyView({
   );
 }
 
+function createChatSessionId(): string {
+  return `ses_chat_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function modelLabelForAgent(agent: AgentSpec, modelConfigs: ModelConfig[]): string {
+  const config = modelConfigs.find((item) => item.id === agent.model.model_config_id);
+  return config ? `${config.name} · ${config.model}` : `模型配置 · ${agent.model.model_config_id}`;
+}
+
+function chatSessionTitle(runs: RunRecord[]): string {
+  const input = runs[runs.length - 1]?.input?.trim() || "新对话";
+  return input.length > 28 ? `${input.slice(0, 28)}…` : input;
+}
+
+function chatStreamLabel(status: ChatStreamState["status"]): string {
+  const labels: Record<ChatStreamState["status"], string> = {
+    idle: "等待运行",
+    loading: "读取事件",
+    live: "实时事件",
+    reconnecting: "正在重连",
+    degraded: "降级校准",
+    complete: "事件已完成",
+  };
+  return labels[status];
+}
+
+function ChatWorkspace({
+  runs,
+  agents,
+  modelConfigs,
+  plugins,
+  resourceId,
+  apiBase,
+  mode,
+  busy,
+  requestHeaders,
+  onSend,
+  onCancel,
+  onRunProjection,
+  onResourceSelect,
+}: {
+  runs: RunRecord[];
+  agents: AgentSpec[];
+  modelConfigs: ModelConfig[];
+  plugins: PluginManifest[];
+  resourceId?: string | null;
+  apiBase: string;
+  mode: ConnectionMode;
+  busy: boolean;
+  requestHeaders: () => HeadersInit;
+  onSend: (agentId: string, input: string, sessionId: string, thinkingMode: ThinkingMode, executionMode: ExecutionMode) => Promise<RunRecord>;
+  onCancel: (id: string) => void;
+  onRunProjection: (id: string, patch: Partial<RunRecord>) => void;
+  onResourceSelect: (resourceId: string | null) => void;
+}) {
+  const enabledAgents = agents.filter((agent) => agent.enabled);
+  const fallbackAgent = enabledAgents[0] || agents[0];
+  const routedRun = resourceId ? runs.find((run) => run.id === resourceId) : undefined;
+  const [sessionId, setSessionId] = useState(
+    () => routedRun?.session_id || runs[0]?.session_id || createChatSessionId(),
+  );
+  const [selectedAgentId, setSelectedAgentId] = useState(
+    () => routedRun?.agent_id || fallbackAgent?.id || "",
+  );
+  const [draftSession, setDraftSession] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [detailsOpen, setDetailsOpen] = useState(true);
+  const [localError, setLocalError] = useState("");
+  const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("auto");
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("execute");
+  const [stream, setStream] = useState<ChatStreamState>({
+    runId: "",
+    events: [],
+    output: "",
+    progress: null,
+    error: "",
+    lastSequence: 0,
+    status: "idle",
+  });
+
+  const sessionGroups = useMemo(() => {
+    const grouped = new Map<string, RunRecord[]>();
+    for (const run of runs) {
+      const current = grouped.get(run.session_id) || [];
+      current.push(run);
+      grouped.set(run.session_id, current);
+    }
+    return Array.from(grouped.entries())
+      .map(([id, items]) => ({
+        id,
+        runs: items.sort((left, right) => right.created_at.localeCompare(left.created_at)),
+      }))
+      .sort((left, right) => right.runs[0].created_at.localeCompare(left.runs[0].created_at));
+  }, [runs]);
+
+  useEffect(() => {
+    if (!routedRun) return;
+    setDraftSession(false);
+    setSessionId(routedRun.session_id);
+    setSelectedAgentId(routedRun.agent_id);
+  }, [routedRun]);
+
+  useEffect(() => {
+    if (resourceId || draftSession || !sessionGroups.length) return;
+    if (sessionGroups.some((group) => group.id === sessionId)) return;
+    const latest = sessionGroups[0];
+    setSessionId(latest.id);
+    setSelectedAgentId(latest.runs[0]?.agent_id || fallbackAgent?.id || "");
+    onResourceSelect(latest.runs[0]?.id || null);
+  }, [draftSession, fallbackAgent?.id, onResourceSelect, resourceId, sessionGroups, sessionId]);
+
+  useEffect(() => {
+    if (selectedAgentId || !fallbackAgent) return;
+    setSelectedAgentId(fallbackAgent.id);
+  }, [fallbackAgent, selectedAgentId]);
+
+  const activeSessionRuns = useMemo(
+    () => runs
+      .filter((run) => run.session_id === sessionId)
+      .sort((left, right) => left.created_at.localeCompare(right.created_at)),
+    [runs, sessionId],
+  );
+  const selectedRun = routedRun || activeSessionRuns[activeSessionRuns.length - 1] || null;
+  const selectedRunId = selectedRun?.id || "";
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) || fallbackAgent;
+  const streamEvents = stream.runId === selectedRunId ? stream.events : [];
+  const streamOutput = stream.runId === selectedRunId ? stream.output : "";
+  const streamProgress = stream.runId === selectedRunId ? stream.progress : null;
+  const activeRun = activeSessionRuns.some((run) => run.status === "running" || run.status === "queued");
+  const [chatNowMs, setChatNowMs] = useState(0);
+
+  const selectedRunStatus = selectedRun?.status;
+  useEffect(() => {
+    if (!selectedRunStatus || (selectedRunStatus !== "running" && selectedRunStatus !== "queued")) return undefined;
+    const timer = window.setInterval(() => setChatNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [selectedRunId, selectedRunStatus]);
+
+  useEffect(() => {
+    const saved = selectedRun?.metrics?.thinking_mode;
+    if (saved === "off" || saved === "auto" || saved === "on") {
+      setThinkingMode(saved);
+    }
+    const savedExecution = selectedRun?.metrics?.execution_mode;
+    if (savedExecution === "execute" || savedExecution === "plan") {
+      setExecutionMode(savedExecution);
+    }
+  }, [selectedRun?.id, selectedRun?.metrics?.execution_mode, selectedRun?.metrics?.thinking_mode]);
+
+  useEffect(() => {
+    if (!selectedRunId || mode !== "live") {
+      setStream({ runId: selectedRunId, events: [], output: "", progress: null, error: "", lastSequence: 0, status: "idle" });
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    let active = true;
+    let cursor = 0;
+    let terminal = false;
+    const timers = new Set<number>();
+    const wait = (milliseconds: number) => new Promise<void>((resolve) => {
+      const timer = window.setTimeout(() => {
+        timers.delete(timer);
+        resolve();
+      }, milliseconds);
+      timers.add(timer);
+    });
+
+    const applyEvents = (incoming: RunEvent[]) => {
+      if (!active || !incoming.length) return;
+      cursor = Math.max(cursor, ...incoming.map((event) => event.sequence));
+      const terminalEvent = incoming.find(
+        (event) => Boolean(terminalStatusForEvent(event)) && event.type !== "run.started",
+      );
+      if (terminalEvent) {
+        terminal = true;
+        const projection = runProjectionFromTerminalEvent(terminalEvent);
+        if (projection) onRunProjection(selectedRunId, projection);
+      }
+      setStream((current) => {
+        const events = mergeRunEvents(current.runId === selectedRunId ? current.events : [], incoming);
+        const projection = streamProjectionFromEvents(events);
+        return {
+          runId: selectedRunId,
+          events,
+          output: projection.output,
+          progress: projection.progress,
+          error: "",
+          lastSequence: cursor,
+          status: terminal ? "complete" : "live",
+        };
+      });
+    };
+
+    const loadHistory = async () => {
+      setStream((current) => ({
+        runId: selectedRunId,
+        events: current.runId === selectedRunId ? current.events : [],
+        output: current.runId === selectedRunId ? current.output : "",
+        progress: current.runId === selectedRunId ? current.progress : null,
+        error: "",
+        lastSequence: current.runId === selectedRunId ? current.lastSequence : 0,
+        status: "loading",
+      }));
+      try {
+        const history = await apiRequest<RunEvent[]>(
+          `${apiBase}/runs/${selectedRunId}/events/history?after=0`,
+          { headers: requestHeaders(), signal: controller.signal },
+        );
+        applyEvents(history);
+        const run = await apiRequest<RunRecord>(`${apiBase}/runs/${selectedRunId}`, {
+          headers: requestHeaders(),
+          signal: controller.signal,
+        });
+        onRunProjection(selectedRunId, {
+          status: run.status,
+          output: run.output,
+          error: run.error,
+          finished_at: run.finished_at,
+          metrics: run.metrics,
+        });
+        if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") {
+          terminal = true;
+          setStream((current) => ({ ...current, status: "complete" }));
+        } else if (!history.length) {
+          setStream((current) => ({ ...current, status: "live" }));
+        }
+      } catch (error) {
+        if (active && !(error instanceof DOMException && error.name === "AbortError")) {
+          setStream((current) => ({
+            ...current,
+            runId: selectedRunId,
+            status: "reconnecting",
+            error: problemMessage(error, "事件历史暂不可用，正在尝试实时连接"),
+          }));
+        }
+      }
+    };
+
+    const pollUntilTerminal = async () => {
+      setStream((current) => ({
+        ...current,
+        runId: selectedRunId,
+        status: "degraded",
+        error: "实时事件暂不可用，正在进行有限校准",
+      }));
+      for (let attempt = 0; active && attempt < 12 && !terminal; attempt += 1) {
+        try {
+          const run = await apiRequest<RunRecord>(`${apiBase}/runs/${selectedRunId}`, {
+            headers: requestHeaders(),
+            signal: controller.signal,
+          });
+          onRunProjection(selectedRunId, {
+            status: run.status,
+            output: run.output,
+            error: run.error,
+            finished_at: run.finished_at,
+            metrics: run.metrics,
+          });
+          const history = await apiRequest<RunEvent[]>(
+            `${apiBase}/runs/${selectedRunId}/events/history?after=${cursor}`,
+            { headers: requestHeaders(), signal: controller.signal },
+          );
+          applyEvents(history);
+          if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") {
+            terminal = true;
+            setStream((current) => ({ ...current, status: "complete", error: "" }));
+            return;
+          }
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+          if (active) setStream((current) => ({ ...current, error: problemMessage(error, "运行状态暂不可用") }));
+        }
+        if (active && !terminal) await wait(2_500);
+      }
+    };
+
+    const connect = async () => {
+      await loadHistory();
+      if (!active || terminal) return;
+      let attempts = 0;
+      while (active && !terminal && attempts < 3) {
+        try {
+          setStream((current) => ({ ...current, runId: selectedRunId, status: attempts ? "reconnecting" : "live" }));
+          await consumeEventStream<RunEvent>(
+            `${apiBase}/runs/${selectedRunId}/events?after=${cursor}`,
+            { headers: requestHeaders(), signal: controller.signal },
+            ({ data }) => {
+              if (data.run_id === selectedRunId) applyEvents([data]);
+            },
+          );
+          if (!terminal) throw new Error("事件流已断开");
+        } catch (error) {
+          if (!active || (error instanceof DOMException && error.name === "AbortError")) return;
+          attempts += 1;
+          setStream((current) => ({
+            ...current,
+            runId: selectedRunId,
+            status: attempts >= 3 ? "degraded" : "reconnecting",
+            error: problemMessage(error, "实时事件暂时中断"),
+          }));
+          if (attempts < 3) await wait(Math.min(4_000, attempts * 1_000));
+        }
+      }
+      if (active && !terminal) await pollUntilTerminal();
+    };
+
+    void connect();
+    return () => {
+      active = false;
+      controller.abort();
+      for (const timer of timers) window.clearTimeout(timer);
+    };
+  }, [apiBase, mode, onRunProjection, requestHeaders, selectedRunId]);
+
+  function startNewChat() {
+    setDraftSession(true);
+    setSessionId(createChatSessionId());
+    setSelectedAgentId(fallbackAgent?.id || "");
+    setDraft("");
+    setLocalError("");
+    setThinkingMode("auto");
+    setExecutionMode("execute");
+    onResourceSelect(null);
+  }
+
+  function selectSession(id: string, sessionRuns: RunRecord[]) {
+    setDraftSession(false);
+    const latest = sessionRuns[0];
+    setSessionId(id);
+    setSelectedAgentId(latest?.agent_id || fallbackAgent?.id || "");
+    setLocalError("");
+    onResourceSelect(latest?.id || null);
+  }
+
+  async function sendMessage(event: FormEvent) {
+    event.preventDefault();
+    const input = draft.trim();
+    if (!input || busy || activeRun) return;
+    if (!selectedAgent) {
+      setLocalError("请先选择一个可运行的 Agent");
+      return;
+    }
+    setLocalError("");
+    try {
+      await onSend(selectedAgent.id, input, sessionId, thinkingMode, executionMode);
+      setDraft("");
+    } catch (error) {
+      setLocalError(problemMessage(error, "消息发送失败，请检查 Agent readiness"));
+    }
+  }
+
+  async function retrySelected() {
+    if (!selectedRun || busy || !selectedAgent) return;
+    setLocalError("");
+    try {
+      await onSend(selectedRun.agent_id || selectedAgent.id, selectedRun.input, sessionId, thinkingMode, executionMode);
+    } catch (error) {
+      setLocalError(problemMessage(error, "重试失败，请稍后再试"));
+    }
+  }
+
+  return (
+    <div className="chat-view-stack">
+      <div className="view-heading chat-view-heading">
+        <div>
+          <span className="section-kicker">AGENT WORKSPACE</span>
+          <h2>Agent 对话</h2>
+          <p>围绕同一个会话连续提问；过程区显示公开执行阶段与全链路 Trace，模型隐藏链式思维不展示。</p>
+        </div>
+        <div className="chat-heading-status" role="status" aria-live="polite">
+          <span className={`status-dot ${mode}`} />
+          {mode === "live" ? "控制面实时连接" : "请先连接控制面"}
+        </div>
+      </div>
+
+      <div className={`chat-workspace ${detailsOpen ? "details-visible" : "details-collapsed"}`}>
+        <aside className="chat-sidebar" aria-label="会话侧栏">
+          <div className="chat-sidebar-head">
+            <div><strong>对话</strong><span>{sessionGroups.length} 个会话</span></div>
+            <button className="icon-button" onClick={startNewChat} aria-label="新建对话" title="新建对话"><Plus size={17} /></button>
+          </div>
+          <button className="chat-new-button" onClick={startNewChat}>
+            <Plus size={16} />
+            新建对话
+          </button>
+          <div className="chat-session-list">
+            {sessionGroups.length ? sessionGroups.map((group) => {
+              const latest = group.runs[0];
+              const agent = agents.find((item) => item.id === latest.agent_id);
+              return (
+                <button
+                  className={`chat-session-row ${group.id === sessionId ? "active" : ""}`}
+                  key={group.id}
+                  onClick={() => selectSession(group.id, group.runs)}
+                >
+                  <span className={`chat-session-dot ${latest.status}`} />
+                  <span><strong>{chatSessionTitle(group.runs)}</strong><small>{agent?.name || latest.agent_id} · {formatTime(latest.created_at)}</small></span>
+                  <span className="chat-session-count">{group.runs.length}</span>
+                </button>
+              );
+            }) : (
+              <div className="chat-session-empty"><MessageSquare size={19} /><span>还没有对话<br />从新建对话开始</span></div>
+            )}
+          </div>
+          <div className="chat-sidebar-agent">
+            <label htmlFor="chat-agent-select">当前 Agent</label>
+            <select id="chat-agent-select" value={selectedAgentId} onChange={(event) => setSelectedAgentId(event.target.value)} disabled={!enabledAgents.length}>
+              {!enabledAgents.length && <option value="">暂无可运行 Agent</option>}
+              {enabledAgents.map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>)}
+            </select>
+            {selectedAgent && <small>{modelLabelForAgent(selectedAgent, modelConfigs)}</small>}
+          </div>
+        </aside>
+
+        <section className="chat-main panel" aria-label="Agent 消息">
+          <header className="chat-main-head">
+            <div className="chat-agent-identity">
+              <span className="chat-agent-avatar"><Bot size={18} /></span>
+              <span><strong>{selectedAgent?.name || "选择 Agent"}</strong><small>{selectedAgent ? modelLabelForAgent(selectedAgent, modelConfigs) : "连接控制面后选择一个可运行 Agent"}</small></span>
+            </div>
+            <button className="button button-secondary chat-details-toggle" onClick={() => setDetailsOpen((current) => !current)} aria-expanded={detailsOpen}>
+              {detailsOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
+              {detailsOpen ? "收起详情" : "运行详情"}
+            </button>
+          </header>
+
+          <div className="chat-thread" aria-live="polite">
+            {activeSessionRuns.length ? activeSessionRuns.map((run) => {
+              const agent = agents.find((item) => item.id === run.agent_id);
+              const isSelected = run.id === selectedRunId;
+              return (
+                <div className="chat-turn" key={run.id}>
+                  <div className="chat-message user-message">
+                    <div className="chat-message-bubble"><p>{run.input}</p><small>{formatTime(run.created_at)}</small></div>
+                    <span className="chat-user-avatar">你</span>
+                  </div>
+                  <div className={`chat-message assistant-message ${isSelected ? "selected" : ""}`}>
+                    <span className="chat-agent-avatar"><Bot size={17} /></span>
+                    <div className="chat-message-bubble">
+                      <div className="chat-message-meta"><strong>{agent?.name || run.agent_id}</strong><span className={`chat-message-status ${run.status}`}><span className="chat-message-status-dot" />{statusLabel(run.status)}</span><small>{formatTime(run.created_at)}</small></div>
+                      {run.status === "succeeded" && <ChatOutput value={run.output || (isSelected ? streamOutput : "") || "Agent 没有返回文本结果。"} />}
+                      {(run.status === "running" || run.status === "queued") && <>
+                        {(isSelected && streamOutput) ? <ChatOutput value={streamOutput} streaming /> : null}
+                        <div className="chat-running" role="status" aria-live="polite"><span className="status-dot running" />{isSelected && streamProgress ? streamProgress.message : "Agent 正在处理这条消息…"}{isSelected && streamProgress?.phase ? <small>{streamProgress.phase}</small> : null}</div>
+                      </>}
+                      {run.status === "failed" && <div className="chat-error"><OctagonAlert size={16} /><span>{run.error || "运行失败，未返回详细原因。"}</span></div>}
+                      {run.status === "cancelled" && <p className="chat-muted">这次运行已取消，可以保留原消息并重新尝试。</p>}
+                      {isSelected && streamEvents.length > 0 && <PublicReasoningPanel events={streamEvents} plugins={plugins} agents={agents} compact />}
+                      <div className="chat-message-foot"><code>{run.id}</code><button onClick={() => { onResourceSelect(run.id); setDetailsOpen(true); }}>查看运行详情 <ChevronRight size={13} /></button>{run.status === "failed" && <button onClick={() => void retrySelected()}><RotateCcw size={13} /> 重试</button>}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }) : (
+              <div className="chat-welcome">
+                <span className="chat-welcome-icon"><Sparkles size={24} /></span>
+                <h3>开始和 Agent 对话</h3>
+                <p>选择一个 Agent，描述目标或问题。每次发送都会生成真实 Run，并在右侧保留模型与工具事件。</p>
+                {!selectedAgent && <button className="button button-secondary" onClick={() => setLocalError("请先在左侧选择可运行的 Agent")}>选择 Agent</button>}
+              </div>
+            )}
+          </div>
+
+          <form className="chat-composer" onSubmit={sendMessage}>
+            <textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
+              placeholder={selectedAgent ? `给 ${selectedAgent.name} 发送消息…` : "请先选择 Agent"}
+              aria-label="输入消息"
+              rows={2}
+              disabled={busy || activeRun || mode !== "live" || !selectedAgent}
+            />
+            <div className="chat-composer-options">
+              <label className="thinking-mode-picker">
+                <Sparkles size={14} />
+                <span>思考模式</span>
+                <select
+                  aria-label="思考模式"
+                  value={thinkingMode}
+                  onChange={(event) => setThinkingMode(event.target.value as ThinkingMode)}
+                  disabled={busy || activeRun || mode !== "live" || !selectedAgent}
+                >
+                  {THINKING_MODE_OPTIONS.map((option) => (
+                    <option value={option.value} key={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <small>{thinkingModeHint(thinkingMode)} · 不展示原始思考内容</small>
+              </label>
+              <label className="execution-mode-picker">
+                <Workflow size={14} />
+                <span>运行方式</span>
+                <select
+                  aria-label="运行方式"
+                  value={executionMode}
+                  onChange={(event) => setExecutionMode(event.target.value as ExecutionMode)}
+                  disabled={busy || activeRun || mode !== "live" || !selectedAgent}
+                >
+                  {EXECUTION_MODE_OPTIONS.map((option) => (
+                    <option value={option.value} key={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <small>{executionModeHint(executionMode)}{executionMode === "plan" ? " · 不执行外部副作用" : ""}</small>
+              </label>
+              <span className="thinking-mode-note">仅影响下一次 Run</span>
+            </div>
+            <div className="chat-composer-foot"><span>Enter 发送 · Shift + Enter 换行 · 会话 ID 仅用于 Run 聚合</span><button className="button button-primary" type="submit" disabled={busy || activeRun || !draft.trim() || mode !== "live" || !selectedAgent}><Send size={15} />{busy ? "发送中…" : activeRun ? "运行中…" : "发送"}</button></div>
+            {(localError || stream.error) && <div className="form-error chat-form-error" role="alert"><OctagonAlert size={15} /><span>{localError || stream.error}</span></div>}
+          </form>
+        </section>
+
+        <aside className="chat-inspector panel" aria-label="运行详情">
+          <div className="chat-inspector-head"><div><span className="section-kicker">RUN INSPECTOR</span><h3>运行详情</h3></div><button className="icon-button" onClick={() => setDetailsOpen(false)} aria-label="收起运行详情"><PanelRightClose size={17} /></button></div>
+          {selectedRun ? (
+            <div className="chat-inspector-body">
+              <div className="chat-run-summary"><span className={`run-status-icon ${selectedRun.status}`}>{selectedRun.status === "running" ? <LoaderCircle size={15} className="spinning" /> : selectedRun.status === "succeeded" ? <Check size={15} /> : selectedRun.status === "failed" ? <X size={15} /> : <Clock3 size={15} />}</span><span><strong>{statusLabel(selectedRun.status)}</strong><small>{chatStreamLabel(stream.runId === selectedRunId ? stream.status : "idle")} · {streamEvents.length} 条事件 · {traceDuration(streamEvents, selectedRun, chatNowMs)}</small></span></div>
+              <div className="chat-run-code"><span>Run ID</span><code>{selectedRun.id}</code></div>
+              <div className="chat-run-code"><span>Session ID</span><code>{selectedRun.session_id}</code></div>
+              <div className="chat-run-code"><span>Trace ID</span><code>{String(selectedRun.metrics?.trace_id || streamEvents.find((event) => event.trace_id)?.trace_id || "历史事件未携带")}</code></div>
+              <div className="chat-run-code"><span>思考模式</span><code>{thinkingModeLabel(selectedRun.metrics?.thinking_mode || thinkingMode)}</code></div>
+              <div className="chat-run-code"><span>运行方式</span><code>{executionModeLabel(selectedRun.metrics?.execution_mode || executionMode)}</code></div>
+              {((selectedRun.metrics?.execution_mode || executionMode) === "plan") && <div className="chat-plan-notice"><Workflow size={15} /><span>计划模式只生成可审阅计划，不调用工具或子 Agent。</span></div>}
+              <PublicReasoningPanel events={streamEvents} plugins={plugins} agents={agents} />
+              {streamProgress && (selectedRun.status === "running" || selectedRun.status === "queued") && <div className="chat-progress-card"><span className="status-dot running" /><div><strong>{streamProgress.message}</strong><small>{streamProgress.phase} · Agent {streamProgress.agentId}</small></div></div>}
+              <div className="chat-inspector-actions">{selectedRun.status === "running" && <button className="button button-danger" onClick={() => onCancel(selectedRun.id)}><Square size={13} fill="currentColor" /> 取消运行</button>}{selectedRun.status === "failed" && <button className="button button-secondary" onClick={() => void retrySelected()}><RotateCcw size={13} /> 重试</button>}</div>
+              <div className="chat-event-list">
+                <div className="chat-event-list-head"><strong>事件时间线</strong><span>seq {stream.runId === selectedRunId ? stream.lastSequence : 0}</span></div>
+                {streamEvents.filter((event) => event.type !== "model.delta").map((event) => (
+                  <details className="chat-event" key={`${event.run_id}-${event.sequence}`} open={event.type.includes("failed") || event.type === "permission.required"}>
+                    <summary><span className={`timeline-dot ${eventTone(event.type)}`} /><span><strong>{eventTitle(event.type)}</strong><small>{event.type}</small></span><code>#{event.sequence}</code></summary>
+                    <div className="chat-event-body"><p>{eventDetail(event, plugins, agents)}</p><small>耗时 {durationLabel(traceEventDuration(event, streamEvents, chatNowMs))} · Agent {event.agent_id} · 深度 {event.depth} · span {event.span_id || "—"}</small></div>
+                  </details>
+                ))}
+                {!streamEvents.length && <div className="empty-inline">{stream.status === "loading" ? "正在读取持久事件…" : "该运行尚未写入事件"}</div>}
+              </div>
+            </div>
+          ) : (
+            <div className="chat-inspector-empty"><Activity size={22} /><strong>选择一条运行</strong><span>发送消息后，这里会显示模型、工具和终态事件。</span></div>
+          )}
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function TracePanel({
+  run,
+  events,
+  agents,
+  plugins,
+  sourceLabel,
+  error,
+}: {
+  run: RunRecord;
+  events: RunEvent[];
+  agents: AgentSpec[];
+  plugins: PluginManifest[];
+  sourceLabel: string;
+  error?: string;
+}) {
+  const [filter, setFilter] = useState<TraceFilter>("all");
+  const [nowMs, setNowMs] = useState(0);
+  useEffect(() => {
+    if (run.status !== "queued" && run.status !== "running") return undefined;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [run.status]);
+  const visibleEvents = traceEventsForFilter(events, filter);
+  const modelCalls = events.filter((event) => event.type === "model.started").length;
+  const toolCalls = events.filter((event) => event.type === "tool.started").length;
+  const delegations = events.filter((event) => event.type === "delegation.started").length;
+  const progressCount = events.filter((event) => event.type === "agent.progress").length;
+  const deltaCount = events.filter((event) => event.type === "model.delta").length;
+  const agentCount = new Set(events.map((event) => event.agent_id)).size;
+  const tokenEvent = [...events].reverse().find((event) => event.type === "budget.updated");
+  const tokenPayload = tokenEvent?.payload || {};
+  const tokenValue = Number(tokenPayload.tokens || run.metrics?.tokens || 0);
+  const traceId = String(run.metrics?.trace_id || events.find((event) => event.trace_id)?.trace_id || "历史事件未携带");
+  const stages = traceStageSummaries(events, plugins, agents, nowMs);
+  const maxStageDuration = Math.max(1, ...stages.map((stage) => stage.duration));
+  const activeStage = [...stages].reverse().find((stage) => stage.active);
+  const filterLabels: Array<{ id: TraceFilter; label: string }> = [
+    { id: "all", label: "全部" },
+    { id: "agents", label: "Agent / 委派" },
+    { id: "models", label: "模型" },
+    { id: "tools", label: "工具" },
+    { id: "errors", label: "错误" },
+  ];
+
+  return (
+    <section className="trace-overview" aria-label="Run 全链路 Trace">
+      <div className="trace-overview-head">
+        <div className="trace-overview-title"><FileJson size={15} /><div><strong>全链路 Trace</strong><small>{sourceLabel}</small></div></div>
+        <small title={traceId}>trace · {traceId}</small>
+      </div>
+      <div className="trace-stats">
+        <div className="trace-stat trace-stat-primary"><small>总耗时</small><strong>{traceDuration(events, run, nowMs)}</strong></div>
+        <div className="trace-stat"><small>事件</small><strong>{events.length}</strong></div>
+        <div className="trace-stat"><small>Agent</small><strong>{agentCount}</strong></div>
+        <div className="trace-stat"><small>模型调用</small><strong>{modelCalls}</strong></div>
+        <div className="trace-stat"><small>工具 / 委派</small><strong>{toolCalls} / {delegations}</strong></div>
+        <div className="trace-stat"><small>Token</small><strong>{tokenValue || "—"}</strong></div>
+      </div>
+      <div className="trace-waterfall" aria-label="阶段耗时分解">
+        <div className="trace-waterfall-head"><strong>阶段耗时</strong><span>{activeStage ? `${activeStage.label} · ${durationLabel(activeStage.duration)}` : "已完成 · 可展开查看事件"}</span></div>
+        {stages.length ? stages.map((stage) => (
+          <div className="trace-stage-row" key={stage.id} style={{ marginLeft: `${Math.min(4, stage.depth) * 10}px` }}>
+            <span className={`trace-stage-dot ${stage.active ? "active" : ""}`} />
+            <span className="trace-stage-copy"><strong>{stage.label}</strong><small>{stage.detail}</small></span>
+            <span className="trace-stage-track"><span style={{ width: `${Math.max(5, (stage.duration / maxStageDuration) * 100)}%` }} /></span>
+            <code>{stage.active ? `进行中 · ${durationLabel(stage.duration)}` : durationLabel(stage.duration)}</code>
+          </div>
+        )) : <div className="trace-waterfall-empty">等待模型、工具或 Agent 阶段事件…</div>}
+      </div>
+      <PublicReasoningPanel events={events} plugins={plugins} agents={agents} />
+      <div className="trace-filter-bar" role="toolbar" aria-label="Trace 事件筛选">
+        <Filter size={14} color="var(--muted)" />
+        {filterLabels.map((item) => <button type="button" key={item.id} className={filter === item.id ? "active" : ""} onClick={() => setFilter(item.id)}>{item.label}</button>)}
+        <span>{visibleEvents.length} / {events.length} 条 · 阶段 {progressCount} · 增量 {deltaCount}</span>
+      </div>
+      {error && <div className="empty-inline" role="alert">{error}</div>}
+      <div className="trace-event-list">
+        {visibleEvents.map((event) => {
+          const isError = event.type.includes("failed") || event.type === "permission.required";
+          const traceEventId = event.span_id || `${event.agent_id}-${event.depth}`;
+          const eventDuration = traceEventDuration(event, events, nowMs);
+          return (
+            <details className="trace-event" key={`${event.run_id}-${event.sequence}`} open={isError} style={{ marginLeft: `${Math.min(4, event.depth) * 10}px` }}>
+              <summary className="trace-event-summary">
+                <span className={`timeline-dot ${eventTone(event.type)}`} />
+                <span className="trace-event-copy"><strong>{eventTitle(event.type)}</strong><small>{event.type} · Agent {event.agent_id} · depth {event.depth}</small></span>
+                <code>#{event.sequence}</code>
+                <time className="trace-event-duration">{eventDuration === null ? "" : durationLabel(eventDuration)}</time>
+                <time>{formatTraceClock(event.timestamp)}</time>
+              </summary>
+              <div className="trace-event-body">
+                <p>{eventDetail(event, plugins, agents)}</p>
+                <div className="trace-event-meta">
+                  <span>trace: {event.trace_id || traceId}</span>
+                  <span>span: {traceEventId}</span>
+                  <span>parent: {event.parent_span_id || "—"}</span>
+                  <span>耗时: {eventDuration === null ? "—" : durationLabel(eventDuration)}</span>
+                  <span>时间: {formatTraceClock(event.timestamp)}</span>
+                </div>
+                <pre className="trace-payload">{tracePayloadForDisplay(event)}</pre>
+              </div>
+            </details>
+          );
+        })}
+        {!visibleEvents.length && <div className="trace-empty">当前筛选没有事件</div>}
+      </div>
+      {deltaCount > 0 && <p className="trace-note">已隐藏 {deltaCount} 个正文增量事件的逐段文本，正文仍在聊天区按 sequence 重建；阶段、模型、工具、委派、预算和终态事件全部保留。</p>}
+    </section>
+  );
+}
+
+function formatTraceClock(value?: string): string {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZone: "Asia/Shanghai",
+  }).format(new Date(value));
+}
+
 function RunsView({
   runs,
   agents,
+  plugins,
   resourceId,
   onResourceSelect,
   onRun,
@@ -2381,6 +3949,7 @@ function RunsView({
 }: {
   runs: RunRecord[];
   agents: AgentSpec[];
+  plugins: PluginManifest[];
   resourceId?: string | null;
   onResourceSelect: (resourceId: string | null) => void;
   onRun: () => void;
@@ -2391,6 +3960,8 @@ function RunsView({
   onRunProjection: (id: string, patch: Partial<RunRecord>) => void;
 }) {
   const [selectedId, setSelectedId] = useState<string>(resourceId || runs[0]?.id || "");
+  const [runQuery, setRunQuery] = useState("");
+  const [runStatusFilter, setRunStatusFilter] = useState("all");
   const [eventHistory, setEventHistory] = useState<{
     runId: string;
     events: RunEvent[];
@@ -2406,6 +3977,14 @@ function RunsView({
   );
   const eventsError = historyMatchesSelection ? eventHistory.error : "";
   const timelineEvents = mode === "live" && historyMatchesSelection ? eventHistory.events : [];
+  const visibleRuns = useMemo(() => {
+    const query = runQuery.trim().toLowerCase();
+    return runs.filter((run) => {
+      const matchesStatus = runStatusFilter === "all" || run.status === runStatusFilter;
+      const matchesQuery = !query || [run.id, run.session_id, run.input, run.agent_id].some((value) => value.toLowerCase().includes(query));
+      return matchesStatus && matchesQuery;
+    });
+  }, [runQuery, runStatusFilter, runs]);
 
   useEffect(() => {
     if (!selectedRunId || mode !== "live") return;
@@ -2430,8 +4009,8 @@ function RunsView({
       const terminalEvent = incoming.find((event) => Boolean(terminalStatusForEvent(event)) && event.type !== "run.started");
       if (terminalEvent) {
         terminal = true;
-        const status = terminalStatusForEvent(terminalEvent);
-        if (status) onRunProjection(selectedRunId, { status });
+        const projection = runProjectionFromTerminalEvent(terminalEvent);
+        if (projection) onRunProjection(selectedRunId, projection);
       }
       setEventHistory((current) => {
         const previous = current.runId === selectedRunId ? current.events : [];
@@ -2566,9 +4145,23 @@ function RunsView({
         <div className="run-list panel">
           <div className="run-list-head">
             <strong>最近运行</strong>
-            <span>{runs.length}</span>
+            <span>{visibleRuns.length} / {runs.length}</span>
           </div>
-          {runs.map((run) => {
+          <div className="run-list-tools">
+            <input value={runQuery} onChange={(event) => setRunQuery(event.target.value)} placeholder="搜索 Run、Session 或输入" aria-label="搜索运行记录" />
+            <div>
+              <select value={runStatusFilter} onChange={(event) => setRunStatusFilter(event.target.value)} aria-label="按运行状态筛选">
+                <option value="all">全部状态</option>
+                <option value="running">运行中</option>
+                <option value="queued">排队中</option>
+                <option value="succeeded">成功</option>
+                <option value="failed">失败</option>
+                <option value="cancelled">已取消</option>
+              </select>
+              <span className="trace-view-link"><Activity size={13} /> Trace 由事件历史驱动</span>
+            </div>
+          </div>
+          {visibleRuns.map((run) => {
             const agent = agents.find((item) => item.id === run.agent_id);
             return (
               <button
@@ -2595,6 +4188,7 @@ function RunsView({
               </button>
             );
           })}
+          {!visibleRuns.length && <div className="empty-inline">没有匹配的运行记录</div>}
         </div>
         <div className="run-detail panel">
           {selected ? (
@@ -2618,39 +4212,23 @@ function RunsView({
                 <p>{selected.input}</p>
               </div>
               <div className="run-metrics">
-                <div><small>Steps</small><strong>{String(selected.metrics?.steps || "—")}</strong></div>
-                <div><small>Tool calls</small><strong>{String(selected.metrics?.tool_calls || "—")}</strong></div>
-                <div><small>Tokens</small><strong>{String(selected.metrics?.tokens || "—")}</strong></div>
+                <div><small>步骤</small><strong>{String(selected.metrics?.steps || "—")}</strong></div>
+                <div><small>工具调用</small><strong>{String(selected.metrics?.tool_calls || "—")}</strong></div>
+                <div><small>Token</small><strong>{String(selected.metrics?.tokens || "—")}</strong></div>
                 <div><small>Session</small><strong className="mono-small">{selected.session_id.slice(0, 12)}</strong></div>
+                <div><small>运行方式</small><strong>{executionModeLabel(selected.metrics?.execution_mode)}</strong></div>
+                <div><small>思考模式</small><strong>{thinkingModeLabel(selected.metrics?.thinking_mode)}</strong></div>
               </div>
-              <div className="timeline">
-                <div className="timeline-head">
-                  <strong>事件时间线</strong>
-                  <span>
-                    {eventsLoading
-                      ? "正在读取持久事件"
-                      : mode === "live"
-                        ? `${timelineEvents.length} 条 · seq ${eventHistory.lastSequence} · ${eventHistory.status === "degraded" ? "降级校准" : eventHistory.status === "reconnecting" ? "重连中" : "实时"}`
-                        : "未连接控制面"}
-                  </span>
-                </div>
-                {timelineEvents.map((event) => (
-                  <div className="timeline-row" key={`${event.run_id}-${event.sequence}`}>
-                    <span className={`timeline-dot ${eventTone(event.type)}`} />
-                    <span>
-                      <strong>{eventTitle(event.type)}</strong>
-                      <small>{eventDetail(event)}</small>
-                    </span>
-                    <time>#{event.sequence}</time>
-                  </div>
-                ))}
-                {!eventsLoading && !eventsError && timelineEvents.length === 0 && (
-                  <div className="empty-inline">该运行尚未写入事件</div>
-                )}
-                {eventsError && (
-                  <div className="empty-inline">{eventsError}</div>
-                )}
-              </div>
+              {selected.metrics?.execution_mode === "plan" && <div className="chat-plan-notice run-plan-notice"><Workflow size={15} /><span>计划模式：只生成可审阅计划，不调用工具或子 Agent。</span></div>}
+              <TracePanel
+                key={selected.id}
+                run={selected}
+                events={timelineEvents}
+                agents={agents}
+                plugins={plugins}
+                sourceLabel={eventsLoading ? "正在读取持久事件" : mode !== "live" ? "未连接控制面" : `${eventHistory.status === "degraded" ? "降级校准" : eventHistory.status === "reconnecting" ? "重连中" : "实时"} · seq ${eventHistory.lastSequence}`}
+                error={eventsError || undefined}
+              />
             </>
           ) : (
             <div className="empty-state"><Activity size={28} /><strong>暂无运行</strong></div>
@@ -2686,6 +4264,7 @@ function PluginsView({ plugins }: { plugins: PluginManifest[] }) {
       <div className="plugin-grid">
         {visible.map((plugin) => {
           const Icon = PLUGIN_ICONS[plugin.kind] || Blocks;
+          const presentation = pluginPresentation(plugin);
           return (
             <div className={`plugin-card ${!plugin.available ? "unavailable" : ""}`} key={`${plugin.kind}-${plugin.id}`}>
               <div className="plugin-card-head">
@@ -2698,8 +4277,8 @@ function PluginsView({ plugins }: { plugins: PluginManifest[] }) {
                   {plugin.available ? "可用" : "预留"}
                 </span>
               </div>
-              <h3>{plugin.display_name}</h3>
-              <p>{plugin.description}</p>
+              <h3>{presentation.name}</h3>
+              <p>{presentation.description}</p>
               <div className="capability-list">
                 {plugin.capabilities.slice(0, 3).map((capability) => <span key={capability}>{capability}</span>)}
               </div>
@@ -4597,14 +6176,16 @@ function RunModal({
   busy: boolean;
   onClose: () => void;
   onRepair: () => void;
-  onLaunch: (id: string, kind: "agent" | "instance", input: string) => Promise<void>;
+  onLaunch: (id: string, kind: "agent" | "instance", input: string, thinkingMode: ThinkingMode, executionMode: ExecutionMode) => Promise<void>;
 }) {
   const options = [
     ...instances.map((item) => ({ id: item.id, kind: "instance" as const, label: item.name, note: `${item.environment} · ×${item.max_concurrency}` })),
     ...agents.map((item) => ({ id: item.id, kind: "agent" as const, label: item.name, note: `definition · rev ${item.revision}` })),
   ];
   const [target, setTarget] = useState(options[0]?.id || "");
-    const [input, setInput] = useState("请评估当前 Agent 框架的扩展边界与主要风险");
+  const [input, setInput] = useState("请评估当前 Agent 框架的扩展边界与主要风险");
+  const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("auto");
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("execute");
   const selected = options.find((item) => item.id === target);
   const dialogRef = useDialogAccessibility(onClose);
   return (
@@ -4614,7 +6195,7 @@ function RunModal({
         className="modal-card run-modal"
         onSubmit={(event) => {
           event.preventDefault();
-          if (selected) void onLaunch(selected.id, selected.kind, input);
+              if (selected) void onLaunch(selected.id, selected.kind, input, thinkingMode, executionMode);
         }}
       >
         <div className="modal-head">
@@ -4629,13 +6210,27 @@ function RunModal({
                 {options.map((item) => <option value={item.id} key={`${item.kind}:${item.id}`}>{item.label} · {item.note}</option>)}
               </select>
             </label>
-            <label className="form-field">
-              <span>任务输入</span>
-              <textarea value={input} onChange={(event) => setInput(event.target.value)} rows={6} required />
-            </label>
-            <div className="run-policy-preview">
-              <div><ShieldCheck size={16} /><span><strong>保护策略生效</strong><small>深度、调用、并发、超时与 token 共享预算</small></span></div>
-              <span>Fail closed</span>
+                <label className="form-field">
+                  <span>任务输入</span>
+                  <textarea value={input} onChange={(event) => setInput(event.target.value)} rows={6} required />
+                </label>
+                <label className="form-field">
+                  <span>思考模式</span>
+                  <select aria-label="发起运行思考模式" value={thinkingMode} onChange={(event) => setThinkingMode(event.target.value as ThinkingMode)}>
+                    {THINKING_MODE_OPTIONS.map((option) => <option value={option.value} key={option.value}>{option.label} · {option.hint}</option>)}
+                  </select>
+                  <small>开启只请求 Provider 的思考参数；不会展示隐藏链式思维。</small>
+                </label>
+                <label className="form-field">
+                  <span>运行方式</span>
+                  <select aria-label="发起运行方式" value={executionMode} onChange={(event) => setExecutionMode(event.target.value as ExecutionMode)}>
+                    {EXECUTION_MODE_OPTIONS.map((option) => <option value={option.value} key={option.value}>{option.label} · {option.hint}</option>)}
+                  </select>
+                  <small>{executionMode === "plan" ? "计划模式只生成可审阅计划，不调用工具、子 Agent 或外部副作用。" : "执行模式允许按 Agent 权限调用工具与子 Agent。"}</small>
+                </label>
+                <div className="run-policy-preview">
+              <div><ShieldCheck size={16} /><span><strong>{executionMode === "plan" ? "计划保护生效" : "保护策略生效"}</strong><small>{executionMode === "plan" ? "只生成计划，不执行工具或子 Agent" : "深度、调用、并发、超时与 token 共享预算"}</small></span></div>
+              <span>{executionMode === "plan" ? "PLAN ONLY" : "FAIL CLOSED"}</span>
             </div>
           </> : <PrerequisiteGate
             title="先修复 Readiness，再发起 Run"

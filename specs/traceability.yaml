@@ -644,3 +644,362 @@ requirements:
       - "python -m pytest backend/tests -q"
     limits:
       - "未登记自定义 endpoint 不做 DNS/Provider 自动发现；需要用户填写模型 ID 或选择目录项"
+  - id: "CHAT-001"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0012-agent-chat-workspace/requirements.md"
+      - "specs/changes/CHG-0012-agent-chat-workspace/design.md"
+    implementation:
+      - "app/control-center.tsx::ChatWorkspace"
+      - "app/globals.css::CHG-0012"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "manual-browser-2026-08-01: 独立导航、三段式工作区、390×844 窄屏和焦点状态"
+  - id: "CHAT-002"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0012-agent-chat-workspace/requirements.md"
+      - "specs/changes/CHG-0012-agent-chat-workspace/design.md"
+    implementation:
+      - "app/control-center.tsx::ChatWorkspace"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "manual-browser-2026-08-01: run_3c40135b389c4431 URL 恢复与 session 聚合"
+    limits:
+      - "0.1.x 只聚合现有 Run.session_id，不提供持久 Session 资源"
+  - id: "CHAT-003"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0012-agent-chat-workspace/requirements.md"
+      - "specs/changes/CHG-0012-agent-chat-workspace/design.md"
+    implementation:
+      - "app/control-center.tsx::submitRun"
+      - "backend/src/uai_forge/models.py::RunRequest"
+    verification:
+      - "backend/tests/test_api.py::test_run_lifecycle_from_instance"
+      - "tests/rendered-html.test.mjs"
+      - "backend: run_3c40135b389c4431 succeeded; run_daaed288efd84181 cancelled; run_9b665ee56772478a failed; run_79842e3af93941a5 retry"
+  - id: "CHAT-004"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0012-agent-chat-workspace/requirements.md"
+    implementation:
+      - "app/control-center.tsx::ChatWorkspace"
+      - "app/control-center/api.ts::consumeEventStream"
+      - "app/control-center/features/runs/reducer.ts"
+    verification:
+      - "backend/tests/test_runtime.py::test_subscriber_closes_replay_live_registration_window_without_loss"
+      - "tests/rendered-html.test.mjs"
+      - "manual-browser-2026-08-01: ordered 12-event history, tool.started/tool.completed expansion, cancelled and failed timelines"
+  - id: "CHAT-005"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0012-agent-chat-workspace/requirements.md"
+      - "specs/changes/CHG-0012-agent-chat-workspace/design.md"
+    implementation:
+      - "app/control-center.tsx::PLUGIN_LOCALIZED_COPY"
+      - "app/control-center.tsx::eventTitle"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "manual-browser-2026-08-01: 扩展中心中文名/描述与工具事件‘回声工具 · tool.echo’"
+  - id: "CHAT-006"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0012-agent-chat-workspace/requirements.md"
+      - "specs/changes/CHG-0012-agent-chat-workspace/threat-delta.md"
+    implementation:
+      - "app/control-center.tsx::ChatWorkspace"
+      - "app/globals.css::CHG-0012"
+    verification:
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+      - "manual-browser-2026-08-01: 390×844、aria-expanded、输入框/详情按钮焦点、控制台 error=0"
+    limits:
+      - "浏览器 smoke 当前是本地验收证据，尚未纳入 CI 的 Playwright 测试矩阵"
+  - id: "CHAT-007"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0013-agent-chat-streaming/requirements.md"
+      - "specs/changes/CHG-0013-agent-chat-streaming/design.md"
+    implementation:
+      - "backend/src/uai_forge/ports.py::ModelStreamChunk"
+      - "backend/src/uai_forge/providers.py"
+      - "backend/src/uai_forge/runtime.py::_complete_model"
+      - "app/control-center.tsx::ChatWorkspace"
+    verification:
+      - "backend/tests/test_providers.py"
+      - "backend/tests/test_runtime.py"
+      - "tests/rendered-html.test.mjs"
+      - "manual-browser-2026-08-01: run_fecd37873f49423e produced 6 ordered model.delta events before run.completed"
+  - id: "CHAT-008"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0013-agent-chat-streaming/requirements.md"
+      - "specs/changes/CHG-0013-agent-chat-streaming/design.md"
+    implementation:
+      - "backend/src/uai_forge/models.py"
+      - "backend/src/uai_forge/runtime.py"
+      - "app/control-center.tsx"
+    verification:
+      - "backend/tests/test_runtime.py"
+      - "tests/rendered-html.test.mjs"
+      - "manual-browser-2026-08-01: public progress phases and safe hidden-chain boundary visible in chat"
+  - id: "CHAT-009"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0013-agent-chat-streaming/requirements.md"
+      - "specs/changes/CHG-0013-agent-chat-streaming/design.md"
+    implementation:
+      - "app/control-center.tsx"
+      - "app/globals.css"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "manual-browser-2026-08-01: React Flow node, Controls, MiniMap and fit-view controls present"
+  - id: "CHAT-010"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0013-agent-chat-streaming/requirements.md"
+      - "specs/changes/CHG-0013-agent-chat-streaming/design.md"
+      - "specs/current/foundation/contracts/run-event.schema.json"
+    implementation:
+      - "backend/src/uai_forge/models.py"
+      - "backend/src/uai_forge/run_manager.py"
+      - "backend/src/uai_forge/runtime.py"
+      - "app/control-center.tsx"
+    verification:
+      - "backend/tests/test_runtime.py"
+      - "tests/rendered-html.test.mjs"
+      - "manual-browser-2026-08-01: Trace overview, model filter, expanded payload and 17-event history"
+  - id: "CHAT-011"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0018-chat-response-surface/requirements.md"
+      - "specs/changes/CHG-0018-chat-response-surface/design.md"
+    implementation:
+      - "app/control-center.tsx::ChatWorkspace"
+      - "app/globals.css::chat-thread"
+      - "app/globals.css::chat-message-bubble"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "manual-browser-2026-08-01: assistant answer uses a continuous no-card reading surface"
+  - id: "CHAT-012"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0018-chat-response-surface/requirements.md"
+      - "specs/changes/CHG-0018-chat-response-surface/design.md"
+    implementation:
+      - "app/control-center.tsx::ChatOutput"
+      - "app/control-center.tsx::chatInlineNodes"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "manual-browser-2026-08-01: assistant output exposes safe strong/paragraph projection"
+    limits:
+      - "0.1 只支持安全的基础 Markdown 投影，不承诺完整 CommonMark"
+  - id: "CHAT-013"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0018-chat-response-surface/requirements.md"
+      - "specs/changes/CHG-0018-chat-response-surface/design.md"
+    implementation:
+      - "app/control-center.tsx::PublicReasoningPanel"
+      - "app/globals.css::public-reasoning.compact"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "manual-browser-2026-08-01: collapsible public activity strip visible in chat and Trace inspector"
+  - id: "CHAT-014"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0018-chat-response-surface/requirements.md"
+      - "specs/changes/CHG-0018-chat-response-surface/design.md"
+    implementation:
+      - "app/globals.css::CHG-0018"
+      - "app/globals.css::sidebar"
+      - "app/globals.css::topbar"
+      - "app/globals.css::panel"
+    verification:
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+      - "manual-browser-2026-08-01: chat and run history share clean light console surfaces; browser logs empty"
+  - id: "THINK-001"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0014-thinking-mode/requirements.md"
+      - "specs/changes/CHG-0014-thinking-mode/design.md"
+    implementation:
+      - "backend/src/uai_forge/models.py::ThinkingMode"
+      - "backend/src/uai_forge/models.py::RunRequest"
+      - "backend/src/uai_forge/ports.py::ModelRequest"
+      - "backend/src/uai_forge/run_manager.py"
+      - "backend/src/uai_forge/runtime.py"
+    verification:
+      - "backend/tests/test_runtime.py::test_thinking_mode_is_carried_into_run_metrics_and_public_resolution"
+  - id: "THINK-002"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0014-thinking-mode/requirements.md"
+      - "specs/changes/CHG-0014-thinking-mode/design.md"
+    implementation:
+      - "backend/src/uai_forge/providers.py::OpenAICompatibleProvider"
+      - "backend/src/uai_forge/providers.py::AnthropicMessagesProvider"
+    verification:
+      - "backend/tests/test_providers.py::test_openai_compatible_provider_maps_reasoning_effort_without_leaking_preference"
+      - "backend/tests/test_providers.py::test_openai_compatible_provider_maps_qwen_thinking_and_unknown_is_fail_safe"
+      - "backend/tests/test_providers.py::test_anthropic_provider_bounds_extended_thinking_budget"
+  - id: "THINK-003"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0014-thinking-mode/requirements.md"
+      - "specs/changes/CHG-0014-thinking-mode/design.md"
+    implementation:
+      - "app/control-center.tsx::THINKING_MODE_OPTIONS"
+      - "app/control-center.tsx::ChatWorkspace"
+      - "app/control-center.tsx::RunModal"
+      - "app/globals.css::thinking-mode-picker"
+    verification:
+      - "tests/rendered-html.test.mjs"
+  - id: "PLAN-001"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0015-plan-mode/requirements.md"
+      - "specs/changes/CHG-0015-plan-mode/design.md"
+    implementation:
+      - "backend/src/uai_forge/models.py::ExecutionMode"
+      - "backend/src/uai_forge/models.py::RunRequest"
+      - "backend/src/uai_forge/ports.py::ModelRequest"
+      - "backend/src/uai_forge/run_manager.py"
+      - "backend/src/uai_forge/runtime.py"
+    verification:
+      - "backend/tests/test_runtime.py::test_plan_mode_blocks_tools_and_child_delegation"
+      - "backend/tests: 122 passed"
+      - "manual-browser-2026-08-01: run_f71b976871044b69"
+  - id: "PLAN-002"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0015-plan-mode/requirements.md"
+      - "specs/changes/CHG-0015-plan-mode/design.md"
+    implementation:
+      - "backend/src/uai_forge/runtime.py::_execute_agent"
+      - "backend/src/uai_forge/runtime.py::_execute_tool_call"
+      - "app/control-center.tsx::eventDetail"
+    verification:
+      - "backend/tests/test_runtime.py::test_plan_mode_blocks_tools_and_child_delegation"
+      - "tests/rendered-html.test.mjs"
+      - "manual-browser-2026-08-01: 0 tool events and 0 delegation events in run_f71b976871044b69"
+  - id: "PLAN-003"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0015-plan-mode/requirements.md"
+      - "specs/changes/CHG-0015-plan-mode/design.md"
+    implementation:
+      - "app/control-center.tsx::EXECUTION_MODE_OPTIONS"
+      - "app/control-center.tsx::ChatWorkspace"
+      - "app/control-center.tsx::RunModal"
+      - "app/control-center.tsx::RunsView"
+      - "app/globals.css::execution-mode-picker"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "npm run typecheck"
+      - "npm run lint"
+      - "manual-browser-2026-08-01: chat and standalone Run selectors"
+  - id: "THINK-004"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0016-public-thinking-summary/requirements.md"
+      - "specs/changes/CHG-0016-public-thinking-summary/design.md"
+    implementation:
+      - "app/control-center.tsx::publicReasoningSteps"
+      - "app/control-center.tsx::PublicReasoningPanel"
+      - "app/control-center.tsx::ChatWorkspace"
+      - "app/control-center.tsx::TracePanel"
+      - "app/globals.css::public-reasoning"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "manual-browser-2026-08-01: chat, Run inspector and Trace show ordered public stages"
+  - id: "THINK-005"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0016-public-thinking-summary/requirements.md"
+      - "specs/changes/CHG-0016-public-thinking-summary/design.md"
+    implementation:
+      - "app/control-center.tsx::publicReasoningStepFromEvent"
+      - "app/control-center.tsx::tracePayloadForDisplay"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "backend/tests/test_providers.py"
+      - "manual-browser-2026-08-01: public summary labels the hidden-reasoning boundary"
+  - id: "PERF-001"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0017-fast-path-trace-timing/requirements.md"
+      - "specs/changes/CHG-0017-fast-path-trace-timing/design.md"
+    implementation:
+      - "backend/src/uai_forge/runtime.py::AgentRuntime._fast_path_for_input"
+      - "backend/src/uai_forge/runtime.py::AgentRuntime.execute"
+      - "backend/src/uai_forge/run_manager.py"
+    verification:
+      - "backend/tests/test_runtime.py::test_weather_missing_location_fast_path_skips_model_and_child_calls"
+      - "manual-browser-2026-08-01: run_208b9adc88ae49b6 completed in 10.5 ms runtime elapsed with no model/tool/delegation events"
+  - id: "PERF-002"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0017-fast-path-trace-timing/requirements.md"
+      - "specs/changes/CHG-0017-fast-path-trace-timing/design.md"
+    implementation:
+      - "backend/src/uai_forge/runtime.py"
+      - "backend/src/uai_forge/models.py::EventType.MODEL_FAILED"
+      - "backend/src/uai_forge/models.py::EventType.MODEL_COMPLETED"
+    verification:
+      - "backend/tests/test_runtime.py::test_trace_events_include_operation_durations"
+      - "backend/tests/test_runtime.py::test_streaming_model_publishes_deltas_and_trace_chain"
+  - id: "TRACE-001"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0017-fast-path-trace-timing/requirements.md"
+      - "specs/changes/CHG-0017-fast-path-trace-timing/design.md"
+      - "specs/current/foundation/contracts/run-event.schema.json"
+    implementation:
+      - "app/control-center.tsx::traceEventDuration"
+      - "app/control-center.tsx::traceStageSummaries"
+      - "app/control-center.tsx::TracePanel"
+      - "app/control-center.tsx::publicReasoningSteps"
+      - "app/globals.css::trace-waterfall"
+      - "app/globals.css::public-reasoning"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "manual-browser-2026-08-01: Run history Trace displayed 12 ms total, stage duration, trace/span/parent metadata and filters"
+      - "manual-browser-2026-08-01: streaming chat displayed public stages and active elapsed; cancellation settled to 已取消"

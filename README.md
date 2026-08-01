@@ -97,9 +97,15 @@ docker compose up --build
 ```
 
 后台位于 `http://localhost:3000`，API 文档位于
-`http://localhost:8000/docs`。SQLite 数据保存在命名卷中。默认只绑定
+`http://localhost:8000/docs`。SQLite 数据保存在命名卷
+`uai-forge-data-v2` 中；该版本化名称用于避开 ADR-0007 之前的 legacy 配置卷，旧卷不会被
+静默迁移。默认只绑定
 `127.0.0.1`；需要远程访问时，必须先配置控制密钥、可信 CORS/TLS，再显式把
 `UAI_FORGE_BIND_ADDRESS` 设为所需接口。
+
+如果 Docker/Colima 没有把宿主机 DNS 转发给容器，Compose 会使用 `1.1.1.1` 作为后端
+解析器；可用 `UAI_FORGE_DNS_SERVER` 覆盖。需要选择其他已备份的数据卷时，设置
+`UAI_FORGE_DATA_VOLUME` 后再启动；不要删除旧卷来绕过兼容性门禁。
 
 完整的隔离容器验收会构建镜像、等待健康、运行 doctor、核对全新的数据库与 provider
 注册表，并清理本次测试资源：
@@ -149,6 +155,8 @@ make container-smoke
 | `UAI_FORGE_HOST` | `0.0.0.0` | API 监听地址 |
 | `UAI_FORGE_PORT` | `8000` | API 端口 |
 | `UAI_FORGE_BIND_ADDRESS` | `127.0.0.1` | Compose 发布到宿主机的绑定地址；远程暴露前先配置密钥/CORS/TLS |
+| `UAI_FORGE_DATA_VOLUME` | `uai-forge-data-v2` | Compose SQLite 命名卷；旧 schema 卷不会自动迁移 |
+| `UAI_FORGE_DNS_SERVER` | `1.1.1.1` | Compose 后端容器的 DNS；按本地网络策略覆盖 |
 | `UAI_FORGE_WEB_HOST` | `0.0.0.0` | production Web 监听地址 |
 | `PORT` | `3000` | production Web 容器内端口 |
 
