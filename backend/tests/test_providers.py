@@ -381,3 +381,97 @@ async def test_anthropic_messages_provider_streams_text_and_usage(monkeypatch):
     assert "".join(chunk.text for chunk in chunks) == "流式完成"
     assert any(chunk.usage and chunk.usage.input_tokens == 11 for chunk in chunks)
     assert any(chunk.usage and chunk.usage.output_tokens == 5 for chunk in chunks)
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_provider_streams_tools_without_exposing_arguments(monkeypatch):
+    FakeStreamingClient.lines = [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\\"q\\":\\""}}]}}]}',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"uai\\"}"}}]}}]}',
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":7,"completion_tokens":4}}',
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr("uai_forge.providers.httpx.AsyncClient", FakeStreamingClient)
+    binding = ModelBinding(
+        model_config_id="cfg_stream_openai_tools",
+        config={"base_url": "https://api.deepseek.com/v1"},
+    )
+    binding._runtime_provider = "openai_compatible"
+    binding._runtime_model = "deepseek-chat"
+    binding._runtime_credential = "stream-secret"
+    provider = OpenAICompatibleProvider(binding)
+
+    chunks = [
+        chunk
+        async for chunk in provider.stream(
+            ModelRequest(
+                model="deepseek-chat",
+                messages=[ModelMessage(role="user", content="查一下")],
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "lookup",
+                            "description": "Find a record",
+                            "parameters": {"type": "object"},
+                        },
+                    }
+                ],
+            )
+        )
+    ]
+
+    assert not "".join(chunk.text for chunk in chunks)
+    calls = [call for chunk in chunks for call in chunk.tool_calls]
+    assert len(calls) == 1
+    assert calls[0].id == "call_1"
+    assert calls[0].name == "lookup"
+    assert calls[0].arguments == {"q": "uai"}
+    assert FakeStreamingClient.last_request["json"]["tools"][0]["function"]["name"] == "lookup"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_provider_streams_tools_and_keeps_input_json_private(monkeypatch):
+    FakeStreamingClient.lines = [
+        'event: message_start',
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":11}}}',
+        'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}}',
+        'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"q\\":"}}',
+        'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\"uai\\"}"}}',
+        'data: {"type":"message_delta","usage":{"output_tokens":5}}',
+    ]
+    monkeypatch.setattr("uai_forge.providers.httpx.AsyncClient", FakeStreamingClient)
+    binding = ModelBinding(
+        model_config_id="cfg_stream_anthropic_tools",
+        config={"base_url": "https://api.anthropic.com"},
+    )
+    binding._runtime_provider = "anthropic_messages"
+    binding._runtime_model = "claude-sonnet-5"
+    binding._runtime_credential = "stream-secret"
+    provider = AnthropicMessagesProvider(binding)
+
+    chunks = [
+        chunk
+        async for chunk in provider.stream(
+            ModelRequest(
+                model="claude-sonnet-5",
+                messages=[ModelMessage(role="user", content="查一下")],
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "lookup",
+                            "description": "Find a record",
+                            "parameters": {"type": "object"},
+                        },
+                    }
+                ],
+            )
+        )
+    ]
+
+    calls = [call for chunk in chunks for call in chunk.tool_calls]
+    assert len(calls) == 1
+    assert calls[0].id == "toolu_1"
+    assert calls[0].arguments == {"q": "uai"}
+    assert FakeStreamingClient.last_request["json"]["tools"][0]["name"] == "lookup"

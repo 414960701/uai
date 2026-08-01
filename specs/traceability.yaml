@@ -719,6 +719,7 @@ requirements:
       - "app/control-center.tsx::ChatWorkspace"
       - "app/globals.css::CHG-0012"
     verification:
+      - "tests/rendered-html.test.mjs"
       - "npm run lint"
       - "npm run typecheck"
       - "npm test"
@@ -1003,3 +1004,99 @@ requirements:
       - "npm run typecheck"
       - "manual-browser-2026-08-01: Run history Trace displayed 12 ms total, stage duration, trace/span/parent metadata and filters"
       - "manual-browser-2026-08-01: streaming chat displayed public stages and active elapsed; cancellation settled to 已取消"
+  - id: "CHAT-015"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0019-streaming-tools-live-progress/requirements.md"
+      - "specs/changes/CHG-0019-streaming-tools-live-progress/design.md"
+      - "specs/changes/CHG-0019-streaming-tools-live-progress/compatibility-impact.yaml"
+    implementation:
+      - "backend/src/uai_forge/runtime.py::AgentRuntime._complete_model"
+      - "backend/src/uai_forge/providers.py::OpenAICompatibleProvider.stream"
+      - "backend/src/uai_forge/providers.py::AnthropicMessagesProvider.stream"
+      - "app/control-center.tsx::streamProjectionFromEvents"
+    verification:
+      - "backend/tests/test_runtime.py::test_streaming_model_emits_deltas_after_tool_calls_are_completed"
+      - "backend/tests/test_providers.py::test_openai_compatible_provider_streams_tools_without_exposing_arguments"
+      - "backend/tests/test_providers.py::test_anthropic_messages_provider_streams_tools_and_keeps_input_json_private"
+      - "api-smoke-2026-08-01: run_84e8f48a31e047d8 emitted 4 model.delta events after one echo tool call and before run.completed"
+      - "api-smoke-2026-08-01: run_dd66d24072fd4c97 emitted 13 model.delta events before run.completed for a plain Agent response"
+  - id: "CHAT-016"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0019-streaming-tools-live-progress/requirements.md"
+      - "specs/changes/CHG-0019-streaming-tools-live-progress/design.md"
+    implementation:
+      - "backend/src/uai_forge/ports.py::ModelStreamChunk"
+      - "backend/src/uai_forge/ports.py::ModelProvider.stream"
+      - "backend/src/uai_forge/runtime.py::AgentRuntime._complete_model"
+    verification:
+      - "backend/tests/test_providers.py::test_openai_compatible_provider_streams_tools_without_exposing_arguments"
+      - "backend/tests/test_providers.py::test_anthropic_messages_provider_streams_tools_and_keeps_input_json_private"
+      - "backend/tests/test_runtime.py::test_streaming_model_emits_deltas_after_tool_calls_are_completed"
+  - id: "THINK-006"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0019-streaming-tools-live-progress/requirements.md"
+      - "specs/changes/CHG-0019-streaming-tools-live-progress/design.md"
+    implementation:
+      - "app/control-center.tsx::PublicReasoningPanel"
+      - "app/globals.css::public-reasoning-compact-track"
+      - "app/globals.css::public-reasoning-live-dot"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "docker-smoke-2026-08-01: rebuilt frontend healthy at http://localhost:3000/?view=chat"
+      - "manual-browser-2026-08-01: visual interaction smoke remains to be checked in the attached Chrome tab"
+  - id: "CHAT-017"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0020-chat-input-follow-mode/requirements.md"
+      - "specs/changes/CHG-0020-chat-input-follow-mode/design.md"
+    implementation:
+      - "app/control-center.tsx::ChatWorkspace"
+      - "app/control-center.tsx::chat composer textarea"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+  - id: "CHAT-018"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0020-chat-input-follow-mode/requirements.md"
+      - "specs/changes/CHG-0020-chat-input-follow-mode/design.md"
+    implementation:
+      - "app/control-center.tsx::chatThreadRef"
+      - "app/control-center.tsx::handleChatThreadScroll"
+      - "app/control-center.tsx::jumpToChatBottom"
+      - "app/globals.css::chat-thread-shell"
+      - "app/globals.css::chat-scroll-bottom"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+      - "manual-browser-2026-08-01: pending attached browser interaction smoke"
+  - id: "CHAT-019"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0020-chat-input-follow-mode/requirements.md"
+      - "specs/changes/CHG-0020-chat-input-follow-mode/design.md"
+    implementation:
+      - "app/control-center.tsx::forge-shell.chat-page"
+      - "app/globals.css::chat-page viewport containment"
+      - "app/globals.css::chat-thread overscroll containment"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+      - "manual-browser-2026-08-01: desktop 1280x800 and narrow 382x799 both kept document scrollHeight equal to viewport height; chat-thread remained the scroll container with overscroll containment and browser error logs empty"

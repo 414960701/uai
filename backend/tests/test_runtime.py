@@ -256,7 +256,7 @@ async def test_plan_mode_blocks_tools_and_child_delegation(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_streaming_model_does_not_emit_deltas_when_tools_are_available(tmp_path):
+async def test_streaming_model_emits_deltas_after_tool_calls_are_completed(tmp_path):
     repository, manager = await make_runtime(tmp_path, streaming=True)
     agent = await repository.save_agent(
         "default",
@@ -276,7 +276,10 @@ async def test_streaming_model_does_not_emit_deltas_when_tools_are_available(tmp
     await manager.wait("default", run.id)
     events = await repository.list_events("default", run.id)
 
-    assert all(event.type != EventType.MODEL_DELTA for event in events)
+    deltas = [event for event in events if event.type == EventType.MODEL_DELTA]
+    assert len(deltas) == 2
+    assert all("tool_calls" not in event.payload for event in deltas)
+    assert "已完成协作" in "".join(event.payload["text"] for event in deltas)
     assert any(event.type == EventType.TOOL_STARTED for event in events)
 
 

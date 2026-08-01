@@ -43,11 +43,12 @@ test("server-renders the UAI Forge control center", async () => {
 });
 
 test("removes starter-only infrastructure and wires the product client", async () => {
-  const [page, layout, controlCenter, packageJson] = await Promise.all([
+  const [page, layout, controlCenter, packageJson, globalsCss] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/control-center.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /<ControlCenter \/>/);
@@ -56,6 +57,9 @@ test("removes starter-only infrastructure and wires the product client", async (
   assert.match(controlCenter, /http:\/\/localhost:8000\/api\/v1/);
   assert.match(controlCenter, /mode === "live"/);
   assert.match(controlCenter, /mode === "disconnected"/);
+  assert.match(controlCenter, /forge-shell \$\{view === "chat" \? "chat-page"/);
+  assert.match(globalsCss, /grid-template-rows: auto minmax\(0, 1fr\)/);
+  assert.match(globalsCss, /overscroll-behavior: contain/);
   assert.doesNotMatch(controlCenter, /mock|demoEvents|delegate:analyst/i);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 
@@ -143,6 +147,11 @@ test("keeps advanced Agent configuration and real event history wired", async ()
   assert.match(controlCenter, /session_id/);
   assert.match(controlCenter, /会话侧栏/);
   assert.match(controlCenter, /运行详情/);
+  assert.match(controlCenter, /event\.nativeEvent\.isComposing/);
+  assert.match(controlCenter, /event\.metaKey.*event\.ctrlKey/);
+  assert.match(controlCenter, /Enter 换行.*Enter 发送/);
+  assert.match(controlCenter, /chat-scroll-bottom/);
+  assert.match(controlCenter, /stickToChatBottomRef/);
   assert.match(controlCenter, /安全计算器/);
   assert.match(controlCenter, /回声工具/);
   assert.match(controlCenter, /进程内记忆/);

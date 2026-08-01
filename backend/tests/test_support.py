@@ -123,6 +123,9 @@ class DeterministicTestProvider(ModelProvider):
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamChunk]:
         output = await self.complete(request)
+        if output.tool_calls:
+            yield ModelStreamChunk(tool_calls=output.tool_calls, usage=output.usage)
+            return
         midpoint = max(1, len(output.content) // 2)
         yield ModelStreamChunk(text=output.content[:midpoint])
         yield ModelStreamChunk(text=output.content[midpoint:], usage=output.usage)

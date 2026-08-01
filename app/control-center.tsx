@@ -2,6 +2,7 @@
 
 import {
   Activity,
+  ArrowDown,
   ArrowRight,
   Blocks,
   Bot,
@@ -64,7 +65,7 @@ import {
   type NodeProps,
   type ReactFlowInstance,
 } from "@xyflow/react";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react";
 import {
   ApiProblem,
   apiRequest,
@@ -1640,6 +1641,29 @@ function PublicReasoningPanel({
   const currentStep = [...steps].reverse().find((step) => step.status === "active");
   const hasFailure = steps.some((step) => step.status === "failed") || events.some((event) => event.type === "run.failed");
   const hasCancelled = steps.some((step) => step.status === "cancelled") || events.some((event) => event.type === "run.cancelled");
+  const latestStep = steps[steps.length - 1];
+  const activityStep = currentStep || latestStep;
+  const activityStatus = currentStep
+    ? "active"
+    : hasFailure
+      ? "failed"
+      : hasCancelled
+        ? "cancelled"
+        : steps.length
+          ? "complete"
+          : "empty";
+  const activityTitle = currentStep
+    ? `正在${currentStep.title}`
+    : hasFailure
+      ? "执行未完成"
+      : hasCancelled
+        ? "已取消"
+        : steps.length
+          ? "已完成回答"
+          : "等待 Agent 开始";
+  const activityDetail = activityStep?.detail || "公开执行摘要会随 Run 进度更新";
+  const activityIndex = activityStep ? steps.findIndex((step) => step.id === activityStep.id) + 1 : 0;
+  const [compactOpen, setCompactOpen] = useState(false);
   const summary = currentStep
     ? `${currentStep.title} · 进行中`
     : hasFailure
@@ -1649,8 +1673,44 @@ function PublicReasoningPanel({
       : steps.length
         ? `已完成 · ${steps.length} 个阶段`
         : "等待阶段";
+  if (compact) {
+    return (
+      <details
+        className="public-reasoning compact"
+        open={compactOpen}
+        onToggle={(event) => setCompactOpen(event.currentTarget.open)}
+      >
+        <summary className="public-reasoning-head">
+          <span className={`public-reasoning-live-dot ${activityStatus}`} aria-hidden="true"><span /></span>
+          <span className="public-reasoning-activity">
+            <strong>{activityTitle}</strong>
+            <small><span>思考过程 · 公开摘要</span>{activityDetail ? ` · ${activityDetail}` : ""}</small>
+          </span>
+          <span className={`public-reasoning-compact-status ${activityStatus}`}>
+            {activityIndex && steps.length ? `${activityIndex} / ${steps.length}` : publicReasoningStatusLabel(activityStatus === "empty" ? "active" : activityStatus as PublicReasoningStep["status"])}
+          </span>
+          <ChevronDown className="public-reasoning-chevron" size={14} aria-hidden="true" />
+        </summary>
+        <div className="public-reasoning-compact-body">
+          <div className="public-reasoning-compact-caption">公开执行轨迹 · 不显示隐藏思维原文</div>
+          {steps.length ? (
+            <ol className="public-reasoning-compact-track" aria-label="公开执行阶段">
+              {steps.map((step) => (
+                <li className={`public-reasoning-compact-step ${step.status}`} key={step.id}>
+                  <span className="public-reasoning-compact-step-dot" aria-hidden="true" />
+                  <span><strong>{step.title}</strong><small>{step.detail}</small></span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <div className="public-reasoning-empty">等待模型发出公开阶段事件…</div>
+          )}
+        </div>
+      </details>
+    );
+  }
   return (
-    <details className={`public-reasoning ${compact ? "compact" : ""}`} open={!compact || Boolean(currentStep)}>
+    <details className="public-reasoning" open>
       <summary className="public-reasoning-head">
         <span className="public-reasoning-title"><span className="public-reasoning-spark"><Sparkles size={13} /></span><span><strong>思考过程</strong><small>公开阶段 · 公开摘要 · 不显示隐藏思维原文</small></span></span>
         <span className={`public-reasoning-count ${currentStep ? "active" : hasFailure ? "failed" : "complete"}`}>{summary}</span>
@@ -1661,7 +1721,7 @@ function PublicReasoningPanel({
           {steps.map((step) => (
             <li className={`public-reasoning-step ${step.status}`} key={step.id}>
               <span className="public-reasoning-marker">{step.status === "complete" ? <Check size={11} /> : step.status === "failed" ? <X size={11} /> : step.status === "cancelled" ? <Clock3 size={11} /> : step.status === "active" ? <LoaderCircle size={11} className="spinning" /> : step.sequence}</span>
-              <span className="public-reasoning-copy"><span className="public-reasoning-step-head"><strong>{step.title}</strong><span className={`public-reasoning-step-state ${step.status}`}>{publicReasoningStatusLabel(step.status)}</span></span><small>{step.detail}</small><em>{durationLabel(traceEventDuration(events.find((event) => event.sequence === step.sequence) || events[0], events, nowMs))}{compact ? "" : ` · Agent ${step.agentId} · 深度 ${step.depth} · ${formatTraceClock(step.timestamp)}`}</em></span>
+              <span className="public-reasoning-copy"><span className="public-reasoning-step-head"><strong>{step.title}</strong><span className={`public-reasoning-step-state ${step.status}`}>{publicReasoningStatusLabel(step.status)}</span></span><small>{step.detail}</small><em>{durationLabel(traceEventDuration(events.find((event) => event.sequence === step.sequence) || events[0], events, nowMs))} · Agent {step.agentId} · 深度 {step.depth} · {formatTraceClock(step.timestamp)}</em></span>
             </li>
           ))}
         </ol>
@@ -2227,7 +2287,7 @@ export function ControlCenter() {
   }, []);
 
   return (
-    <div className="forge-shell">
+    <div className={`forge-shell ${view === "chat" ? "chat-page" : ""}`}>
       <aside className={`sidebar ${mobileNav ? "sidebar-open" : ""}`}>
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">
@@ -3341,6 +3401,10 @@ function ChatWorkspace({
     lastSequence: 0,
     status: "idle",
   });
+  const chatThreadRef = useRef<HTMLDivElement>(null);
+  const stickToChatBottomRef = useRef(true);
+  const lastChatRunIdRef = useRef("");
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
   const sessionGroups = useMemo(() => {
     const grouped = new Map<string, RunRecord[]>();
@@ -3392,6 +3456,40 @@ function ChatWorkspace({
   const streamProgress = stream.runId === selectedRunId ? stream.progress : null;
   const activeRun = activeSessionRuns.some((run) => run.status === "running" || run.status === "queued");
   const [chatNowMs, setChatNowMs] = useState(0);
+
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 720px)").matches) setDetailsOpen(false);
+  }, []);
+
+  const handleChatThreadScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
+    const element = event.currentTarget;
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    const awayFromBottom = distanceFromBottom > 96 && element.scrollHeight > element.clientHeight + 16;
+    stickToChatBottomRef.current = !awayFromBottom;
+    setShowScrollToBottom((current) => current === awayFromBottom ? current : awayFromBottom);
+  }, []);
+
+  const jumpToChatBottom = useCallback(() => {
+    const element = chatThreadRef.current;
+    if (!element) return;
+    stickToChatBottomRef.current = true;
+    element.scrollTop = element.scrollHeight;
+    setShowScrollToBottom(false);
+  }, []);
+
+  useEffect(() => {
+    const element = chatThreadRef.current;
+    if (!element) return undefined;
+    if (lastChatRunIdRef.current !== selectedRunId) {
+      lastChatRunIdRef.current = selectedRunId;
+      stickToChatBottomRef.current = true;
+    }
+    if (!stickToChatBottomRef.current) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      if (stickToChatBottomRef.current) element.scrollTop = element.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeSessionRuns.length, selectedRunId, sessionId, streamEvents.length, streamOutput]);
 
   const selectedRunStatus = selectedRun?.status;
   useEffect(() => {
@@ -3689,8 +3787,9 @@ function ChatWorkspace({
             </button>
           </header>
 
-          <div className="chat-thread" aria-live="polite">
-            {activeSessionRuns.length ? activeSessionRuns.map((run) => {
+          <div className="chat-thread-shell">
+            <div ref={chatThreadRef} className="chat-thread" onScroll={handleChatThreadScroll} aria-live="polite">
+              {activeSessionRuns.length ? activeSessionRuns.map((run) => {
               const agent = agents.find((item) => item.id === run.agent_id);
               const isSelected = run.id === selectedRunId;
               return (
@@ -3706,24 +3805,26 @@ function ChatWorkspace({
                       {run.status === "succeeded" && <ChatOutput value={run.output || (isSelected ? streamOutput : "") || "Agent 没有返回文本结果。"} />}
                       {(run.status === "running" || run.status === "queued") && <>
                         {(isSelected && streamOutput) ? <ChatOutput value={streamOutput} streaming /> : null}
-                        <div className="chat-running" role="status" aria-live="polite"><span className="status-dot running" />{isSelected && streamProgress ? streamProgress.message : "Agent 正在处理这条消息…"}{isSelected && streamProgress?.phase ? <small>{streamProgress.phase}</small> : null}</div>
+                        {(!isSelected || streamEvents.length === 0) && <div className="chat-running" role="status" aria-live="polite"><span className="status-dot running" />{isSelected && streamProgress ? streamProgress.message : "Agent 正在处理这条消息…"}{isSelected && streamProgress?.phase ? <small>{streamProgress.phase}</small> : null}</div>}
                       </>}
                       {run.status === "failed" && <div className="chat-error"><OctagonAlert size={16} /><span>{run.error || "运行失败，未返回详细原因。"}</span></div>}
                       {run.status === "cancelled" && <p className="chat-muted">这次运行已取消，可以保留原消息并重新尝试。</p>}
-                      {isSelected && streamEvents.length > 0 && <PublicReasoningPanel events={streamEvents} plugins={plugins} agents={agents} compact />}
+                      {isSelected && streamEvents.length > 0 && <PublicReasoningPanel key={`chat-reasoning-${run.id}`} events={streamEvents} plugins={plugins} agents={agents} compact />}
                       <div className="chat-message-foot"><code>{run.id}</code><button onClick={() => { onResourceSelect(run.id); setDetailsOpen(true); }}>查看运行详情 <ChevronRight size={13} /></button>{run.status === "failed" && <button onClick={() => void retrySelected()}><RotateCcw size={13} /> 重试</button>}</div>
                     </div>
                   </div>
                 </div>
               );
-            }) : (
-              <div className="chat-welcome">
-                <span className="chat-welcome-icon"><Sparkles size={24} /></span>
-                <h3>开始和 Agent 对话</h3>
-                <p>选择一个 Agent，描述目标或问题。每次发送都会生成真实 Run，并在右侧保留模型与工具事件。</p>
-                {!selectedAgent && <button className="button button-secondary" onClick={() => setLocalError("请先在左侧选择可运行的 Agent")}>选择 Agent</button>}
-              </div>
-            )}
+              }) : (
+                <div className="chat-welcome">
+                  <span className="chat-welcome-icon"><Sparkles size={24} /></span>
+                  <h3>开始和 Agent 对话</h3>
+                  <p>选择一个 Agent，描述目标或问题。每次发送都会生成真实 Run，并在右侧保留模型与工具事件。</p>
+                  {!selectedAgent && <button className="button button-secondary" onClick={() => setLocalError("请先在左侧选择可运行的 Agent")}>选择 Agent</button>}
+                </div>
+              )}
+            </div>
+            {showScrollToBottom && <button className="chat-scroll-bottom" type="button" onClick={jumpToChatBottom}><ArrowDown size={14} /> 回到底部</button>}
           </div>
 
           <form className="chat-composer" onSubmit={sendMessage}>
@@ -3731,10 +3832,10 @@ function ChatWorkspace({
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  event.currentTarget.form?.requestSubmit();
-                }
+                if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                if (!event.metaKey && !event.ctrlKey) return;
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
               }}
               placeholder={selectedAgent ? `给 ${selectedAgent.name} 发送消息…` : "请先选择 Agent"}
               aria-label="输入消息"
@@ -3774,7 +3875,7 @@ function ChatWorkspace({
               </label>
               <span className="thinking-mode-note">仅影响下一次 Run</span>
             </div>
-            <div className="chat-composer-foot"><span>Enter 发送 · Shift + Enter 换行 · 会话 ID 仅用于 Run 聚合</span><button className="button button-primary" type="submit" disabled={busy || activeRun || !draft.trim() || mode !== "live" || !selectedAgent}><Send size={15} />{busy ? "发送中…" : activeRun ? "运行中…" : "发送"}</button></div>
+            <div className="chat-composer-foot"><span>Enter 换行 · ⌘/Ctrl + Enter 发送 · 会话 ID 仅用于 Run 聚合</span><button className="button button-primary" type="submit" disabled={busy || activeRun || !draft.trim() || mode !== "live" || !selectedAgent}><Send size={15} />{busy ? "发送中…" : activeRun ? "运行中…" : "发送"}</button></div>
             {(localError || stream.error) && <div className="form-error chat-form-error" role="alert"><OctagonAlert size={15} /><span>{localError || stream.error}</span></div>}
           </form>
         </section>

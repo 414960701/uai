@@ -348,14 +348,17 @@ class AgentRuntime:
     ) -> ModelOutput:
         """Collect a provider text stream behind the owned runtime boundary."""
 
-        # Keep tool-call JSON on the complete path. A partial function call must
-        # never be mistaken for assistant text by the chat projection.
+        # Providers own protocol-specific streaming and must aggregate partial
+        # tool-call JSON before returning it in the core contract.  Text and
+        # tool calls remain separate so the chat projection never sees a
+        # function-call fragment as assistant prose.
         manifest = getattr(provider, "manifest", None)
         capabilities = getattr(manifest, "capabilities", ())
-        if request.tools or "streaming" not in capabilities:
+        if "streaming" not in capabilities:
             return await provider.complete(request)
 
         parts: List[str] = []
+        tool_calls: List[ToolCall] = []
         usage: Optional[TokenUsage] = None
         try:
             async for chunk in provider.stream(request):
@@ -371,19 +374,22 @@ class AgentRuntime:
                         span_id,
                         parent_span_id,
                     )
+                if chunk.tool_calls:
+                    tool_calls.extend(chunk.tool_calls)
                 if chunk.usage is not None:
                     usage = chunk.usage
         except Exception:
-            # A stream can be retried only before any text was exposed. Once the
-            # user saw output, the original failure remains the source of truth.
-            if parts:
+            # A stream can be retried only before any public output was exposed.
+            # Completed tool calls are private until the model response returns,
+            # so a tool-only transport failure can still safely use complete().
+            if parts or tool_calls:
                 raise
             return await provider.complete(request)
 
         content = "".join(parts)
         if usage is None or usage.total_tokens == 0:
             usage = TokenUsage(output_tokens=max(0, len(content) // 4))
-        return ModelOutput(content=content, usage=usage)
+        return ModelOutput(content=content, tool_calls=tool_calls, usage=usage)
 
     @staticmethod
     def _delegation_definition(mount: ChildMount) -> Dict[str, Any]:

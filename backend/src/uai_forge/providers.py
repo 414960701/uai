@@ -666,8 +666,11 @@ class OpenAICompatibleProvider(ModelProvider):
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if request.tools:
+            payload["tools"] = request.tools
         self._apply_thinking_mode(payload, request)
 
+        tool_call_parts: Dict[int, Dict[str, str]] = {}
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             async with client.stream(
                 "POST",
@@ -689,6 +692,30 @@ class OpenAICompatibleProvider(ModelProvider):
                     choices = raw.get("choices") or []
                     delta = choices[0].get("delta") if choices else {}
                     text = delta.get("content") if isinstance(delta, dict) else ""
+                    if not isinstance(text, str):
+                        text = ""
+                    if isinstance(delta, dict):
+                        for position, raw_call in enumerate(delta.get("tool_calls") or []):
+                            if not isinstance(raw_call, dict):
+                                continue
+                            index = raw_call.get("index", position)
+                            try:
+                                index = int(index)
+                            except (TypeError, ValueError):
+                                index = position
+                            function = raw_call.get("function") or {}
+                            if not isinstance(function, dict):
+                                function = {}
+                            current = tool_call_parts.setdefault(
+                                index,
+                                {"id": "", "name": "", "arguments": ""},
+                            )
+                            if raw_call.get("id"):
+                                current["id"] = str(raw_call["id"])
+                            if function.get("name"):
+                                current["name"] += str(function["name"])
+                            if function.get("arguments"):
+                                current["arguments"] += str(function["arguments"])
                     usage_raw = raw.get("usage") or {}
                     usage = None
                     if usage_raw:
@@ -698,6 +725,23 @@ class OpenAICompatibleProvider(ModelProvider):
                         )
                     if text or usage is not None:
                         yield ModelStreamChunk(text=text or "", usage=usage)
+
+        if tool_call_parts:
+            calls: List[ToolCall] = []
+            for index, raw_call in sorted(tool_call_parts.items()):
+                arguments = raw_call["arguments"] or "{}"
+                try:
+                    parsed = json.loads(arguments)
+                except json.JSONDecodeError:
+                    parsed = {"raw": arguments}
+                calls.append(
+                    ToolCall(
+                        id=raw_call["id"] or f"call_{uuid.uuid4().hex[:12]}",
+                        name=raw_call["name"],
+                        arguments=parsed,
+                    )
+                )
+            yield ModelStreamChunk(tool_calls=calls)
 
 
 class AnthropicMessagesProvider(ModelProvider):
@@ -880,6 +924,8 @@ class AnthropicMessagesProvider(ModelProvider):
         }
         if system:
             payload["system"] = system
+        if request.tools:
+            payload["tools"] = self._tools_payload(request.tools)
         for key in ("temperature", "top_p"):
             if key in self.binding.config:
                 payload[key] = self.binding.config[key]
@@ -895,6 +941,7 @@ class AnthropicMessagesProvider(ModelProvider):
         endpoint = f"{self.base_url}/messages" if self.base_url.endswith("/v1") else f"{self.base_url}/v1/messages"
         input_tokens = 0
         output_tokens = 0
+        tool_call_parts: Dict[int, Dict[str, str]] = {}
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             async with client.stream("POST", endpoint, headers=headers, json=payload) as response:
                 response.raise_for_status()
@@ -909,12 +956,33 @@ class AnthropicMessagesProvider(ModelProvider):
                         input_tokens = int(
                             (raw.get("message") or {}).get("usage", {}).get("input_tokens") or 0
                         )
+                    elif raw.get("type") == "content_block_start":
+                        block = raw.get("content_block") or {}
+                        if block.get("type") == "tool_use":
+                            index = int(raw.get("index", 0))
+                            tool_call_parts[index] = {
+                                "id": str(block.get("id") or ""),
+                                "name": str(block.get("name") or ""),
+                                "arguments": "",
+                            }
                     elif raw.get("type") == "message_delta":
                         output_tokens = int(
                             (raw.get("usage") or {}).get("output_tokens") or 0
                         )
                     delta = raw.get("delta") or {}
+                    if (
+                        raw.get("type") == "content_block_delta"
+                        and delta.get("type") == "input_json_delta"
+                    ):
+                        index = int(raw.get("index", 0))
+                        current = tool_call_parts.setdefault(
+                            index,
+                            {"id": "", "name": "", "arguments": ""},
+                        )
+                        current["arguments"] += str(delta.get("partial_json") or "")
                     text = delta.get("text") if delta.get("type") == "text_delta" else ""
+                    if not isinstance(text, str):
+                        text = ""
                     usage = None
                     if input_tokens or output_tokens:
                         usage = TokenUsage(
@@ -923,6 +991,23 @@ class AnthropicMessagesProvider(ModelProvider):
                         )
                     if text or usage is not None:
                         yield ModelStreamChunk(text=text or "", usage=usage)
+
+        if tool_call_parts:
+            calls: List[ToolCall] = []
+            for index, raw_call in sorted(tool_call_parts.items()):
+                arguments = raw_call["arguments"] or "{}"
+                try:
+                    parsed = json.loads(arguments)
+                except json.JSONDecodeError:
+                    parsed = {"raw": arguments}
+                calls.append(
+                    ToolCall(
+                        id=raw_call["id"] or f"call_{uuid.uuid4().hex[:12]}",
+                        name=raw_call["name"],
+                        arguments=parsed,
+                    )
+                )
+            yield ModelStreamChunk(tool_calls=calls)
 
 
 def create_openai_compatible_provider(binding: ModelBinding) -> ModelProvider:

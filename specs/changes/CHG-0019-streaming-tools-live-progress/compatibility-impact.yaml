@@ -1,0 +1,18 @@
+---
+kind: compatibility-impact
+id: CHG-0019-COMPATIBILITY
+status: additive
+public_contract:
+  - "ModelStreamChunk 增加可选、默认空的 tool_calls 字段"
+  - "RunEvent 和 model.delta payload 不变"
+provider_adapters:
+  - "OpenAI-compatible stream payload 在存在工具时增加 tools，并聚合 tool_calls"
+  - "Anthropic Messages stream payload 在存在工具时增加 tools，并聚合 tool_use/input_json_delta"
+fallbacks:
+  - "无 streaming capability 的 Provider 保持 complete()"
+  - "native stream 在未公开正文或完整工具调用前失败时保持 complete() fallback"
+security:
+  - "不新增凭证持久化或前端字段"
+  - "工具参数片段不进入 model.delta、公开阶段、Trace payload 或日志"
+limits:
+  - "0.1 仍是单进程基线，不承诺跨进程流恢复"

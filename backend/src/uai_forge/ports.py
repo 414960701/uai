@@ -163,9 +163,15 @@ class ModelOutput(StrictModel):
 
 
 class ModelStreamChunk(StrictModel):
-    """Provider-neutral text increment emitted during a model response."""
+    """Provider-neutral increment emitted during a model response.
+
+    Providers must aggregate protocol-specific partial tool-call fragments before
+    putting them in ``tool_calls``.  The runtime therefore only sees complete,
+    provider-neutral calls and can keep them out of the public text event stream.
+    """
 
     text: str = ""
+    tool_calls: List[ToolCall] = Field(default_factory=list)
     usage: Optional[TokenUsage] = None
 
 
@@ -180,7 +186,11 @@ class ModelProvider(ABC):
         """Compatibility fallback for providers without native streaming."""
 
         output = await self.complete(request)
-        yield ModelStreamChunk(text=output.content, usage=output.usage)
+        yield ModelStreamChunk(
+            text=output.content,
+            tool_calls=output.tool_calls,
+            usage=output.usage,
+        )
 
     def thinking_resolution(self, request: ModelRequest) -> ThinkingResolution:
         """Return a safe, provider-neutral mapping outcome for observability."""
