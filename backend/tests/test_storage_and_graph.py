@@ -43,6 +43,39 @@ async def test_agent_updates_are_versioned_and_optimistic(repository):
 
 
 @pytest.mark.asyncio
+async def test_latest_pointer_can_roll_back_without_reusing_revision(repository):
+    v1 = await repository.save_agent(
+        "default",
+        AgentSpec(id="agt_rollback", name="Rollback Agent", system_prompt="v1"),
+    )
+    v2 = await repository.save_agent(
+        "default",
+        v1.model_copy(update={"system_prompt": "v2"}),
+        expected_revision=v1.revision,
+    )
+    v3 = await repository.save_agent(
+        "default",
+        v2.model_copy(update={"system_prompt": "v3"}),
+        expected_revision=v2.revision,
+    )
+
+    latest = await repository.rollback_agent(
+        "default", v1.id, v1.revision, expected_revision=v3.revision
+    )
+    assert latest.revision == v1.revision
+    assert (await repository.get_agent("default", v1.id)).system_prompt == "v1"
+    assert [item.revision for item in await repository.list_agent_revisions("default", v1.id)] == [3, 2, 1]
+
+    v4 = await repository.save_agent(
+        "default",
+        latest.model_copy(update={"system_prompt": "v4 after rollback"}),
+        expected_revision=v1.revision,
+    )
+    assert v4.revision == 4
+    assert (await repository.get_agent("default", v1.id)).system_prompt == "v4 after rollback"
+
+
+@pytest.mark.asyncio
 async def test_mount_cycles_are_rejected(repository):
     agent_a = await repository.save_agent(
         "default",
@@ -112,6 +145,47 @@ async def test_graph_traverses_the_pinned_revision_instead_of_latest(repository)
 
     assert result.valid is True
     assert not any(issue.code == "mount_cycle" for issue in result.issues)
+
+
+@pytest.mark.asyncio
+async def test_graph_unpinned_mount_follows_latest_pointer(repository):
+    child_v1 = await repository.save_agent(
+        "default",
+        AgentSpec(
+            id="agt_unpinned_child",
+            name="Unpinned Child",
+            system_prompt="v1 has no outgoing mounts",
+        ),
+    )
+    parent = await repository.save_agent(
+        "default",
+        AgentSpec(
+            id="agt_unpinned_parent",
+            name="Unpinned Parent",
+            system_prompt="parent",
+            children=[ChildMount(alias="child", agent_id=child_v1.id)],
+        ),
+    )
+    child_v2 = await repository.save_agent(
+        "default",
+        child_v1.model_copy(
+            update={
+                "system_prompt": "v2 introduces a cycle",
+                "children": [ChildMount(alias="back", agent_id=parent.id)],
+            }
+        ),
+        expected_revision=child_v1.revision,
+    )
+
+    latest_v2 = await AgentGraphValidator(repository).validate("default", parent.id)
+    assert latest_v2.valid is False
+    assert any(issue.code == "mount_cycle" for issue in latest_v2.issues)
+
+    await repository.rollback_agent(
+        "default", child_v1.id, child_v1.revision, expected_revision=child_v2.revision
+    )
+    rolled_back = await AgentGraphValidator(repository).validate("default", parent.id)
+    assert rolled_back.valid is True
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,8 @@ last_reviewed: 2026-07-30
 
 - [协议优先核心](../../../docs/architecture/adr/ADR-0001-protocol-first-core.md)
 - [版本化资源](../../../docs/architecture/adr/ADR-0002-versioned-resources.md)
+- [Agent revision 直接运行](../../../docs/architecture/adr/ADR-0008-agent-revision-run-targets.md)
+- [Agent 草稿/发布生命周期](../../../docs/architecture/adr/ADR-0009-agent-draft-publish-lifecycle.md)
 - [双多 Agent 语义](../../../docs/architecture/adr/ADR-0003-dual-agent-collaboration.md)
 - [插件信任边界](../../../docs/architecture/adr/ADR-0004-plugin-trust.md)
 - [可恢复执行提案](../../../docs/architecture/adr/ADR-0005-at-least-once-recovery.md)
@@ -23,7 +25,7 @@ Web / CLI / HTTP / SSE adapters
              ↓
 Application services: registry, run manager, team coordinator
              ↓
-Domain: definitions, revisions, instances, sessions, runs, policies, messages
+Domain: definitions, revisions, sessions, runs, policies, messages
              ↓
 Ports: provider, tool, store, bus, workspace, credential, policy, tracer
              ↓
@@ -36,7 +38,7 @@ Local / cloud / third-party adapters
 
 `0.1.x` 已定义由 UAI Forge 领域类型组成的最小结构化 `Protocol`：
 
-- `RepositoryPort`：图校验和 Run 执行所需的 Agent/Instance 读取与 Run 读写。
+- `RepositoryPort`：图校验和 Run 执行所需的 Agent revision 读取与 Run 读写。
 - `EventStorePort`：有序 Run Event 追加、回放与 terminal 查询。
 - `EventBusPort`：Runtime/RunManager 的事件发布边界。
 - `EventStreamPort`：HTTP/SSE 使用的可选回放与实时订阅面。
@@ -51,22 +53,19 @@ Checkpoint、Outbox、Lease 等恢复端口仍属于后续设计，不能把本�
 
 `0.1.0` SQLite 表：
 
-- `agents`：每 tenant 的 Agent 最新视图。
+- `agents`：每 tenant 的 Agent 当前视图；`revision` 是 `latest` 标签指向的快照编号，
+  不是历史序列的最大值。
 - `agent_revisions`：不可变 revision 历史。
-- `instances`：Instance JSON。
+- `agent_revisions.status`：`draft` 或 `published`；`published_at` 只在发布时写入。
 - `runs`：Run JSON 与索引状态。
 - `run_events`：每 tenant/run 的单调 sequence。
 
 当前模型可以支持单进程控制面，但不能支持 worker lease、checkpoint、outbox 或 peer inbox。
 
-### Instance effective spec（`0.1.x`）
-
-- `InstanceConfigOverrides` 使用 `extra=forbid`，当前只声明可选的 execution policy 字段。
-- 数值策略对 definition 与 Instance override 取 `min`；`fail_fast` 使用逻辑 OR。
-- Run 从不可变 revision 的 dump 构造候选值，再以完整 `AgentSpec` 合同复验；不写回 revision。
-- Instance ID 与 environment 由服务端加入 Run metrics、`run.started`、provider metadata
-  以及 middleware/tool context。
-- environment 当前只是非敏感部署标识，不代表正式 deployment profile 或云调度。
+当前 SQLite v3 不读取旧 `instances` 表、旧 Run `instance_id` 或缺失 lifecycle 字段；
+遇到这些结构必须备份后重建。Run 从可选的 `agent_revision` 读取不可变快照；缺失时读取
+latest 指针，然后把实际 revision 写入 Run。回滚更新当前视图指针，历史表保持不变；继续
+发布从历史最大编号之后分配新 revision。
 
 ## 目标数据模型
 
@@ -108,7 +107,7 @@ Checkpoint、Outbox、Lease 等恢复端口仍属于后续设计，不能把本�
 - 每个 bounded invocation 有自己的 step/tool/token ledger 和直接 child semaphore；动作
   同时受根 ledger/根 semaphore 约束。child timeout 覆盖许可等待与执行。
 - ancestor 的绝对深度上限与 child 本地相对 `max_depth` 取更严格值。
-- child revision 可钉住；未钉住时解析调用开始时的最新 revision。
+- child revision 可钉住；未钉住时解析调用开始时子 Agent 的 `latest` 标签。
 - path guard 和静态图共同阻止递归。
 - child 结果以结构化 tool result 返回父模型。
 - `ChildMount.allowed_tools` 以插件 ID 表达 scope；沿树与 ancestor scope 取交集，再叠加
@@ -120,7 +119,7 @@ Checkpoint、Outbox、Lease 等恢复端口仍属于后续设计，不能把本�
 
 durable peer 不复用 `_delegate` 调用栈：
 
-1. Team membership 绑定独立 Agent Instance 与 Session。
+1. Team membership 绑定 Agent 与 Session。
 2. sender 写入持久 inbox message，并记录 correlation/causation 和 dedupe key。
 3. peer worker 独立领取消息、创建 Run、checkpoint 和回复。
 4. Team policy 决定超时、重试、升级、取消传播和成员移除。

@@ -6,7 +6,6 @@ from uai_forge.builtins import register_builtins
 from uai_forge.events import EventBroker
 from uai_forge.graph import AgentGraphValidator
 from uai_forge.models import (
-    AgentInstance,
     AgentSpec,
     EventType,
     ModelConfig,
@@ -39,7 +38,6 @@ class InMemoryCoreRepository:
         self._latest: Dict[Tuple[str, str], AgentSpec] = {
             (agent.tenant_id, agent.id): agent for agent in agents
         }
-        self._instances: Dict[Tuple[str, str], AgentInstance] = {}
         self._runs: Dict[Tuple[str, str], RunRecord] = {}
         self._configs = {
             (agent.tenant_id, agent.model.model_config_id): ModelConfig(
@@ -62,13 +60,6 @@ class InMemoryCoreRepository:
         if revision is None:
             return self._latest.get((tenant_id, agent_id))
         return self._agents.get((tenant_id, agent_id, revision))
-
-    async def get_instance(
-        self,
-        tenant_id: str,
-        instance_id: str,
-    ) -> Optional[AgentInstance]:
-        return self._instances.get((tenant_id, instance_id))
 
     async def create_run(self, run: RunRecord) -> RunRecord:
         self._runs[(run.tenant_id, run.id)] = run

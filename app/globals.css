@@ -355,10 +355,10 @@
 .chat-scroll-bottom {
   align-items: center;
   background: rgba(255, 255, 255, 0.96);
-  border: 1px solid #cfe1d7;
+  border: 1px solid #dce7f4;
   border-radius: 999px;
   bottom: 14px;
-  box-shadow: 0 5px 16px rgba(31, 52, 43, 0.12);
+  box-shadow: 0 5px 16px rgba(35, 47, 64, 0.12);
   color: var(--lime);
   display: inline-flex;
   font-size: 11px;
@@ -371,8 +371,8 @@
 }
 
 .chat-scroll-bottom:hover {
-  background: #f1f8f4;
-  border-color: #9fc5b0;
+  background: #f5f8fc;
+  border-color: #b9cce4;
 }
 
 .chat-turn {
@@ -409,8 +409,8 @@
 }
 
 .user-message .chat-message-bubble {
-  background: #edf5f0;
-  border: 1px solid #d7e7de;
+  background: #f4f6f8;
+  border: 1px solid #e5e9ee;
   border-radius: 16px 16px 5px 16px;
   padding: 10px 13px;
 }
@@ -490,6 +490,17 @@
   border-radius: 50%;
   height: 6px;
   width: 6px;
+}
+
+.chat-message-mode {
+  background: #f0f5fc;
+  border: 1px solid #dce7f4;
+  border-radius: 999px;
+  color: var(--lime);
+  display: inline-flex;
+  font-size: 9px;
+  line-height: 1;
+  padding: 4px 6px;
 }
 
 .chat-message-foot {
@@ -669,8 +680,8 @@
 }
 
 .chat-composer textarea:focus {
-  border-color: #7fa392;
-  box-shadow: 0 0 0 3px rgba(63, 117, 98, 0.1);
+  border-color: #9bb2d1;
+  box-shadow: 0 0 0 3px rgba(86, 103, 216, 0.13);
   outline: none;
 }
 
@@ -693,6 +704,39 @@
   display: flex;
   gap: 10px;
   justify-content: space-between;
+}
+
+.chat-mode-indicator {
+  align-items: flex-start;
+  background: #f0f5fc;
+  border: 1px solid #dce7f4;
+  border-radius: 8px;
+  color: var(--lime);
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.chat-mode-indicator > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.chat-mode-indicator > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chat-mode-indicator strong {
+  color: var(--text);
+  font-size: 10px;
+}
+
+.chat-mode-indicator small {
+  color: var(--muted-strong);
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 .thinking-mode-picker {
@@ -751,10 +795,10 @@
 
 .chat-plan-notice {
   align-items: center;
-  background: rgba(134, 201, 177, 0.08);
-  border: 1px solid rgba(134, 201, 177, 0.2);
+  background: rgba(79, 131, 176, 0.08);
+  border: 1px solid rgba(79, 131, 176, 0.2);
   border-radius: 8px;
-  color: #a9d8c5;
+  color: #5f7f9f;
   display: flex;
   font-size: 9px;
   gap: 7px;
@@ -768,6 +812,590 @@
 
 .run-plan-notice {
   margin-top: 12px;
+}
+
+.plan-card {
+  background: #fbfcfd;
+  border: 1px solid #e3e8ee;
+  border-radius: 12px;
+  margin-top: 14px;
+  overflow: hidden;
+}
+
+.plan-card.compact {
+  margin-top: 10px;
+}
+
+.plan-card-head {
+  align-items: center;
+  background: #fbfcfd;
+  border-bottom: 1px solid #edf0f4;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 11px 12px;
+}
+
+.plan-card-title {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.plan-card-title > span:last-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.plan-card-title strong {
+  font-size: 12px;
+}
+
+.plan-card-title small,
+.plan-card-goal small,
+.plan-card-meta small,
+.plan-editor label > span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.plan-card-icon {
+  align-items: center;
+  background: #f0f5fc;
+  border: 1px solid #dce7f4;
+  border-radius: 7px;
+  color: var(--lime);
+  display: inline-flex;
+  height: 27px;
+  justify-content: center;
+  width: 27px;
+}
+
+.plan-status {
+  border: 1px solid #cbd9e5;
+  border-radius: 999px;
+  color: var(--lime);
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 4px 7px;
+}
+
+.plan-status.needs_revision {
+  border-color: #ddcda9;
+  color: var(--amber);
+}
+
+.plan-status.executing,
+.plan-status.approved {
+  border-color: #bfcfe0;
+  color: var(--blue);
+}
+
+.plan-status.completed {
+  background: var(--success-soft);
+  border-color: #cfe9db;
+  color: var(--success);
+}
+
+.plan-status.failed,
+.plan-status.rejected,
+.plan-status.cancelled {
+  border-color: #e6c4c4;
+  color: var(--red);
+}
+
+.plan-card-goal {
+  display: grid;
+  gap: 5px;
+  padding: 12px 13px 6px;
+}
+
+.plan-card-goal p {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.plan-step-list {
+  display: grid;
+  gap: 0;
+  list-style: none;
+  margin: 0;
+  padding: 5px 13px 7px;
+}
+
+.plan-step {
+  align-items: flex-start;
+  display: flex;
+  gap: 9px;
+  min-width: 0;
+  padding: 9px 0;
+  position: relative;
+}
+
+.plan-step:not(:last-child)::after {
+  background: #dce4ec;
+  content: "";
+  left: 10px;
+  position: absolute;
+  top: 29px;
+  bottom: -1px;
+  width: 1px;
+}
+
+.plan-step-number {
+  align-items: center;
+  background: #f0f5fc;
+  border: 1px solid #dce7f4;
+  border-radius: 50%;
+  color: var(--lime);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 10px;
+  height: 21px;
+  justify-content: center;
+  position: relative;
+  width: 21px;
+  z-index: 1;
+}
+
+.plan-step.completed .plan-step-number {
+  background: var(--success-soft);
+  border-color: #cfe9db;
+  color: var(--success);
+}
+
+.plan-step-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.plan-step-copy strong {
+  font-size: 11px;
+}
+
+.plan-step-copy small {
+  color: var(--muted-strong);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.plan-step-copy em {
+  color: var(--muted);
+  font-size: 9px;
+  font-style: normal;
+}
+
+.plan-card-meta {
+  border-top: 1px solid #edf0f4;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 10px 13px;
+}
+
+.plan-card-meta > div {
+  min-width: 0;
+}
+
+.plan-card-meta ul {
+  color: var(--muted-strong);
+  font-size: 10px;
+  line-height: 1.45;
+  margin: 5px 0 0;
+  padding-left: 14px;
+}
+
+.plan-card-actions {
+  align-items: center;
+  border-top: 1px solid #edf0f4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 10px 13px;
+}
+
+.plan-card-actions .button {
+  font-size: 10px;
+  min-height: 30px;
+  padding: 0 9px;
+}
+
+.plan-reject {
+  color: var(--muted-strong);
+}
+
+.plan-card-note {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+  margin: 0;
+  padding: 0 13px 11px;
+}
+
+.plan-editor {
+  display: grid;
+  gap: 9px;
+  padding: 12px 13px 0;
+}
+
+.plan-editor label {
+  display: grid;
+  gap: 5px;
+}
+
+.plan-editor input,
+.plan-editor textarea {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 7px 8px;
+  resize: vertical;
+  width: 100%;
+}
+
+.plan-editor input:focus,
+.plan-editor textarea:focus {
+  border-color: #9bb2d1;
+  box-shadow: 0 0 0 3px rgba(86, 103, 216, 0.13);
+  outline: none;
+}
+
+.plan-action-error {
+  margin: 0 13px 10px;
+}
+
+.task-monitor,
+.choice-card {
+  background: #fbfdfc;
+  border: 1px solid #d6e6dd;
+  border-radius: 11px;
+  margin-top: 12px;
+  overflow: hidden;
+}
+
+.task-monitor.compact {
+  background: #f7fbf9;
+}
+
+.task-monitor-head,
+.choice-card-head {
+  align-items: center;
+  border-bottom: 1px solid #e4eee9;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
+.task-monitor-title {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.task-monitor-title > span:last-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.task-monitor-title strong,
+.choice-card-head strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.task-monitor-title small,
+.choice-card-head span,
+.task-monitor-progress,
+.task-monitor-item small,
+.task-monitor-subsection small,
+.choice-card-description,
+.choice-option small,
+.choice-card-note {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.task-monitor-icon {
+  align-items: center;
+  background: #e7f2ec;
+  border-radius: 7px;
+  color: var(--lime);
+  display: inline-flex;
+  height: 26px;
+  justify-content: center;
+  width: 26px;
+}
+
+.task-monitor-status {
+  border: 1px solid #cfdfd5;
+  border-radius: 999px;
+  color: var(--muted);
+  flex: 0 0 auto;
+  font-size: 9px;
+  padding: 4px 7px;
+}
+
+.task-monitor-status.running {
+  background: #eef5fb;
+  border-color: #c9dbea;
+  color: var(--blue);
+}
+
+.task-monitor-status.completed {
+  background: #edf7f1;
+  border-color: #cbe3d4;
+  color: var(--lime);
+}
+
+.task-monitor-status.failed {
+  background: #fff5f5;
+  border-color: #efd1d1;
+  color: var(--red);
+}
+
+.task-monitor-progress {
+  display: grid;
+  gap: 3px;
+  line-height: 1.4;
+  padding: 9px 12px 4px;
+}
+
+.task-monitor-progress span:first-child {
+  color: var(--muted-strong);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+}
+
+.task-monitor-list {
+  display: grid;
+  gap: 0;
+  list-style: none;
+  margin: 0;
+  padding: 4px 12px 9px;
+}
+
+.task-monitor-item {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 0;
+}
+
+.task-monitor-item + .task-monitor-item {
+  border-top: 1px solid #eef3f0;
+}
+
+.task-monitor-item > span:last-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.task-monitor-item strong {
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.task-monitor-item small {
+  line-height: 1.45;
+}
+
+.task-monitor-item-mark {
+  align-items: center;
+  border: 1px solid #cbd9d2;
+  border-radius: 50%;
+  color: var(--muted);
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 18px;
+  justify-content: center;
+  margin-top: 1px;
+  width: 18px;
+}
+
+.task-monitor-item-mark > span {
+  background: #b9c7c0;
+  border-radius: 50%;
+  height: 5px;
+  width: 5px;
+}
+
+.task-monitor-item.completed .task-monitor-item-mark {
+  background: #e3f2e9;
+  border-color: #b7d9c3;
+  color: var(--lime);
+}
+
+.task-monitor-item.running .task-monitor-item-mark {
+  background: #eef5fb;
+  border-color: #c3d9ea;
+  color: var(--blue);
+}
+
+.task-monitor-item.failed .task-monitor-item-mark {
+  background: #fff1f1;
+  border-color: #e8c4c4;
+  color: var(--red);
+}
+
+.task-monitor-item.completed strong {
+  color: var(--muted-strong);
+  text-decoration: line-through;
+}
+
+.task-monitor-subsections {
+  border-top: 1px solid #e4eee9;
+  display: grid;
+  gap: 9px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 10px 12px 11px;
+}
+
+.task-monitor-subsection {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.task-monitor-subsection > span {
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.task-monitor-subsection strong {
+  color: var(--muted-strong);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.choice-card {
+  background: #ffffff;
+  border-color: #d8d2ea;
+}
+
+.choice-card-head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.choice-card-kicker {
+  color: var(--violet) !important;
+  font-size: 9px !important;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.choice-card-description {
+  line-height: 1.5;
+  margin: 0;
+  padding: 10px 12px 2px;
+}
+
+.choice-card-options {
+  display: grid;
+  gap: 6px;
+  padding: 9px 12px;
+}
+
+.choice-option {
+  align-items: center;
+  background: #fbfaff;
+  border: 1px solid #e1dced;
+  border-radius: 8px;
+  color: var(--text);
+  display: flex;
+  gap: 8px;
+  min-height: 42px;
+  padding: 7px 8px;
+  text-align: left;
+  width: 100%;
+}
+
+.choice-option:hover:not(:disabled),
+.choice-option.selected {
+  background: #f3f0fb;
+  border-color: #a99ccf;
+}
+
+.choice-option:disabled {
+  cursor: default;
+  opacity: 0.82;
+}
+
+.choice-option-index {
+  align-items: center;
+  background: #ece8f7;
+  border-radius: 6px;
+  color: var(--violet);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 10px;
+  height: 22px;
+  justify-content: center;
+  width: 22px;
+}
+
+.choice-option > span:nth-child(2) {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.choice-option strong {
+  font-size: 10px;
+}
+
+.choice-option small {
+  line-height: 1.4;
+}
+
+.choice-option em {
+  color: var(--violet);
+  font-size: 9px;
+  font-style: normal;
+  margin-left: auto;
+}
+
+.choice-card-actions {
+  align-items: center;
+  border-top: 1px solid #eeeaf5;
+  display: flex;
+  gap: 7px;
+  justify-content: flex-end;
+  padding: 9px 12px;
+}
+
+.choice-card-actions .button {
+  font-size: 10px;
+  min-height: 29px;
+  padding: 0 9px;
+}
+
+.choice-card-note {
+  border-top: 1px solid #eeeaf5;
+  line-height: 1.45;
+  margin: 0;
+  padding: 9px 12px 10px;
 }
 
 .public-reasoning {
@@ -801,7 +1429,7 @@
 }
 
 .public-reasoning[open] .public-reasoning-head {
-  border-bottom: 1px solid #e1ece6;
+  border-bottom: 1px solid #edf0f4;
 }
 
 .public-reasoning-title {
@@ -815,7 +1443,7 @@
 .public-reasoning-spark {
   align-items: center;
   background: var(--lime-soft);
-  border: 1px solid #cfe1d7;
+  border: 1px solid #dce7f4;
   border-radius: 6px;
   color: var(--lime);
   display: inline-flex;
@@ -850,8 +1478,8 @@
 }
 
 .public-reasoning-count {
-  background: #f1f6f3;
-  border: 1px solid #d8e6de;
+  background: #f7f9fc;
+  border: 1px solid #e3e8ee;
   border-radius: 999px;
   color: var(--muted-strong);
   flex: 0 0 auto;
@@ -875,9 +1503,9 @@
 }
 
 .public-reasoning-count.active {
-  background: #edf5f0;
-  border-color: #bcd6c8;
-  color: var(--lime);
+  background: #f0f5fc;
+  border-color: #bfd2e6;
+  color: var(--info);
 }
 
 .public-reasoning-count.failed {
@@ -904,7 +1532,7 @@
 
 .public-reasoning-step {
   align-items: flex-start;
-  border-top: 1px solid #e6efea;
+  border-top: 1px solid #edf0f4;
   display: grid;
   gap: 10px;
   grid-template-columns: 24px minmax(0, 1fr);
@@ -913,7 +1541,7 @@
 }
 
 .public-reasoning-step:not(:last-child)::after {
-  background: #dfeae4;
+  background: #dfe5ed;
   content: "";
   height: calc(100% - 21px);
   left: 11px;
@@ -924,8 +1552,8 @@
 
 .public-reasoning-marker {
   align-items: center;
-  background: #edf5f0;
-  border: 1px solid #cfe1d7;
+  background: #f0f5fc;
+  border: 1px solid #dce7f4;
   border-radius: 50%;
   color: var(--muted-strong);
   display: inline-flex;
@@ -937,13 +1565,14 @@
 }
 
 .public-reasoning-step.active .public-reasoning-marker {
-  border-color: #7fa392;
-  box-shadow: 0 0 0 3px rgba(63, 117, 98, 0.1);
+  border-color: #a8bed9;
+  box-shadow: 0 0 0 3px rgba(86, 103, 216, 0.1);
 }
 
 .public-reasoning-step.complete .public-reasoning-marker {
-  background: var(--lime-soft);
-  color: var(--lime);
+  background: var(--success-soft);
+  border-color: #cfe9db;
+  color: var(--success);
 }
 
 .public-reasoning-step.degraded .public-reasoning-marker,
@@ -992,8 +1621,8 @@
 }
 
 .public-reasoning-step-state {
-  background: #f1f6f3;
-  border: 1px solid #d8e6de;
+  background: #f7f9fc;
+  border: 1px solid #e3e8ee;
   border-radius: 999px;
   color: var(--muted);
   flex: 0 0 auto;
@@ -1002,9 +1631,9 @@
 }
 
 .public-reasoning-step-state.active {
-  background: #edf5f0;
-  border-color: #bcd6c8;
-  color: var(--lime);
+  background: #f0f5fc;
+  border-color: #bfd2e6;
+  color: var(--info);
 }
 
 .public-reasoning-step-state.degraded,
@@ -1016,15 +1645,15 @@
 }
 
 .public-reasoning-note {
-  background: #f1f7f3;
-  border-top: 1px solid #e1ece6;
+  background: #f8fafc;
+  border-top: 1px solid #edf0f4;
   line-height: 1.45;
   margin: 0;
   padding: 9px 12px 10px;
 }
 
 .public-reasoning-empty {
-  border-top: 1px solid #e6efea;
+  border-top: 1px solid #edf0f4;
   padding: 11px;
 }
 
@@ -1032,9 +1661,9 @@
 .public-reasoning.compact {
   background: transparent;
   border: 0;
-  border-bottom: 1px solid #e1ece6;
+  border-bottom: 1px solid #eef1f4;
   border-radius: 0;
-  border-top: 1px solid #e1ece6;
+  border-top: 1px solid #eef1f4;
   margin-top: 17px;
 }
 
@@ -1069,8 +1698,8 @@
 
 .public-reasoning-live-dot {
   align-items: center;
-  background: #edf5f0;
-  border: 1px solid #cfe1d7;
+  background: #f0f5fc;
+  border: 1px solid #dce7f4;
   border-radius: 50%;
   display: inline-flex;
   flex: 0 0 auto;
@@ -1080,7 +1709,7 @@
 }
 
 .public-reasoning-live-dot > span {
-  background: var(--lime);
+  background: var(--info);
   border-radius: 50%;
   height: 4px;
   width: 4px;
@@ -1088,7 +1717,7 @@
 
 .public-reasoning-live-dot.active {
   animation: public-reasoning-pulse 1.6s ease-out infinite;
-  border-color: #9fc5b0;
+  border-color: #a8bed9;
 }
 
 .public-reasoning-live-dot.failed,
@@ -1136,7 +1765,7 @@
 }
 
 .public-reasoning-compact-status.active {
-  color: var(--lime);
+  color: var(--info);
 }
 
 .public-reasoning-compact-status.failed,
@@ -1145,7 +1774,7 @@
 }
 
 .public-reasoning-compact-body {
-  border-top: 1px solid #e1ece6;
+  border-top: 1px solid #eef1f4;
   padding: 10px 0 11px;
 }
 
@@ -1166,8 +1795,8 @@
 
 .public-reasoning-compact-step {
   align-items: flex-start;
-  background: #f6faf8;
-  border: 1px solid #e1ece6;
+  background: #f8fafc;
+  border: 1px solid #e3e8ee;
   border-radius: 8px;
   display: flex;
   gap: 6px;
@@ -1198,7 +1827,7 @@
 }
 
 .public-reasoning-compact-step-dot {
-  background: #c5d8ce;
+  background: #b8c9dc;
   border-radius: 50%;
   flex: 0 0 auto;
   height: 6px;
@@ -1207,13 +1836,13 @@
 }
 
 .public-reasoning-compact-step.active {
-  background: #f1f8f4;
-  border-color: #bcd6c8;
+  background: #f0f5fc;
+  border-color: #bfd2e6;
 }
 
 .public-reasoning-compact-step.active .public-reasoning-compact-step-dot {
-  background: var(--lime);
-  box-shadow: 0 0 0 3px rgba(63, 117, 98, 0.1);
+  background: var(--info);
+  box-shadow: 0 0 0 3px rgba(79, 131, 176, 0.1);
 }
 
 .public-reasoning-compact-step.failed .public-reasoning-compact-step-dot,
@@ -1223,8 +1852,8 @@
 }
 
 @keyframes public-reasoning-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(63, 117, 98, 0.2); }
-  60% { box-shadow: 0 0 0 5px rgba(63, 117, 98, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(79, 131, 176, 0.2); }
+  60% { box-shadow: 0 0 0 5px rgba(79, 131, 176, 0); }
 }
 
 .thinking-mode-note {
@@ -4890,6 +5519,19 @@ a:focus-visible,
   }
 }
 
+/* The sync toast must never sit on top of the composer or its send action. */
+.forge-shell.chat-page .toast {
+  bottom: 190px;
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  .forge-shell.chat-page .toast {
+    bottom: 236px;
+    max-width: calc(100vw - 28px);
+  }
+}
+
 /* Restrained light theme: quiet surfaces, clear hierarchy, minimal decoration. */
 .sidebar {
   background: #fafcfb;
@@ -5287,127 +5929,6 @@ a:focus-visible,
   padding: 10px;
   resize: vertical;
   width: 100%;
-}
-
-.instance-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.instance-card {
-  color: inherit;
-  display: flex;
-  flex-direction: column;
-  min-height: 270px;
-  padding: 20px;
-  text-align: left;
-}
-
-.instance-card-head,
-.instance-card-footer {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-}
-
-.instance-icon {
-  align-items: center;
-  background: var(--lime-soft);
-  border-radius: 9px;
-  color: var(--lime);
-  display: inline-flex;
-  height: 38px;
-  justify-content: center;
-  width: 38px;
-}
-
-.instance-card h3 {
-  font-size: 15px;
-  font-weight: 620;
-  margin: 20px 0 6px;
-}
-
-.instance-card > p {
-  color: var(--muted);
-  font-size: 10px;
-  margin: 0;
-}
-
-.instance-values {
-  display: grid;
-  gap: 7px;
-  margin: 18px 0;
-}
-
-.instance-values > div {
-  align-items: center;
-  background: var(--panel-strong);
-  border: 1px solid var(--line-soft);
-  border-radius: 8px;
-  display: flex;
-  justify-content: space-between;
-  min-height: 36px;
-  padding: 0 10px;
-}
-
-.instance-values span {
-  color: var(--muted);
-  font-size: 8px;
-}
-
-.instance-values strong {
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 8px;
-  font-weight: 560;
-}
-
-.instance-card-footer {
-  border-top: 1px solid var(--line-soft);
-  margin-top: auto;
-  padding-top: 13px;
-}
-
-.instance-card-footer code {
-  color: #7a8581;
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 7px;
-}
-
-.add-instance-card {
-  align-items: center;
-  background: transparent;
-  border-style: dashed;
-  justify-content: center;
-  text-align: center;
-}
-
-.add-instance-card strong {
-  font-size: 13px;
-  margin: 14px 0 7px;
-}
-
-.add-instance-card p {
-  line-height: 1.55;
-  max-width: 250px;
-}
-
-@media (max-width: 1180px) {
-  .instance-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-@media (max-width: 720px) {
-  .heading-actions {
-    align-items: stretch;
-    flex-direction: column;
-    width: 100%;
-  }
-
-  .instance-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* CHG-0010: visible, keyboard-friendly Agent creation steps. */
@@ -5860,7 +6381,7 @@ a:focus-visible,
 .trace-stats {
   display: grid;
   gap: 7px;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   padding: 10px;
 }
 
@@ -6640,18 +7161,3642 @@ body {
   }
 
   .forge-shell.chat-page .chat-inspector {
-    flex: 0 0 190px;
+    flex: 0 0 110px;
     max-height: none;
     min-height: 0;
   }
 
   .forge-shell.chat-page .chat-composer {
     flex: 0 0 auto;
+    position: relative;
+    z-index: 3;
   }
 
   .forge-shell.chat-page .thinking-mode-picker small,
   .forge-shell.chat-page .execution-mode-picker small,
   .forge-shell.chat-page .thinking-mode-note {
+    display: none;
+  }
+
+  .forge-shell.chat-page .plan-card-meta {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* CHG-0023/0025: quiet light palette — cloud canvas, indigo action color, status colors only for state. */
+:root {
+  --bg: #f7f8fc;
+  --bg-soft: #f0f2f8;
+  --panel: #ffffff;
+  --panel-strong: #fbfcff;
+  --panel-hover: #f4f6fb;
+  --line: #dfe5ef;
+  --line-soft: #e9edf4;
+  --text: #202838;
+  --muted: #7d889a;
+  --muted-strong: #556277;
+  --lime: #5667d8;
+  --lime-soft: #eef0ff;
+  --blue: #4c82c9;
+  --blue-soft: #edf4ff;
+  --violet: #8068c5;
+  --violet-soft: #f4efff;
+  --amber: #a8782c;
+  --amber-soft: #fff6e8;
+  --red: #c45660;
+  --red-soft: #fff0f2;
+  --shadow: 0 1px 2px rgba(36, 49, 78, 0.04), 0 12px 32px rgba(36, 49, 78, 0.05);
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.sidebar {
+  background: #fbfcfe;
+  border-right-color: #e4e9ef;
+}
+
+.brand-mark,
+.button-primary {
+  background: var(--lime);
+}
+
+.button-primary:hover:not(:disabled) {
+  background: #4e6e8d;
+}
+
+.nav-item {
+  color: #687686;
+}
+
+.nav-item:hover,
+.nav-item.active {
+  background: #eef3f8;
+  color: var(--text);
+}
+
+.sidebar-bottom,
+.card-heading,
+.panel-heading,
+.chat-main-head,
+.chat-sidebar-head,
+.chat-inspector-head {
+  border-color: var(--line-soft);
+}
+
+.runtime-card,
+.profile-avatar {
+  background: #f5f8fb;
+  border-color: #e0e7ee;
+}
+
+.topbar {
+  background: rgba(255, 255, 255, 0.94);
+  border-bottom-color: #e4e9ef;
+  box-shadow: 0 1px 0 rgba(44, 58, 74, 0.025);
+}
+
+.connection-pill,
+.icon-button,
+.button-secondary {
+  background: #ffffff;
+  border-color: #dce3ea;
+  color: var(--muted-strong);
+}
+
+.icon-button:hover,
+.button-secondary:hover:not(:disabled),
+.button-ghost:hover:not(:disabled) {
+  background: #f1f5f8;
+  border-color: #cbd6e1;
+}
+
+.panel,
+.toolbar,
+.orchestration-card,
+.metric-card,
+.agent-card,
+.plugin-card,
+.modal-card,
+.agent-drawer,
+.chat-sidebar,
+.chat-main,
+.chat-inspector {
+  border-color: var(--line-soft);
+  box-shadow: var(--shadow);
+}
+
+.search-field,
+.filter-button,
+.form-field input,
+.form-field textarea,
+.form-field select,
+.run-list-tools input,
+.run-list-tools select,
+.chat-sidebar-agent select,
+.chat-composer textarea {
+  background: #fbfcfe;
+  border-color: #dfe6ed;
+}
+
+.form-field input:focus,
+.form-field textarea:focus,
+.form-field select:focus,
+.run-list-tools input:focus,
+.run-list-tools select:focus,
+.chat-composer textarea:focus {
+  border-color: #8da8c1;
+  box-shadow: 0 0 0 3px rgba(93, 125, 159, 0.12);
+}
+
+.modal-scrim,
+.sidebar-scrim {
+  background: rgba(31, 42, 55, 0.22);
+}
+
+.modal-card {
+  box-shadow: 0 18px 48px rgba(44, 58, 74, 0.14);
+}
+
+.chat-thread {
+  background: #fbfcfe;
+}
+
+.user-message .chat-message-bubble {
+  background: #eef4f8;
+  border-color: #d9e5ee;
+}
+
+.chat-message-mode,
+.chat-mode-indicator,
+.chat-plan-notice {
+  background: #eef4f8;
+  border-color: #d6e2ec;
+  color: var(--lime);
+}
+
+.chat-mode-indicator strong {
+  color: var(--text);
+}
+
+.chat-mode-indicator small {
+  color: var(--muted-strong);
+}
+
+.chat-agent-avatar {
+  background: #eef4f8;
+  color: var(--lime);
+}
+
+.chat-scroll-bottom {
+  border-color: #cfdeea;
+  color: var(--lime);
+}
+
+.chat-scroll-bottom:hover {
+  background: #eff5fa;
+  border-color: #a9bfd3;
+}
+
+.plan-card,
+.task-monitor {
+  background: #fcfdff;
+  border-color: #d7e1ea;
+}
+
+.plan-card-head,
+.task-monitor-head {
+  background: #f4f7fa;
+  border-bottom-color: #e2e8ee;
+}
+
+.plan-card-icon,
+.task-monitor-icon {
+  background: #e8f0f6;
+  color: var(--lime);
+}
+
+.plan-status {
+  border-color: #cbd9e5;
+  color: var(--lime);
+}
+
+.plan-step-number {
+  background: #eef4f8;
+  border-color: #d0dee9;
+  color: var(--lime);
+}
+
+.plan-step:not(:last-child)::after,
+.plan-card-meta,
+.plan-card-actions,
+.task-monitor-subsections,
+.task-monitor-item + .task-monitor-item {
+  border-color: #e5ebf0;
+}
+
+.public-reasoning,
+.public-reasoning.compact {
+  background: #fcfdff;
+  border-color: #dfe6ed;
+}
+
+.public-reasoning.compact .public-reasoning-head {
+  background: #f7f9fb;
+}
+
+.trace-payload {
+  background: #f3f6f9;
+  border: 1px solid #e1e7ed;
+  color: #536474;
+}
+
+.trace-stat-primary,
+.trace-filter-bar > button.active {
+  background: var(--lime-soft);
+  border-color: #d0dfeb;
+  color: var(--lime);
+}
+
+@media (max-width: 720px) {
+  .task-monitor-subsections {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* CHG-0024: chat-first Agent workspace — keep the transcript primary and make
+   monitoring, trace, and controls appear only when they help the current task. */
+.chat-view-stack {
+  gap: 10px;
+}
+
+.chat-view-heading {
+  min-height: 52px;
+  padding: 0 4px;
+}
+
+.chat-view-heading h2 {
+  font-size: 20px;
+  letter-spacing: -0.025em;
+}
+
+.chat-view-heading p {
+  margin-top: 3px;
+}
+
+.chat-workspace,
+.chat-workspace.details-collapsed {
+  gap: 12px;
+  grid-template-columns: 208px minmax(0, 1fr);
+}
+
+.chat-workspace.task-rail-visible {
+  grid-template-columns: 208px minmax(0, 1fr) 272px;
+}
+
+.chat-workspace.details-visible {
+  grid-template-columns: 208px minmax(0, 1fr) 304px;
+}
+
+.chat-task-rail {
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chat-task-rail .task-monitor {
+  height: 100%;
+  margin-top: 0;
+}
+
+.chat-sidebar,
+.chat-main,
+.chat-inspector,
+.chat-task-rail .task-monitor {
+  border-radius: 15px;
+  box-shadow: 0 1px 2px rgba(44, 58, 74, 0.025);
+}
+
+.chat-sidebar-head {
+  min-height: 60px;
+  padding: 12px 12px 10px;
+}
+
+.chat-new-button {
+  margin: 10px;
+  min-height: 34px;
+}
+
+.chat-main-head {
+  min-height: 60px;
+  padding: 11px 20px;
+}
+
+.chat-thread {
+  background: #ffffff;
+  gap: 34px;
+  padding: 34px clamp(20px, 7vw, 84px) 38px;
+}
+
+.chat-turn {
+  gap: 13px;
+  max-width: 820px;
+}
+
+.chat-message-bubble {
+  line-height: 1.6;
+}
+
+.assistant-message .chat-message-bubble {
+  border-bottom: 1px solid #eef1f4;
+  padding-bottom: 19px;
+  width: min(780px, 100%);
+}
+
+.assistant-message.selected .chat-message-bubble {
+  border-bottom-color: #e4eaf0;
+}
+
+.assistant-message .chat-message-meta {
+  margin-bottom: 11px;
+}
+
+.chat-message-meta strong {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chat-message-foot {
+  margin-top: 11px;
+  opacity: 1;
+}
+
+.chat-message-foot > span {
+  color: var(--muted);
+  font-size: 9px;
+  margin-right: auto;
+}
+
+.chat-message-foot button {
+  color: #778493;
+  font-size: 10px;
+}
+
+.chat-output {
+  font-size: 14px;
+  line-height: 1.82;
+}
+
+.chat-running {
+  background: #f7f9fc;
+  border: 1px solid #e2e8ef;
+  border-radius: 10px;
+  padding: 10px 11px;
+}
+
+.chat-message .task-monitor.compact {
+  display: none;
+}
+
+.chat-composer {
+  background: #ffffff;
+  gap: 8px;
+  padding: 12px 20px 14px;
+}
+
+.chat-composer textarea {
+  background: #f8fafc;
+  border-color: #dce4ec;
+  border-radius: 13px;
+  min-height: 68px;
+  padding: 13px 14px;
+}
+
+.chat-composer textarea:focus {
+  border-color: #8ea9c2;
+  box-shadow: 0 0 0 3px rgba(102, 138, 181, 0.12);
+}
+
+.chat-composer-options {
+  gap: 7px;
+  justify-content: flex-start;
+}
+
+.thinking-mode-picker,
+.execution-mode-picker {
+  background: #f7f9fb;
+  border: 1px solid #e1e7ed;
+  border-radius: 999px;
+  color: #647282;
+  gap: 5px;
+  min-height: 29px;
+  padding: 3px 7px;
+}
+
+.thinking-mode-picker > span,
+.execution-mode-picker > span {
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.thinking-mode-picker select,
+.execution-mode-picker select {
+  background: transparent;
+  border: 0;
+  font-size: 10px;
+  min-height: 21px;
+  outline: none;
+  padding: 0 17px 0 0;
+}
+
+.thinking-mode-note {
+  font-size: 9px;
+  margin-left: auto;
+}
+
+.composer-plan-badge {
+  align-items: center;
+  background: #f2f5fa;
+  border: 1px solid #d7e1ec;
+  border-radius: 999px;
+  color: #617fa1;
+  display: inline-flex;
+  font-size: 9px;
+  gap: 4px;
+  min-height: 27px;
+  padding: 0 8px;
+}
+
+.chat-mode-indicator {
+  align-items: center;
+  background: #f7f9fc;
+  border-color: #dce5ed;
+  border-radius: 9px;
+  color: #6a829d;
+  gap: 7px;
+  padding: 7px 9px;
+}
+
+.chat-mode-indicator strong {
+  font-size: 10px;
+}
+
+.chat-mode-indicator small {
+  font-size: 9px;
+}
+
+.chat-composer-foot {
+  padding-top: 1px;
+}
+
+.chat-composer-foot .button {
+  border-radius: 10px;
+  min-width: 84px;
+}
+
+.task-monitor {
+  background: #ffffff;
+  border-color: #e0e6ed;
+  display: flex;
+  flex-direction: column;
+}
+
+.task-monitor-head {
+  min-height: 58px;
+  padding: 12px 13px;
+}
+
+.task-monitor-head-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.task-monitor-trace-link {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: #70839a;
+  display: inline-flex;
+  font-size: 9px;
+  gap: 2px;
+  padding: 2px 0;
+}
+
+.task-monitor-trace-link:hover {
+  color: var(--lime);
+}
+
+.task-monitor-section {
+  padding: 13px;
+}
+
+.task-monitor-section-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.task-monitor-section-head strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.task-monitor-section-head span {
+  color: var(--muted);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+}
+
+.task-monitor-progress-track {
+  background: #edf1f5;
+  border-radius: 999px;
+  height: 5px;
+  margin-top: 9px;
+  overflow: hidden;
+}
+
+.task-monitor-progress-track > span {
+  background: #7f9fbd;
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  transition: width 180ms ease;
+}
+
+.task-monitor-progress {
+  padding: 8px 0 3px;
+}
+
+.task-monitor-list {
+  padding: 4px 0 0;
+}
+
+.task-monitor-item {
+  padding: 8px 0;
+}
+
+.task-monitor-item + .task-monitor-item {
+  border-top-color: #eef1f4;
+}
+
+.task-monitor-details {
+  border-top: 1px solid #eef1f4;
+  margin-top: auto;
+}
+
+.task-monitor-detail {
+  border-bottom: 1px solid #eef1f4;
+}
+
+.task-monitor-detail summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  list-style: none;
+  padding: 11px 13px;
+}
+
+.task-monitor-detail summary::-webkit-details-marker {
+  display: none;
+}
+
+.task-monitor-detail summary > span {
+  display: grid;
+  gap: 2px;
+}
+
+.task-monitor-detail summary strong {
+  color: var(--text);
+  font-size: 10px;
+}
+
+.task-monitor-detail summary small,
+.task-monitor-detail-body small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.task-monitor-detail summary svg {
+  color: var(--muted);
+  transition: transform 160ms ease;
+}
+
+.task-monitor-detail[open] summary svg {
+  transform: rotate(180deg);
+}
+
+.task-monitor-detail-body {
+  display: grid;
+  gap: 3px;
+  padding: 0 13px 12px;
+}
+
+.task-monitor-detail-body strong {
+  color: var(--muted-strong);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.choice-card {
+  border-color: #dfe3ec;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(71, 85, 105, 0.035);
+}
+
+.choice-card-head {
+  background: #fbfcfe;
+  padding: 11px 13px;
+}
+
+.choice-card-kicker {
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.choice-card-options {
+  gap: 5px;
+  padding: 10px 13px;
+}
+
+.choice-option {
+  background: #ffffff;
+  border-color: #e1e6ec;
+  border-radius: 9px;
+  min-height: 44px;
+  padding: 8px 9px;
+}
+
+.choice-option:hover:not(:disabled),
+.choice-option.selected {
+  background: #f5f8fc;
+  border-color: #9eb5cb;
+  box-shadow: 0 0 0 2px rgba(102, 138, 181, 0.08);
+}
+
+.choice-option-index {
+  background: #f0f3f7;
+  color: #6b7f94;
+}
+
+.public-reasoning.compact {
+  border-bottom-color: #eef1f4;
+  border-top-color: #eef1f4;
+  margin-top: 14px;
+}
+
+.public-reasoning.compact .public-reasoning-head {
+  min-height: 40px;
+  padding: 6px 0;
+}
+
+.public-reasoning.compact .public-reasoning-activity strong {
+  font-size: 10px;
+}
+
+.public-reasoning.compact .public-reasoning-activity small {
+  font-size: 9px;
+}
+
+@media (min-width: 721px) and (max-width: 1120px) {
+  .chat-workspace,
+  .chat-workspace.details-collapsed {
+    grid-template-columns: 186px minmax(0, 1fr);
+  }
+
+  .chat-workspace.task-rail-visible {
+    grid-template-columns: 186px minmax(0, 1fr) 238px;
+  }
+
+  .chat-workspace.details-visible {
+    grid-template-columns: 186px minmax(0, 1fr) 274px;
+  }
+}
+
+@media (max-width: 720px) {
+  .forge-shell.chat-page .content-stage {
+    padding: 8px 10px 10px;
+  }
+
+  .forge-shell.chat-page .chat-view-heading {
+    display: none;
+  }
+
+  .forge-shell.chat-page .chat-view-stack {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .forge-shell.chat-page .chat-workspace,
+  .forge-shell.chat-page .chat-workspace.details-collapsed,
+  .forge-shell.chat-page .chat-workspace.details-visible,
+  .forge-shell.chat-page .chat-workspace.task-rail-visible {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .forge-shell.chat-page .chat-sidebar {
+    flex: 0 0 auto;
+    max-height: 78px;
+  }
+
+  .forge-shell.chat-page .chat-sidebar-head {
+    min-height: 48px;
+    padding: 8px 10px;
+  }
+
+  .forge-shell.chat-page .chat-sidebar-head > div {
+    align-items: baseline;
+    display: flex;
+    gap: 7px;
+  }
+
+  .forge-shell.chat-page .chat-sidebar-head span {
+    font-size: 9px;
+  }
+
+  .forge-shell.chat-page .chat-new-button,
+  .forge-shell.chat-page .chat-session-list {
+    display: none;
+  }
+
+  .forge-shell.chat-page .chat-sidebar-agent {
+    align-items: center;
+    display: grid;
+    gap: 7px;
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 0 10px 8px;
+  }
+
+  .forge-shell.chat-page .chat-sidebar-agent label {
+    color: var(--muted);
+    font-size: 9px;
+  }
+
+  .forge-shell.chat-page .chat-sidebar-agent select {
+    min-height: 27px;
+  }
+
+  .forge-shell.chat-page .chat-sidebar-agent small {
+    display: none;
+  }
+
+  .forge-shell.chat-page .chat-main {
+    flex: 1 1 0;
+    min-height: 0;
+  }
+
+  .forge-shell.chat-page .chat-main-head {
+    min-height: 52px;
+    padding: 8px 11px;
+  }
+
+  .forge-shell.chat-page .chat-agent-avatar {
+    height: 28px;
+    width: 28px;
+  }
+
+  .forge-shell.chat-page .chat-thread {
+    gap: 26px;
+    padding: 22px 13px 28px;
+  }
+
+  .forge-shell.chat-page .chat-turn {
+    max-width: 100%;
+  }
+
+  .forge-shell.chat-page .user-message {
+    max-width: 92%;
+  }
+
+  .forge-shell.chat-page .chat-composer {
+    padding: 9px 10px 10px;
+  }
+
+  .forge-shell.chat-page .chat-composer textarea {
+    min-height: 58px;
+    max-height: 140px;
+  }
+
+  .forge-shell.chat-page .chat-composer-options {
+    flex-wrap: wrap;
+  }
+
+  .forge-shell.chat-page .thinking-mode-note {
+    display: none;
+  }
+
+  .forge-shell.chat-page .chat-composer-foot > span {
+    font-size: 8px;
+  }
+
+  .forge-shell.chat-page .chat-message .task-monitor.compact {
+    display: block;
+  }
+
+  .forge-shell.chat-page .chat-task-rail {
+    display: none;
+  }
+
+  .forge-shell.chat-page .chat-workspace.details-visible .chat-inspector {
+    flex: 1 1 0;
+    min-height: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-monitor-progress-track > span,
+  .public-reasoning-chevron,
+  .task-monitor-detail summary svg {
+    transition: none;
+  }
+}
+
+/* CHG-0025: calm light console palette — surfaces stay near-white, indigo is
+   reserved for actions, and green/amber/red only communicate state. */
+:root {
+  --success: #2f966c;
+  --success-soft: #ebf8f1;
+  --info: #4c82c9;
+  --info-soft: #edf4ff;
+}
+
+html,
+body {
+  background: var(--bg);
+}
+
+::selection {
+  background: #dfe4ff;
+  color: var(--text);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+  outline-color: #7c8aeb;
+}
+
+.sidebar {
+  background: #f8f9fd;
+  border-right-color: #e5e9f2;
+  box-shadow: none;
+}
+
+.brand-mark,
+.button-primary {
+  background: var(--lime);
+  color: #ffffff;
+}
+
+.brand-subtitle,
+.nav-section-label,
+.runtime-version,
+.profile-copy span,
+.topbar-kicker,
+.section-kicker {
+  color: #8a94a6;
+}
+
+.nav-item {
+  color: var(--muted-strong);
+}
+
+.nav-item:hover,
+.nav-item.active {
+  background: #eef0ff;
+  color: var(--text);
+}
+
+.nav-item.active::before {
+  background-color: var(--lime);
+}
+
+.nav-item.active svg {
+  color: var(--lime);
+}
+
+.nav-pulse {
+  background: var(--success);
+  box-shadow: 0 0 0 4px rgba(47, 150, 108, 0.12);
+}
+
+.sidebar-bottom {
+  border-top-color: var(--line-soft);
+}
+
+.runtime-card,
+.profile-avatar {
+  background: var(--panel);
+  border-color: var(--line-soft);
+}
+
+.runtime-card-top,
+.runtime-card p,
+.profile-row > svg {
+  color: var(--muted);
+}
+
+.runtime-meter {
+  background: #e9edf4;
+}
+
+.runtime-meter span {
+  background: var(--lime);
+}
+
+.profile-avatar {
+  color: var(--lime);
+}
+
+.topbar {
+  background: rgba(255, 255, 255, 0.94);
+  border-bottom-color: #e5e9f2;
+  box-shadow: 0 1px 0 rgba(36, 49, 78, 0.025);
+}
+
+.topbar-left h1 {
+  color: var(--text);
+}
+
+.connection-pill,
+.icon-button,
+.button-secondary {
+  background: #ffffff;
+  border-color: #dfe5ef;
+  color: var(--muted-strong);
+}
+
+.icon-button:hover,
+.button-secondary:hover:not(:disabled),
+.button-ghost:hover:not(:disabled) {
+  background: #f3f5fb;
+  border-color: #cfd7e7;
+  color: var(--text);
+}
+
+.button-primary {
+  box-shadow: 0 4px 10px rgba(86, 103, 216, 0.16);
+}
+
+.button-primary:hover:not(:disabled) {
+  background: #4558c6;
+}
+
+.button-ghost {
+  border-color: #dfe5ef;
+  color: var(--muted-strong);
+}
+
+.button-danger {
+  background: var(--red-soft);
+  border-color: #f0d5d9;
+  color: var(--red);
+}
+
+.panel,
+.toolbar,
+.orchestration-card,
+.metric-card,
+.agent-card,
+.plugin-card,
+.modal-card,
+.agent-drawer,
+.chat-sidebar,
+.chat-main,
+.chat-inspector,
+.task-monitor,
+.plan-card,
+.choice-card {
+  background: var(--panel);
+  border-color: var(--line-soft);
+  box-shadow: none;
+}
+
+.search-field,
+.filter-button,
+.form-field input,
+.form-field textarea,
+.form-field select,
+.run-list-tools input,
+.run-list-tools select,
+.chat-sidebar-agent select,
+.chat-composer textarea {
+  background: #fbfcff;
+  border-color: #dfe5ef;
+  color: var(--text);
+}
+
+.search-field input::placeholder,
+.chat-composer textarea::placeholder {
+  color: #9aa4b5;
+}
+
+.form-field input:focus,
+.form-field textarea:focus,
+.form-field select:focus,
+.run-list-tools input:focus,
+.run-list-tools select:focus,
+.chat-composer textarea:focus {
+  border-color: #98a5ef;
+  box-shadow: 0 0 0 3px rgba(86, 103, 216, 0.13);
+}
+
+.connection-banner {
+  background: #f1f4ff;
+  border-color: #dfe4fb;
+  color: #5c6983;
+}
+
+.connection-banner svg,
+.connection-banner button {
+  color: var(--lime);
+}
+
+.hero-grid {
+  background: linear-gradient(135deg, #ffffff 0%, #f3f5ff 100%);
+  border-color: var(--line-soft);
+}
+
+.hero-grid::after {
+  background-image:
+    linear-gradient(rgba(86, 103, 216, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(86, 103, 216, 0.045) 1px, transparent 1px);
+}
+
+.hero-copy > p,
+.hero-proof,
+.topology-node small,
+.metric-card-copy small,
+.agent-row-copy small,
+.activity-copy small,
+.guardrail-item small,
+.guardrail-item p,
+.agent-card > p,
+.canvas-node > small,
+.run-row-copy small,
+.timeline-row small,
+.plugin-card > p,
+.settings-panel-head p,
+.setting-toggle small,
+.deployment-option small,
+.child-picker > p,
+.child-picker button small,
+.drawer-description,
+.mount-row small {
+  color: var(--muted);
+}
+
+.orchestration-card,
+.topology-node,
+.guardrail-item,
+.agent-card-tags span,
+.capability-list span,
+.drawer-badges > span:not(.status-badge),
+.topology-workbench,
+.canvas-toolbar,
+.canvas-toolbar button,
+.canvas-node,
+.compact-agent-list button,
+.run-row:hover,
+.run-row.selected,
+.run-prompt,
+.run-metrics > div,
+.setting-values > div,
+.deployment-option,
+.child-picker button,
+.config-value,
+.mount-row,
+.policy-grid > div,
+.tool-chip-list > span {
+  background: var(--panel-strong);
+  border-color: var(--line-soft);
+}
+
+.topology-node:hover,
+.agent-card:hover,
+.canvas-node:hover {
+  background: #ffffff;
+  border-color: #c8d1e4;
+}
+
+.agent-card-footer,
+.canvas-node-stats,
+.drawer-section,
+.timeline-head,
+.plugin-card-footer,
+.child-picker,
+.agent-row,
+.setting-toggle,
+.run-row {
+  border-color: var(--line-soft);
+}
+
+.agent-card-footer,
+.canvas-node-stats,
+.metric-label,
+.metric-card-copy > span,
+.agent-row-meta small,
+.agent-row > svg,
+.activity-row time,
+.toolbar-count,
+.run-row-time time,
+.timeline-row time,
+.plugin-tabs button span,
+.plugin-card-footer,
+.form-field small,
+.setting-values span,
+.config-value span,
+.empty-inline {
+  color: var(--muted);
+}
+
+.agent-row:hover {
+  background: var(--panel-hover);
+}
+
+.status-badge,
+.profile-avatar,
+.run-list-head span,
+.activity-icon.neutral,
+.run-status-icon.cancelled {
+  background: #f3f5f9;
+  border-color: var(--line);
+  color: var(--muted-strong);
+}
+
+.status-badge.ready,
+.status-badge.succeeded,
+.activity-icon.green,
+.run-status-icon.succeeded,
+.topology-health,
+.protocol-badge,
+.deployment-option.active,
+.run-policy-preview {
+  background: var(--success-soft);
+  border-color: #ccebdd;
+  color: var(--success);
+}
+
+.status-badge.running,
+.status-badge.queued,
+.activity-icon.blue,
+.run-status-icon.running {
+  background: var(--info-soft);
+  border-color: #d5e4fb;
+  color: var(--info);
+}
+
+.status-badge.failed {
+  background: var(--red-soft);
+  border-color: #f0d5d9;
+  color: var(--red);
+}
+
+.status-badge.cancelled,
+.status-badge.stopped {
+  background: #f3f5f9;
+  color: var(--muted);
+}
+
+.topology-trunk::before,
+.topology-trunk::after,
+.topology-trunk span,
+.timeline-row:not(:last-child)::before,
+.port,
+.connector-main,
+.connector-left,
+.connector-right {
+  background: #d7ddec;
+}
+
+.connector-left,
+.connector-right {
+  border-color: #d7ddec;
+}
+
+.node-live,
+.timeline-dot {
+  border-color: #ffffff;
+}
+
+.canvas-grid {
+  background-image: radial-gradient(circle, rgba(100, 116, 166, 0.16) 1px, transparent 1px);
+}
+
+.canvas-root {
+  border-color: #aeb8f0;
+  box-shadow: none;
+}
+
+.port-bottom {
+  background: var(--lime);
+}
+
+.port-top {
+  background: var(--info);
+}
+
+.orchestration-footer {
+  background: #f8f9fd;
+}
+
+.run-list-head span {
+  color: var(--muted);
+}
+
+.run-prompt span,
+.run-detail-head h3,
+.run-metrics small,
+.timeline-head span,
+.empty-state,
+.plugin-tabs button,
+.plugin-card-head > div span,
+.plugin-card-head > div small,
+.extension-contract p,
+.config-list-row small,
+.config-list-row > span:last-child,
+.form-field > span,
+.child-picker legend,
+.drawer-section-title {
+  color: var(--muted-strong);
+}
+
+.run-prompt p {
+  color: var(--text);
+}
+
+.plugin-tabs button.active {
+  border-bottom-color: var(--lime);
+  color: var(--text);
+}
+
+.plugin-event_bus {
+  background: #e9faf6;
+  color: #2c967f;
+}
+
+.extension-contract {
+  background: #f2f4ff;
+}
+
+.form-error {
+  background: var(--red-soft);
+  border-color: #f0d5d9;
+  color: var(--red);
+}
+
+.switch {
+  background: #dfe4ee;
+}
+
+.switch span {
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(36, 49, 78, 0.16);
+}
+
+.switch.on {
+  background: var(--lime-soft);
+}
+
+.switch.on span {
+  background: var(--lime);
+}
+
+.modal-scrim,
+.sidebar-scrim {
+  background: rgba(30, 39, 58, 0.28);
+}
+
+.modal-card,
+.agent-drawer {
+  background: #ffffff;
+  border-color: var(--line-soft);
+  box-shadow: 0 20px 54px rgba(36, 49, 78, 0.16);
+}
+
+.modal-actions {
+  background: #fbfcff;
+  border-top-color: var(--line-soft);
+}
+
+.child-picker button.selected,
+.run-policy-preview {
+  background: var(--lime-soft);
+  border-color: #d9defb;
+}
+
+.checkbox-mark {
+  border-color: #bac4d8;
+}
+
+.run-policy-preview strong {
+  color: #4050a3;
+}
+
+.run-policy-preview small {
+  color: #6e79b0;
+}
+
+.toast {
+  background: #eef0ff;
+  border-color: #d9defb;
+  color: #4050a3;
+}
+
+.toast svg {
+  color: var(--lime);
+}
+
+.trace-payload {
+  background: #f3f5fa;
+  border: 1px solid #e2e7f0;
+  color: #4e5c72;
+}
+
+.chat-thread {
+  background: #ffffff;
+}
+
+.user-message .chat-message-bubble {
+  background: #f1f2ff;
+  border-color: #e0e3fb;
+}
+
+.chat-agent-avatar,
+.chat-message-mode,
+.chat-mode-indicator,
+.chat-plan-notice {
+  background: var(--lime-soft);
+  border-color: #d9defb;
+  color: var(--lime);
+}
+
+.chat-agent-avatar {
+  color: var(--lime);
+}
+
+.chat-user-avatar {
+  background: #f1f3f8;
+  color: var(--muted-strong);
+}
+
+.assistant-message .chat-message-bubble {
+  border-bottom-color: #edf0f5;
+}
+
+.chat-running,
+.chat-composer textarea {
+  background: #fafbff;
+  border-color: #e0e5ef;
+}
+
+.chat-composer {
+  background: #ffffff;
+  border-top-color: var(--line-soft);
+}
+
+.thinking-mode-picker,
+.execution-mode-picker {
+  background: #f8f9fd;
+  border-color: #e1e6f0;
+  color: var(--muted-strong);
+}
+
+.thinking-mode-picker > svg {
+  color: var(--lime);
+}
+
+.execution-mode-picker > svg {
+  color: var(--info);
+}
+
+.composer-plan-badge {
+  background: var(--lime-soft);
+  border-color: #d9defb;
+  color: var(--lime);
+}
+
+.chat-scroll-bottom {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: #d9defb;
+  box-shadow: 0 6px 18px rgba(36, 49, 78, 0.12);
+  color: var(--lime);
+}
+
+.chat-scroll-bottom:hover {
+  background: #f5f6ff;
+  border-color: #aeb8f0;
+}
+
+.plan-card,
+.task-monitor,
+.choice-card {
+  background: #ffffff;
+  border-color: #e1e6f0;
+}
+
+.plan-card-head,
+.task-monitor-head,
+.choice-card-head {
+  background: #f8f9fd;
+  border-bottom-color: #e8ecf4;
+}
+
+.plan-card-icon,
+.task-monitor-icon {
+  background: #e9ebff;
+  color: var(--lime);
+}
+
+.plan-step-number {
+  background: var(--lime-soft);
+  border-color: #d9defb;
+  color: var(--lime);
+}
+
+.task-monitor-progress-track {
+  background: #edf0f6;
+}
+
+.task-monitor-progress-track > span {
+  background: var(--lime);
+}
+
+.choice-option {
+  background: #ffffff;
+  border-color: #e2e7f0;
+}
+
+.choice-option:hover:not(:disabled),
+.choice-option.selected {
+  background: #f5f6ff;
+  border-color: #aeb8f0;
+  box-shadow: 0 0 0 2px rgba(86, 103, 216, 0.1);
+}
+
+.choice-option-index {
+  background: #f0f2f8;
+  color: var(--muted-strong);
+}
+
+.public-reasoning,
+.public-reasoning.compact {
+  background: #ffffff;
+  border-color: #e5e9f1;
+}
+
+.public-reasoning.compact .public-reasoning-head {
+  background: #fafbff;
+}
+
+.trace-stat-primary,
+.trace-filter-bar > button.active {
+  background: var(--lime-soft);
+  border-color: #d9defb;
+  color: var(--lime);
+}
+
+.trace-stage-dot.active,
+.trace-stage-dot.active + .trace-stage-copy + .trace-stage-track > span {
+  background: var(--info);
+}
+
+.trace-stage-track {
+  background: #edf0f6;
+}
+
+.trace-stage-track > span {
+  background: #a4b6df;
+}
+
+/* CHG-0025 final visual pass: the original indigo conversation palette. Keep
+   the console neutral, use one indigo for actions and selection, and let state
+   colors carry meaning without tinting entire surfaces. */
+:root {
+  --bg: #f7f8fc;
+  --bg-soft: #f0f2f8;
+  --panel: #ffffff;
+  --panel-strong: #fbfcff;
+  --panel-hover: #f4f6fb;
+  --line: #dfe5ef;
+  --line-soft: #e9edf4;
+  --text: #202838;
+  --muted: #7d889a;
+  --muted-strong: #556277;
+  --lime: #5667d8;
+  --lime-soft: #eef0ff;
+  --blue: #4c82c9;
+  --blue-soft: #edf4ff;
+  --violet: #8068c5;
+  --violet-soft: #f4efff;
+  --amber: #a8782c;
+  --amber-soft: #fff6e8;
+  --red: #c45660;
+  --red-soft: #fff0f2;
+  --success: #2f966c;
+  --success-soft: #ebf8f1;
+  --info: #4c82c9;
+  --info-soft: #edf4ff;
+  --shadow: 0 1px 2px rgba(36, 49, 78, 0.04), 0 12px 32px rgba(36, 49, 78, 0.05);
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+::selection {
+  background: #dfe4ff;
+  color: var(--text);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+  outline-color: #7c8aeb;
+}
+
+.forge-shell.chat-page .content-stage {
+  background: var(--bg);
+}
+
+.forge-shell.chat-page .chat-view-heading {
+  display: none;
+}
+
+.forge-shell.chat-page .chat-view-stack {
+  gap: 0;
+}
+
+@media (min-width: 721px) {
+  .forge-shell.chat-page .content-stage {
+    padding-top: 18px;
+  }
+}
+
+.sidebar {
+  background: #fbfcfe;
+  border-right-color: #e4e8ee;
+  box-shadow: none;
+}
+
+.brand-mark,
+.button-primary {
+  background: var(--lime);
+  color: #ffffff;
+}
+
+.brand-subtitle,
+.nav-section-label,
+.runtime-version,
+.profile-copy span,
+.topbar-kicker,
+.section-kicker {
+  color: #8b96a5;
+}
+
+.nav-item {
+  color: var(--muted-strong);
+}
+
+.nav-item:hover,
+.nav-item.active {
+  background: #eef0ff;
+  color: var(--text);
+}
+
+.nav-item.active::before {
+  background-color: var(--lime);
+}
+
+.nav-item.active svg {
+  color: var(--lime);
+}
+
+.nav-pulse {
+  background: var(--success);
+  box-shadow: 0 0 0 4px rgba(45, 147, 107, 0.12);
+}
+
+.sidebar-bottom,
+.card-heading,
+.panel-heading,
+.chat-main-head,
+.chat-sidebar-head,
+.chat-inspector-head {
+  border-color: var(--line-soft);
+}
+
+.runtime-card,
+.profile-avatar {
+  background: var(--panel);
+  border-color: var(--line-soft);
+}
+
+.runtime-meter {
+  background: #e9edf2;
+}
+
+.runtime-meter span {
+  background: var(--lime);
+}
+
+.profile-avatar {
+  color: var(--lime);
+}
+
+.topbar {
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom-color: #e4e8ee;
+  box-shadow: 0 1px 0 rgba(35, 47, 64, 0.025);
+}
+
+.topbar-left h1 {
+  color: var(--text);
+}
+
+.connection-pill,
+.icon-button,
+.button-secondary,
+.button-ghost {
+  background: #ffffff;
+  border-color: var(--line);
+  color: var(--muted-strong);
+}
+
+.icon-button:hover,
+.button-secondary:hover:not(:disabled),
+.button-ghost:hover:not(:disabled) {
+  background: #f4f6fa;
+  border-color: #cfd6e0;
+  color: var(--text);
+}
+
+.button-primary {
+  box-shadow: 0 4px 10px rgba(86, 103, 216, 0.16);
+}
+
+.button-primary:hover:not(:disabled) {
+  background: #4558c6;
+}
+
+.button-danger {
+  background: var(--red-soft);
+  border-color: #f2d4d9;
+  color: var(--red);
+}
+
+.panel,
+.toolbar,
+.orchestration-card,
+.metric-card,
+.agent-card,
+.plugin-card,
+.modal-card,
+.agent-drawer,
+.chat-sidebar,
+.chat-main,
+.chat-inspector,
+.chat-task-rail .task-monitor,
+.task-monitor,
+.plan-card,
+.choice-card {
+  background: var(--panel);
+  border-color: var(--line-soft);
+  box-shadow: none;
+}
+
+.search-field,
+.filter-button,
+.form-field input,
+.form-field textarea,
+.form-field select,
+.run-list-tools input,
+.run-list-tools select,
+.chat-sidebar-agent select,
+.chat-composer textarea {
+  background: #fbfcfe;
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.search-field input::placeholder,
+.chat-composer textarea::placeholder {
+  color: #9aa5b3;
+}
+
+.form-field input:focus,
+.form-field textarea:focus,
+.form-field select:focus,
+.run-list-tools input:focus,
+.run-list-tools select:focus,
+.chat-composer textarea:focus {
+  border-color: #98a5ef;
+  box-shadow: 0 0 0 3px rgba(86, 103, 216, 0.13);
+}
+
+.modal-scrim,
+.sidebar-scrim {
+  background: rgba(28, 38, 53, 0.24);
+}
+
+.modal-card,
+.agent-drawer {
+  box-shadow: 0 20px 52px rgba(35, 47, 64, 0.16);
+}
+
+.status-badge,
+.profile-avatar,
+.run-list-head span,
+.activity-icon.neutral,
+.run-status-icon.cancelled {
+  background: #f4f6f8;
+  border-color: var(--line);
+  color: var(--muted-strong);
+}
+
+.status-badge.ready,
+.status-badge.succeeded,
+.activity-icon.green,
+.run-status-icon.succeeded,
+.topology-health,
+.protocol-badge,
+.deployment-option.active,
+.run-policy-preview {
+  background: var(--success-soft);
+  border-color: #ccebdd;
+  color: var(--success);
+}
+
+.status-badge.running,
+.status-badge.queued,
+.activity-icon.blue,
+.run-status-icon.running {
+  background: var(--info-soft);
+  border-color: #d5e4fb;
+  color: var(--info);
+}
+
+.status-badge.failed {
+  background: var(--red-soft);
+  border-color: #f1d1d7;
+  color: var(--red);
+}
+
+.status-badge.cancelled,
+.status-badge.stopped {
+  background: #f4f6f8;
+  color: var(--muted);
+}
+
+.trace-payload {
+  background: #f4f6f9;
+  border-color: #e1e6ed;
+  color: #536174;
+}
+
+/* Chat: white transcript, neutral user bubble, one calm indigo accent. */
+.forge-shell.chat-page .chat-sidebar,
+.forge-shell.chat-page .chat-main,
+.forge-shell.chat-page .chat-inspector,
+.forge-shell.chat-page .chat-task-rail .task-monitor {
+  border-radius: 13px;
+}
+
+.forge-shell.chat-page .chat-sidebar-head,
+.forge-shell.chat-page .chat-main-head,
+.forge-shell.chat-page .chat-inspector-head {
+  background: #ffffff;
+}
+
+.forge-shell.chat-page .chat-new-button {
+  background: var(--lime-soft);
+  border-color: #d9defb;
+  color: var(--lime);
+}
+
+.forge-shell.chat-page .chat-session-row:hover,
+.forge-shell.chat-page .chat-session-row.active {
+  background: #f7f8fc;
+  border-color: #e5e9f0;
+}
+
+.forge-shell.chat-page .chat-session-row.active {
+  box-shadow: inset 3px 0 0 var(--lime);
+}
+
+.forge-shell.chat-page .chat-session-count {
+  background: #f0f2f5;
+  color: var(--muted);
+}
+
+.forge-shell.chat-page .chat-agent-avatar,
+.forge-shell.chat-page .chat-message-mode,
+.forge-shell.chat-page .chat-mode-indicator,
+.forge-shell.chat-page .chat-plan-notice {
+  background: #f0f3ff;
+  border-color: #dce2ff;
+  color: var(--lime);
+}
+
+.forge-shell.chat-page .chat-user-avatar {
+  background: #f0f2f5;
+  color: var(--muted-strong);
+}
+
+.forge-shell.chat-page .chat-thread {
+  background: #ffffff;
+}
+
+.forge-shell.chat-page .user-message .chat-message-bubble {
+  background: #f2f5f9;
+  border-color: #e2e7ee;
+}
+
+.forge-shell.chat-page .assistant-message .chat-message-bubble {
+  border-bottom-color: #edf0f4;
+}
+
+.forge-shell.chat-page .chat-message-status.succeeded,
+.forge-shell.chat-page .chat-message-foot button:hover {
+  color: var(--success);
+}
+
+.forge-shell.chat-page .chat-running {
+  background: transparent;
+  border: 0;
+  color: var(--muted-strong);
+  padding: 8px 0;
+}
+
+.forge-shell.chat-page .chat-plan-intro {
+  align-items: center;
+  background: #f7f8ff;
+  border: 1px solid #e4e8ff;
+  border-radius: 9px;
+  color: #5f6d9f;
+  display: flex;
+  font-size: 11px;
+  gap: 7px;
+  padding: 8px 10px;
+}
+
+.forge-shell.chat-page .chat-composer {
+  background: #ffffff;
+  border-top-color: var(--line-soft);
+}
+
+.forge-shell.chat-page .chat-composer textarea {
+  background: #fbfcfe;
+  border-color: #dfe5ed;
+  border-radius: 12px;
+}
+
+.forge-shell.chat-page .thinking-mode-picker,
+.forge-shell.chat-page .execution-mode-picker {
+  background: #f7f8fa;
+  border-color: #e1e6ed;
+  color: var(--muted-strong);
+}
+
+.forge-shell.chat-page .thinking-mode-picker > svg {
+  color: var(--lime);
+}
+
+.forge-shell.chat-page .execution-mode-picker > svg {
+  color: var(--blue);
+}
+
+.forge-shell.chat-page .composer-plan-badge {
+  background: #f1f3ff;
+  border-color: #dce2ff;
+  color: var(--lime);
+}
+
+.forge-shell.chat-page .chat-scroll-bottom {
+  background: rgba(255, 255, 255, 0.98);
+  border-color: #dce2ff;
+  box-shadow: 0 6px 18px rgba(35, 47, 64, 0.12);
+  color: var(--lime);
+}
+
+.forge-shell.chat-page .chat-scroll-bottom:hover {
+  background: #f7f8ff;
+  border-color: #bfc9f4;
+}
+
+/* Secondary surfaces stay white and quiet; only their title strips are tinted. */
+.forge-shell.chat-page .plan-card,
+.forge-shell.chat-page .task-monitor,
+.forge-shell.chat-page .choice-card,
+.forge-shell.chat-page .public-reasoning,
+.forge-shell.chat-page .public-reasoning.compact {
+  background: #ffffff;
+  border-color: #e2e7ee;
+}
+
+.forge-shell.chat-page .plan-card-head,
+.forge-shell.chat-page .task-monitor-head,
+.forge-shell.chat-page .choice-card-head,
+.forge-shell.chat-page .public-reasoning.compact .public-reasoning-head {
+  background: #fbfcfe;
+  border-bottom-color: #edf0f4;
+}
+
+.forge-shell.chat-page .plan-card-icon,
+.forge-shell.chat-page .task-monitor-icon {
+  background: #f0f3ff;
+  color: var(--lime);
+}
+
+.forge-shell.chat-page .plan-step-number {
+  background: #f1f3ff;
+  border-color: #dce2ff;
+  color: var(--lime);
+}
+
+.forge-shell.chat-page .task-monitor-progress-track,
+.forge-shell.chat-page .trace-stage-track {
+  background: #edf0f4;
+}
+
+.forge-shell.chat-page .task-monitor-progress-track > span,
+.forge-shell.chat-page .trace-stage-track > span {
+  background: var(--lime);
+}
+
+.forge-shell.chat-page .choice-option {
+  background: #ffffff;
+  border-color: #e1e6ed;
+}
+
+.forge-shell.chat-page .choice-option:hover:not(:disabled),
+.forge-shell.chat-page .choice-option.selected {
+  background: #f7f8ff;
+  border-color: #aebaf0;
+  box-shadow: 0 0 0 2px rgba(86, 103, 216, 0.08);
+}
+
+.forge-shell.chat-page .choice-option-index {
+  background: #f0f2f5;
+  color: var(--muted-strong);
+}
+
+.forge-shell.chat-page .public-reasoning.compact .public-reasoning-head {
+  border-top-color: #edf0f4;
+}
+
+.toast {
+  background: #f1f3ff;
+  border-color: #dce2ff;
+  color: #4b5da4;
+}
+
+.toast svg {
+  color: var(--lime);
+}
+
+/* Keep chat feedback above the workspace without stretching between top and bottom offsets. */
+.forge-shell.chat-page .toast {
+  bottom: auto;
+  left: auto;
+  max-width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+  right: 16px;
+  top: 82px;
+  transform: none;
+}
+
+@media (max-width: 720px) {
+  .forge-shell.chat-page .toast {
+    max-width: calc(100vw - 24px);
+    right: 12px;
+    top: 78px;
+  }
+}
+
+@media (min-width: 721px) {
+  .forge-shell.chat-page .toast {
+    left: 50%;
+    right: auto;
+    top: 14px;
+    transform: translateX(-50%);
+  }
+}
+
+/* CHG-0026: reference-style Agent view. The chat is the product surface;
+   console chrome becomes a quiet rail, and progress/choices read like part of
+   the conversation instead of diagnostic cards. */
+@media (min-width: 721px) {
+  .forge-shell.chat-page {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+
+  .forge-shell.chat-page .sidebar {
+    padding-left: 9px;
+    padding-right: 9px;
+  }
+
+  .forge-shell.chat-page .brand {
+    justify-content: center;
+    min-height: 62px;
+  }
+
+  .forge-shell.chat-page .brand > div:nth-child(2),
+  .forge-shell.chat-page .nav-section-label,
+  .forge-shell.chat-page .sidebar-bottom {
+    display: none;
+  }
+
+  .forge-shell.chat-page .main-nav {
+    padding-top: 12px;
+  }
+
+  .forge-shell.chat-page .nav-item {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .forge-shell.chat-page .nav-item > span:not(.nav-pulse) {
+    display: none;
+  }
+
+  .forge-shell.chat-page .nav-item.active::before {
+    left: -9px;
+  }
+
+  .forge-shell.chat-page .content-stage {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+
+  .forge-shell.chat-page .chat-workspace,
+  .forge-shell.chat-page .chat-workspace.details-collapsed {
+    gap: 20px;
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .forge-shell.chat-page .chat-workspace.task-rail-visible {
+    grid-template-columns: 220px minmax(0, 1fr) 292px;
+  }
+
+  .forge-shell.chat-page .chat-workspace.details-visible {
+    grid-template-columns: 220px minmax(0, 1fr) 332px;
+  }
+}
+
+@media (min-width: 721px) and (max-width: 1120px) {
+  .forge-shell.chat-page .chat-workspace,
+  .forge-shell.chat-page .chat-workspace.details-collapsed {
+    gap: 14px;
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+
+  .forge-shell.chat-page .chat-workspace.task-rail-visible {
+    grid-template-columns: 190px minmax(0, 1fr) 252px;
+  }
+
+  .forge-shell.chat-page .chat-workspace.details-visible {
+    grid-template-columns: 190px minmax(0, 1fr) 288px;
+  }
+}
+
+.forge-shell.chat-page .chat-main {
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(35, 47, 64, 0.025);
+}
+
+.forge-shell.chat-page .chat-main-head {
+  min-height: 64px;
+  padding-left: 22px;
+  padding-right: 22px;
+}
+
+.forge-shell.chat-page .chat-thread {
+  gap: 36px;
+  padding: 38px clamp(22px, 6vw, 96px) 30px;
+}
+
+.forge-shell.chat-page .chat-turn {
+  max-width: 900px;
+}
+
+.forge-shell.chat-page .chat-message-meta {
+  margin-bottom: 10px;
+}
+
+.forge-shell.chat-page .assistant-message .chat-message-bubble {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.forge-shell.chat-page .chat-output {
+  font-size: 14px;
+  line-height: 1.82;
+  max-width: 820px;
+}
+
+.forge-shell.chat-page .chat-composer {
+  background: #ffffff;
+  border: 1px solid #e1e6ed;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(35, 47, 64, 0.07);
+  gap: 9px;
+  margin: 0 14px 14px;
+  padding: 11px 13px 12px;
+}
+
+.forge-shell.chat-page .chat-composer textarea {
+  background: #ffffff;
+  border-color: transparent;
+  border-radius: 10px;
+  min-height: 58px;
+  padding: 8px 4px;
+}
+
+.forge-shell.chat-page .chat-composer textarea:focus {
+  border-color: #dbe1f9;
+  box-shadow: 0 0 0 3px rgba(86, 103, 216, 0.1);
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.forge-shell.chat-page .chat-composer-status {
+  align-items: center;
+  border-bottom: 1px solid #edf0f4;
+  color: var(--muted-strong);
+  display: flex;
+  font-size: 10px;
+  justify-content: space-between;
+  min-height: 28px;
+  padding: 0 2px 6px;
+}
+
+.forge-shell.chat-page .chat-composer-status-copy {
+  align-items: center;
+  display: inline-flex;
+  gap: 7px;
+}
+
+.forge-shell.chat-page .chat-composer-stop {
+  align-items: center;
+  background: #fff5f5;
+  border: 1px solid #f0d9dc;
+  border-radius: 999px;
+  color: var(--red);
+  display: inline-flex;
+  font-size: 9px;
+  gap: 4px;
+  padding: 4px 7px;
+}
+
+.forge-shell.chat-page .chat-composer-stop:hover {
+  background: #ffedef;
+}
+
+.forge-shell.chat-page .chat-composer-options {
+  border-top: 1px solid #f0f2f5;
+  padding-top: 8px;
+}
+
+.forge-shell.chat-page .chat-composer-foot {
+  padding-top: 2px;
+}
+
+.forge-shell.chat-page .chat-composer-foot .button-primary {
+  border-radius: 10px;
+  min-width: 82px;
+}
+
+.forge-shell.chat-page .chat-message .public-reasoning.compact {
+  background: transparent;
+  border: 0;
+  border-left: 2px solid #e4e8ee;
+  border-radius: 0;
+  margin: 16px 0 0 2px;
+  padding: 0 0 0 12px;
+}
+
+.forge-shell.chat-page .chat-message .public-reasoning.compact .public-reasoning-head {
+  background: transparent;
+  border: 0;
+  min-height: 34px;
+  padding: 2px 0;
+}
+
+.forge-shell.chat-page .public-reasoning-activity strong {
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.forge-shell.chat-page .public-reasoning-activity small {
+  color: #9aa4b1;
+  font-size: 9px;
+}
+
+.forge-shell.chat-page .public-reasoning-compact-status {
+  background: #f4f6f8;
+  border: 1px solid #e7ebf0;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 9px;
+  padding: 3px 6px;
+}
+
+.forge-shell.chat-page .public-reasoning-compact-status.active {
+  background: #edf8f2;
+  border-color: #d2eddf;
+  color: var(--success);
+}
+
+.forge-shell.chat-page .public-reasoning-compact-body {
+  background: #fafbfd;
+  border: 1px solid #edf0f4;
+  border-radius: 9px;
+  margin: 5px 0 8px;
+  padding: 9px 11px;
+}
+
+.forge-shell.chat-page .plan-card.compact {
+  border-radius: 13px;
+  margin-top: 16px;
+}
+
+.forge-shell.chat-page .plan-card.compact .plan-card-head {
+  min-height: 44px;
+  padding: 8px 11px;
+}
+
+.forge-shell.chat-page .plan-card.compact .plan-card-goal {
+  padding: 10px 11px 5px;
+}
+
+.forge-shell.chat-page .plan-card.compact .plan-step-list {
+  padding: 4px 11px 9px;
+}
+
+.forge-shell.chat-page .plan-card.compact .plan-step-copy small {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.forge-shell.chat-page .plan-card.compact .plan-card-note {
+  padding: 7px 11px 9px;
+}
+
+.forge-shell.chat-page .task-monitor,
+.forge-shell.chat-page .chat-sidebar,
+.forge-shell.chat-page .chat-inspector {
+  border-radius: 16px;
+}
+
+.forge-shell.chat-page .task-monitor-head {
+  min-height: 64px;
+  padding: 13px 15px;
+}
+
+.forge-shell.chat-page .task-monitor-section {
+  padding: 15px;
+}
+
+.forge-shell.chat-page .task-monitor-progress {
+  margin: 8px 0 10px;
+}
+
+.forge-shell.chat-page .task-monitor-item {
+  min-height: 49px;
+  padding: 8px 0;
+}
+
+.forge-shell.chat-page .task-monitor-details {
+  margin-top: auto;
+}
+
+.forge-shell.chat-page .choice-card {
+  border-radius: 14px;
+  box-shadow: 0 5px 18px rgba(35, 47, 64, 0.05);
+  margin-top: 18px;
+}
+
+.forge-shell.chat-page .choice-card-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 13px 14px 11px;
+}
+
+.forge-shell.chat-page .choice-card-heading {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.forge-shell.chat-page .choice-card-kicker {
+  color: var(--muted-strong) !important;
+  font-size: 10px !important;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+
+.forge-shell.chat-page .choice-card-head-meta {
+  align-items: center;
+  color: var(--muted);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 9px;
+  gap: 7px;
+}
+
+.forge-shell.chat-page .choice-card-progress {
+  color: var(--muted-strong);
+  font-family: var(--font-geist-mono), monospace;
+}
+
+.forge-shell.chat-page .choice-card-description {
+  color: var(--muted-strong);
+  padding: 11px 14px 3px;
+}
+
+.forge-shell.chat-page .choice-option {
+  border-radius: 10px;
+  cursor: pointer;
+  min-height: 50px;
+  padding: 9px 10px;
+  position: relative;
+}
+
+.forge-shell.chat-page .choice-option input {
+  height: 1px;
+  opacity: 0;
+  position: absolute;
+  width: 1px;
+}
+
+.forge-shell.chat-page .choice-option:focus-within {
+  border-color: #91a0ec;
+  box-shadow: 0 0 0 3px rgba(86, 103, 216, 0.12);
+}
+
+.forge-shell.chat-page .choice-option:has(input:disabled) {
+  cursor: default;
+}
+
+.forge-shell.chat-page .choice-option-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.forge-shell.chat-page .choice-option-copy strong {
+  font-size: 11px;
+}
+
+.forge-shell.chat-page .choice-option-copy small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+@media (max-width: 720px) {
+  .forge-shell.chat-page .chat-composer {
+    margin: 0 8px 8px;
+    padding: 10px 11px 11px;
+  }
+
+  .forge-shell.chat-page .chat-thread {
+    gap: 28px;
+    padding: 26px 14px 28px;
+  }
+
+  .forge-shell.chat-page .chat-message .public-reasoning.compact {
+    margin-left: 0;
+  }
+}
+
+/* CHG-0025.1: calm blue-neutral finish. The palette is intentionally quiet:
+   neutral surfaces do the grouping, while one desaturated blue carries action
+   and selection. This also seals older view-specific rules that used to leave
+   a darker or purple surface behind on non-chat pages. */
+html {
+  color-scheme: light;
+}
+
+.forge-shell,
+.content-stage {
+  background: var(--bg);
+}
+
+.brand-mark,
+.button-primary {
+  background: var(--lime);
+}
+
+.button-primary:hover:not(:disabled) {
+  background: #4558c6;
+}
+
+.nav-item:hover,
+.nav-item.active {
+  background: #eef0ff;
+}
+
+.nav-item.active::before,
+.nav-item.active svg,
+.profile-avatar {
+  color: var(--lime);
+}
+
+.nav-item.active::before {
+  background: var(--lime);
+}
+
+.button-primary {
+  box-shadow: 0 4px 10px rgba(86, 103, 216, 0.16);
+}
+
+.form-field input:focus,
+.form-field textarea:focus,
+.form-field select:focus,
+.run-list-tools input:focus,
+.run-list-tools select:focus,
+.chat-composer textarea:focus {
+  border-color: #98a5ef;
+  box-shadow: 0 0 0 3px rgba(86, 103, 216, 0.13);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+  outline-color: #7c8aeb;
+}
+
+.hero-grid {
+  background: #ffffff;
+  border-color: var(--line-soft);
+  box-shadow: var(--shadow);
+}
+
+.hero-grid::after {
+  background-image: none;
+}
+
+.connection-banner,
+.toast {
+  background: #f1f4ff;
+  border-color: #dfe4fb;
+  color: #5c6983;
+}
+
+.connection-banner svg,
+.connection-banner button,
+.toast svg {
+  color: var(--lime);
+}
+
+.trace-payload {
+  background: #f3f5fa;
+  border-color: #e2e7f0;
+  color: #4e5c72;
+}
+
+.forge-shell.chat-page .chat-new-button,
+.forge-shell.chat-page .chat-agent-avatar,
+.forge-shell.chat-page .chat-message-mode,
+.forge-shell.chat-page .chat-mode-indicator,
+.forge-shell.chat-page .chat-plan-notice,
+.forge-shell.chat-page .composer-plan-badge,
+.forge-shell.chat-page .plan-card-icon,
+.forge-shell.chat-page .task-monitor-icon,
+.forge-shell.chat-page .plan-step-number {
+  background: var(--lime-soft);
+  border-color: #d9defb;
+  color: var(--lime);
+}
+
+.forge-shell.chat-page .chat-new-button:hover,
+.forge-shell.chat-page .composer-plan-badge:hover {
+  background: #e9ebff;
+}
+
+.forge-shell.chat-page .chat-session-row.active {
+  background: #f8fafc;
+  border-color: #e6ebf1;
+  box-shadow: inset 3px 0 0 var(--lime);
+}
+
+.forge-shell.chat-page .chat-session-row:hover {
+  background: #f8fafc;
+}
+
+.forge-shell.chat-page .user-message .chat-message-bubble {
+  background: #f4f6f8;
+  border-color: #e5e9ee;
+}
+
+.forge-shell.chat-page .chat-plan-intro {
+  background: #f7f8ff;
+  border-color: #e4e8ff;
+  color: #5f6d9f;
+}
+
+.forge-shell.chat-page .thinking-mode-picker,
+.forge-shell.chat-page .execution-mode-picker {
+  background: #f8f9fd;
+  border-color: #e1e6f0;
+}
+
+.forge-shell.chat-page .thinking-mode-picker > svg,
+.forge-shell.chat-page .execution-mode-picker > svg {
+  color: var(--lime);
+}
+
+.forge-shell.chat-page .chat-scroll-bottom {
+  border-color: #d9defb;
+  color: var(--lime);
+}
+
+.forge-shell.chat-page .chat-scroll-bottom:hover {
+  background: #f5f6ff;
+  border-color: #aeb8f0;
+}
+
+.forge-shell.chat-page .plan-card,
+.forge-shell.chat-page .task-monitor,
+.forge-shell.chat-page .choice-card,
+.forge-shell.chat-page .public-reasoning,
+.forge-shell.chat-page .public-reasoning.compact {
+  border-color: #e3e8ee;
+}
+
+.forge-shell.chat-page .plan-card-head,
+.forge-shell.chat-page .task-monitor-head,
+.forge-shell.chat-page .choice-card-head,
+.forge-shell.chat-page .public-reasoning.compact .public-reasoning-head {
+  background: #f8f9fd;
+  border-bottom-color: #edf0f4;
+}
+
+.forge-shell.chat-page .task-monitor-progress-track > span,
+.forge-shell.chat-page .trace-stage-track > span {
+  background: var(--lime);
+}
+
+.forge-shell.chat-page .choice-option:hover:not(:disabled),
+.forge-shell.chat-page .choice-option.selected {
+  background: #f5f6ff;
+  border-color: #aeb8f0;
+  box-shadow: 0 0 0 2px rgba(86, 103, 216, 0.1);
+}
+
+.forge-shell.chat-page .choice-option:focus-within {
+  border-color: #98a5ef;
+  box-shadow: 0 0 0 3px rgba(86, 103, 216, 0.13);
+}
+
+.forge-shell.chat-page .public-reasoning-compact-status.active {
+  background: var(--info-soft);
+  border-color: #d5e4fb;
+  color: var(--info);
+}
+
+.forge-shell.chat-page .chat-composer-stop {
+  background: #fff5f5;
+  border-color: #f0dadd;
+}
+
+/* CHG-0026.1: reference-style conversation surface. Keep the session list
+   useful, but let the transcript read like a conversation instead of three
+   nested admin cards. */
+@media (min-width: 721px) {
+  .forge-shell.chat-page .content-stage {
+    padding: 14px 24px 18px;
+  }
+
+  .forge-shell.chat-page .chat-workspace,
+  .forge-shell.chat-page .chat-workspace.details-collapsed {
+    gap: 24px;
+    grid-template-columns: 214px minmax(0, 1fr);
+  }
+
+  .forge-shell.chat-page .chat-workspace.task-rail-visible {
+    grid-template-columns: 214px minmax(0, 1fr) 282px;
+  }
+
+  .forge-shell.chat-page .chat-workspace.details-visible {
+    grid-template-columns: 214px minmax(0, 1fr) 318px;
+  }
+
+  .forge-shell.chat-page .chat-sidebar {
+    background: transparent;
+    border: 0;
+    border-right: 1px solid #e8edf2;
+    border-radius: 0;
+    box-shadow: none;
+    padding-right: 14px;
+  }
+
+  .forge-shell.chat-page .chat-sidebar-head {
+    padding: 6px 0 12px;
+  }
+
+  .forge-shell.chat-page .chat-new-button {
+    margin: 10px 0;
+  }
+
+  .forge-shell.chat-page .chat-session-list {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .forge-shell.chat-page .chat-sidebar-agent {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .forge-shell.chat-page .chat-main {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    overflow: visible;
+  }
+
+  .forge-shell.chat-page .chat-main-head {
+    background: transparent;
+    border-bottom: 0;
+    min-height: 48px;
+    padding: 0 2px 12px;
+  }
+
+  .forge-shell.chat-page .chat-thread-shell {
+    background: #ffffff;
+    border: 1px solid #e8edf2;
+    border-radius: 18px;
+    box-shadow: 0 1px 2px rgba(31, 43, 58, 0.025);
+  }
+
+  .forge-shell.chat-page .chat-thread {
+    background: #ffffff;
+    gap: 34px;
+    padding: 34px clamp(22px, 6vw, 92px) 36px;
+  }
+
+  .forge-shell.chat-page .user-message .chat-message-bubble {
+    background: #f6f7f9;
+    border-color: #edf0f3;
+    border-radius: 12px;
+  }
+
+  .forge-shell.chat-page .chat-user-avatar {
+    display: none;
+  }
+
+  .forge-shell.chat-page .assistant-message .chat-agent-avatar {
+    background: #f4f7fb;
+    border: 1px solid #e4ebf3;
+    height: 29px;
+    width: 29px;
+  }
+
+  .forge-shell.chat-page .assistant-message .chat-message-bubble {
+    border-bottom: 1px solid #eef1f4;
+    padding-bottom: 18px;
+  }
+
+  .forge-shell.chat-page .chat-message-meta > small {
+    display: none;
+  }
+
+  .forge-shell.chat-page .chat-output {
+    font-size: 14px;
+    line-height: 1.86;
+  }
+
+  .forge-shell.chat-page .chat-composer {
+    align-self: center;
+    background: #ffffff;
+    border: 1px solid #dfe6ed;
+    border-radius: 16px;
+    box-shadow: 0 8px 24px rgba(31, 43, 58, 0.065);
+    margin: 12px auto 0;
+    max-width: 840px;
+    padding: 10px 12px 11px;
+    width: calc(100% - 28px);
+  }
+
+  .forge-shell.chat-page .chat-composer textarea {
+    background: #ffffff;
+    border-color: transparent;
+    min-height: 58px;
+    padding: 8px 4px;
+  }
+
+  .forge-shell.chat-page .chat-composer textarea:focus {
+    background: #ffffff;
+    border-color: #dce7f4;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .forge-shell.chat-page .chat-composer-options {
+    border-top: 1px solid #f0f2f5;
+    padding-top: 8px;
+  }
+
+  .forge-shell.chat-page .chat-composer-foot .button-primary {
+    min-width: 84px;
+  }
+
+  .forge-shell.chat-page .chat-task-rail .task-monitor,
+  .forge-shell.chat-page .chat-inspector {
+    border-radius: 16px;
+    box-shadow: none;
+  }
+}
+
+.forge-shell.chat-page .chat-message .public-reasoning.compact {
+  border-left: 1px solid #e4e9ef;
+  margin-top: 16px;
+  padding-left: 12px;
+}
+
+.forge-shell.chat-page .chat-message .public-reasoning.compact .public-reasoning-head {
+  min-height: 36px;
+  padding: 4px 0;
+}
+
+.forge-shell.chat-page .public-reasoning.compact .public-reasoning-activity strong {
+  color: #536174;
+  font-size: 11px;
+}
+
+.forge-shell.chat-page .public-reasoning.compact .public-reasoning-activity small {
+  color: #98a3af;
+  font-size: 9px;
+}
+
+.forge-shell.chat-page .public-reasoning-compact-status {
+  background: transparent;
+  border: 0;
+  color: #8b97a5;
+  font-size: 9px;
+  padding: 0;
+}
+
+.forge-shell.chat-page .public-reasoning-compact-body {
+  background: transparent;
+  border: 0;
+  margin: 3px 0 8px;
+  padding: 7px 0 4px;
+}
+
+.forge-shell.chat-page .public-reasoning-compact-caption {
+  color: #9aa5b2;
+  margin-bottom: 7px;
+}
+
+.forge-shell.chat-page .public-reasoning-compact-track {
+  display: grid;
+  gap: 0;
+}
+
+.forge-shell.chat-page .public-reasoning-compact-step {
+  background: transparent;
+  border: 0;
+  border-left: 1px solid #edf0f4;
+  border-radius: 0;
+  padding: 6px 0 6px 12px;
+}
+
+.forge-shell.chat-page .public-reasoning-live-dot.active {
+  background: #f0f5fc;
+  border-color: #c5d8ec;
+}
+
+.forge-shell.chat-page .public-reasoning-live-dot.active > span {
+  background: var(--lime);
+}
+
+.forge-shell.chat-page .public-reasoning-live-dot.complete {
+  background: #f5f7fa;
+  border-color: #dce4ec;
+}
+
+.forge-shell.chat-page .public-reasoning-live-dot.complete > span {
+  background: #a8b4c1;
+}
+
+.forge-shell.chat-page .public-reasoning-compact-status.complete {
+  color: #8b97a5;
+}
+
+.forge-shell.chat-page .public-reasoning-compact-step strong {
+  color: #5c6877;
+  font-size: 10px;
+}
+
+.forge-shell.chat-page .public-reasoning-compact-step small {
+  color: #98a3af;
+}
+
+.forge-shell.chat-page .task-monitor-item.completed strong {
+  color: #a3acb6;
+}
+
+@media (max-width: 720px) {
+  .forge-shell.chat-page .content-stage {
+    padding: 6px 8px 8px;
+  }
+
+  .forge-shell.chat-page .chat-main {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .forge-shell.chat-page .chat-thread-shell {
+    background: #ffffff;
+    border: 1px solid #e8edf2;
+    border-radius: 14px;
+  }
+
+  .forge-shell.chat-page .chat-composer {
+    margin: 8px auto 0;
+    width: 100%;
+  }
+}
+
+/* CHG-0027: reference-aligned conversation surface. The transcript is the
+   product surface; activity, tasks, and diagnostics stay legible but quiet. */
+.forge-shell.chat-page .chat-main {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.forge-shell.chat-page .chat-main-head {
+  background: transparent;
+  border-bottom: 0;
+  min-height: 48px;
+  padding: 0 2px 12px;
+}
+
+.forge-shell.chat-page .chat-thread-shell {
+  background: #ffffff;
+  border: 1px solid #eef1f4;
+  border-radius: 16px;
+  box-shadow: none;
+}
+
+.forge-shell.chat-page .chat-thread {
+  background: #ffffff;
+  gap: 38px;
+  padding: 38px clamp(24px, 6vw, 92px) 40px;
+}
+
+.forge-shell.chat-page .chat-turn {
+  gap: 14px;
+  max-width: 900px;
+}
+
+.forge-shell.chat-page .user-message {
+  align-self: flex-start;
+  justify-content: flex-start;
+  max-width: 100%;
+}
+
+.forge-shell.chat-page .chat-user-avatar {
+  display: none;
+}
+
+.forge-shell.chat-page .user-message .chat-message-bubble {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: #5d6b7d;
+  padding: 0;
+}
+
+.forge-shell.chat-page .user-message .chat-message-bubble > p {
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.forge-shell.chat-page .user-message .chat-message-bubble > small {
+  color: #a0aab6;
+  font-size: 9px;
+  margin-top: 6px;
+}
+
+.forge-shell.chat-page .assistant-message .chat-agent-avatar {
+  background: #f3f7fb;
+  border: 1px solid #e4ebf3;
+  height: 30px;
+  width: 30px;
+}
+
+.forge-shell.chat-page .assistant-message .chat-message-bubble {
+  border-bottom: 1px solid #eef1f4;
+  padding-bottom: 20px;
+  width: min(820px, 100%);
+}
+
+.forge-shell.chat-page .chat-message-meta {
+  margin-bottom: 12px;
+}
+
+.forge-shell.chat-page .chat-message-meta > small {
+  display: none;
+}
+
+.forge-shell.chat-page .chat-output {
+  color: #273345;
+  font-size: 14px;
+  line-height: 1.86;
+  max-width: 820px;
+}
+
+.forge-shell.chat-page .chat-message-foot {
+  margin-top: 12px;
+}
+
+.forge-shell.chat-page .chat-message-foot > span {
+  color: #9aa5b2;
+}
+
+.forge-shell.chat-page .chat-message-foot button {
+  color: #8290a0;
+}
+
+.forge-shell.chat-page .chat-message-foot button:hover {
+  color: var(--lime);
+}
+
+.forge-shell.chat-page .chat-composer {
+  align-self: center;
+  background: #ffffff;
+  border: 1px solid #dfe6ed;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(31, 43, 58, 0.065);
+  gap: 9px;
+  margin: 12px 14px 14px;
+  max-width: 840px;
+  padding: 10px 12px 11px;
+  width: calc(100% - 28px);
+}
+
+.forge-shell.chat-page .chat-composer textarea {
+  background: #ffffff;
+  border-color: transparent;
+  border-radius: 10px;
+  min-height: 58px;
+  padding: 8px 4px;
+}
+
+.forge-shell.chat-page .chat-composer textarea:focus {
+  background: #ffffff;
+  border-color: #dce7f4;
+  box-shadow: 0 0 0 3px rgba(86, 103, 216, 0.11);
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.forge-shell.chat-page .chat-composer-options {
+  border-top: 1px solid #f0f2f5;
+  gap: 7px;
+  padding-top: 8px;
+}
+
+.forge-shell.chat-page .thinking-mode-picker,
+.forge-shell.chat-page .execution-mode-picker {
+  background: #f7f8fa;
+  border-color: #e3e8ee;
+  color: #657386;
+}
+
+.forge-shell.chat-page .thinking-mode-picker > svg,
+.forge-shell.chat-page .execution-mode-picker > svg {
+  color: var(--lime);
+}
+
+.forge-shell.chat-page .composer-plan-badge,
+.forge-shell.chat-page .chat-mode-indicator {
+  background: var(--lime-soft);
+  border-color: #d9defb;
+  color: var(--lime);
+}
+
+.forge-shell.chat-page .chat-composer-foot .button-primary {
+  background: var(--lime);
+  border-radius: 10px;
+  box-shadow: 0 4px 10px rgba(86, 103, 216, 0.16);
+  min-width: 84px;
+}
+
+.forge-shell.chat-page .chat-composer-foot .button-primary:hover:not(:disabled) {
+  background: #4558c6;
+}
+
+.forge-shell.chat-page .plan-step.completed .plan-step-number {
+  background: var(--success-soft);
+  border-color: #cfe9db;
+  color: var(--success);
+}
+
+/* The task rail is an activity tray, not another admin card. */
+.forge-shell.chat-page .chat-task-rail {
+  border-left: 1px solid #eef1f4;
+  min-width: 0;
+  padding-left: 14px;
+}
+
+.forge-shell.chat-page .chat-task-rail .task-monitor {
+  background: #ffffff;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.forge-shell.chat-page .chat-task-rail .task-monitor-head {
+  min-height: 56px;
+  padding: 8px 0 10px;
+}
+
+.forge-shell.chat-page .chat-task-rail .task-monitor-section {
+  padding: 13px 0;
+}
+
+.forge-shell.chat-page .chat-task-rail .task-monitor-details {
+  border-top-color: #eef1f4;
+}
+
+.forge-shell.chat-page .chat-task-rail .task-monitor-detail summary {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.forge-shell.chat-page .chat-task-rail .task-monitor-detail-body {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.forge-shell.chat-page .task-monitor-item {
+  border-radius: 8px;
+  gap: 9px;
+  padding: 9px 7px;
+}
+
+.forge-shell.chat-page .task-monitor-item + .task-monitor-item {
+  border-top-color: transparent;
+}
+
+.forge-shell.chat-page .task-monitor-item.running {
+  background: #f7faff;
+}
+
+.forge-shell.chat-page .task-monitor-item.completed strong {
+  color: #a6afba;
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.forge-shell.chat-page .task-monitor-item-mark.running {
+  background: var(--lime-soft);
+  border-color: #aeb8f0;
+  color: var(--lime);
+}
+
+.forge-shell.chat-page .task-monitor-progress-track > span {
+  background: var(--lime);
+}
+
+/* Public thought is a small activity row in the transcript. */
+.forge-shell.chat-page .chat-message .public-reasoning.compact {
+  background: transparent;
+  border: 0;
+  border-left: 2px solid #e7edf3;
+  border-radius: 0;
+  margin: 17px 0 0 2px;
+  padding: 0 0 0 13px;
+}
+
+.forge-shell.chat-page .chat-message .public-reasoning.compact .public-reasoning-head {
+  background: transparent;
+  border: 0;
+  min-height: 38px;
+  padding: 2px 0;
+}
+
+.forge-shell.chat-page .public-reasoning.compact .public-reasoning-activity strong {
+  color: #536174;
+  font-size: 11px;
+}
+
+.forge-shell.chat-page .public-reasoning.compact .public-reasoning-activity small {
+  color: #98a3af;
+  font-size: 9px;
+}
+
+.forge-shell.chat-page .public-reasoning-compact-status {
+  background: transparent;
+  border: 0;
+  color: #8b97a5;
+  font-size: 9px;
+  padding: 0;
+}
+
+.forge-shell.chat-page .public-reasoning-compact-body {
+  background: transparent;
+  border: 0;
+  margin: 2px 0 8px;
+  padding: 7px 0 4px;
+}
+
+.forge-shell.chat-page .public-reasoning-compact-track {
+  display: grid;
+  gap: 0;
+}
+
+.forge-shell.chat-page .public-reasoning-compact-step {
+  background: transparent;
+  border: 0;
+  border-left: 1px solid #edf0f4;
+  border-radius: 0;
+  padding: 6px 0 6px 12px;
+}
+
+/* Choice is a conversation action, not a generic form panel. */
+.forge-shell.chat-page .choice-card {
+  background: #ffffff;
+  border: 1px solid #e1e6ed;
+  border-radius: 14px;
+  box-shadow: 0 5px 18px rgba(31, 43, 58, 0.035);
+  margin-top: 17px;
+}
+
+.forge-shell.chat-page .choice-card-head {
+  background: #fbfcfe;
+  border-bottom-color: #edf0f4;
+  padding: 12px 14px;
+}
+
+.forge-shell.chat-page .choice-card-kicker {
+  color: #8390a0;
+  font-size: 9px;
+  letter-spacing: 0.03em;
+}
+
+.forge-shell.chat-page .choice-card-description {
+  color: #657386;
+  font-size: 11px;
+  line-height: 1.55;
+  padding: 12px 14px 2px;
+}
+
+.forge-shell.chat-page .choice-card-recommendation {
+  align-items: center;
+  background: #f7f9fc;
+  border: 1px solid #e4eaf1;
+  border-radius: 8px;
+  color: var(--lime);
+  display: flex;
+  gap: 7px;
+  margin: 9px 14px 0;
+  padding: 7px 9px;
+}
+
+.forge-shell.chat-page .choice-card-recommendation > span {
+  display: grid;
+  gap: 1px;
+}
+
+.forge-shell.chat-page .choice-card-recommendation strong {
+  color: var(--lime);
+  font-size: 10px;
+}
+
+.forge-shell.chat-page .choice-card-recommendation small {
+  color: #7c8a9a;
+  font-size: 10px;
+}
+
+.forge-shell.chat-page .choice-card-options {
+  gap: 5px;
+  padding: 10px 14px;
+}
+
+.forge-shell.chat-page .choice-option {
+  align-items: center;
+  background: #ffffff;
+  border-color: #e1e6ed;
+  border-radius: 9px;
+  gap: 8px;
+  min-height: 47px;
+  padding: 8px 9px;
+}
+
+.forge-shell.chat-page .choice-option:hover:not(:disabled),
+.forge-shell.chat-page .choice-option.selected {
+  background: #f7f9fc;
+  border-color: #a8bed9;
+  box-shadow: 0 0 0 2px rgba(86, 103, 216, 0.08);
+}
+
+.forge-shell.chat-page .choice-option-control {
+  align-items: center;
+  border: 1px solid #cbd5e0;
+  border-radius: 50%;
+  color: #ffffff;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 18px;
+  justify-content: center;
+  width: 18px;
+}
+
+.forge-shell.chat-page .choice-option.multiple .choice-option-control {
+  border-radius: 5px;
+}
+
+.forge-shell.chat-page .choice-option-control.selected {
+  background: var(--lime);
+  border-color: var(--lime);
+}
+
+.forge-shell.chat-page .choice-option-index {
+  background: #f0f3f7;
+  color: #7c8a9a;
+}
+
+.forge-shell.chat-page .choice-option-copy strong {
+  color: #2f3b4d;
+}
+
+.forge-shell.chat-page .choice-option-copy small {
+  color: #8995a3;
+}
+
+.forge-shell.chat-page .choice-option em {
+  background: #f0f5fc;
+  border: 1px solid #dce7f4;
+  border-radius: 999px;
+  color: var(--lime);
+  font-size: 9px;
+  font-style: normal;
+  margin-left: auto;
+  padding: 3px 6px;
+}
+
+.forge-shell.chat-page .choice-card-actions {
+  align-items: center;
+  border-top-color: #edf0f4;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 10px 14px 12px;
+}
+
+.forge-shell.chat-page .choice-card-selection {
+  color: #8a96a5;
+  font-size: 10px;
+}
+
+.forge-shell.chat-page .choice-card-action-buttons {
+  align-items: center;
+  display: inline-flex;
+  gap: 7px;
+}
+
+.forge-shell.chat-page .choice-card-action-buttons .button {
+  min-height: 30px;
+}
+
+@media (max-width: 720px) {
+  .forge-shell.chat-page .chat-thread-shell {
+    border-radius: 14px;
+  }
+
+  .forge-shell.chat-page .chat-thread {
+    gap: 30px;
+    padding: 26px 15px 30px;
+  }
+
+  .forge-shell.chat-page .chat-composer {
+    margin: 8px 0 0;
+    width: 100%;
+  }
+
+  .forge-shell.chat-page .chat-task-rail {
+    border-left: 0;
+    padding-left: 0;
+  }
+
+  .forge-shell.chat-page .choice-card-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .forge-shell.chat-page .choice-card-action-buttons {
+    width: 100%;
+  }
+
+  .forge-shell.chat-page .choice-card-action-buttons .button {
+    flex: 1 1 0;
+  }
+}
+
+/* CHG-0028: verified against the earlier indigo Agent conversation.
+   The source-of-truth palette and conversation hierarchy live in the
+   CHG-0025/0027 blocks above; do not append a second token override here.
+   Primary action is indigo (#5667d8), informational activity is blue
+   (#4c82c9), and success/healthy state remains green (#2f966c). */
+
+/* CHG-0031: Agent draft/publish workspace.  Keep the existing calm indigo
+   palette while making lifecycle state and version actions visible together. */
+.new-agent-modal:has(.agent-version-rail) {
+  max-width: 1220px;
+  width: min(1220px, calc(100vw - 34px));
+}
+
+.agent-editor-status-line {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.version-status-pill,
+.latest-tag {
+  align-items: center;
+  border: 1px solid #dfe5ed;
+  border-radius: 999px;
+  display: inline-flex;
+  gap: 5px;
+  min-height: 22px;
+  padding: 3px 8px;
+}
+
+.version-status-pill {
+  color: #657386;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.version-status-pill.draft {
+  background: #fffaf0;
+  border-color: #f0dfb8;
+  color: #9a6b1e;
+}
+
+.version-status-pill.published {
+  background: #f0f8f4;
+  border-color: #cfe8dc;
+  color: #2f805f;
+}
+
+.latest-tag {
+  background: #f3f5ff;
+  border-color: #dce1fb;
+  color: #5667d8;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.agent-editor-status-copy {
+  color: #8a96a5;
+  font-size: 10px;
+}
+
+.agent-editor-layout {
+  align-items: start;
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 1fr) 286px;
+}
+
+.agent-editor-main {
+  min-width: 0;
+}
+
+.agent-version-rail {
+  background: #fbfcfe;
+  border: 1px solid #e3e8ef;
+  border-radius: 14px;
+  min-height: 100%;
+  padding: 14px;
+  position: sticky;
+  top: 0;
+}
+
+.agent-version-rail-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.agent-version-rail-head h3 {
+  color: #2d3a4c;
+  font-size: 16px;
+  margin: 4px 0 0;
+}
+
+.version-count {
+  align-items: center;
+  background: #eef1f7;
+  border-radius: 999px;
+  color: #6e7b8d;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 700;
+  height: 25px;
+  justify-content: center;
+  min-width: 25px;
+}
+
+.agent-version-rail-note {
+  color: #8490a0;
+  font-size: 10px;
+  line-height: 1.5;
+  margin: 9px 0 13px;
+}
+
+.agent-version-list {
+  display: grid;
+  gap: 8px;
+  max-height: 460px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.agent-version-item {
+  background: #ffffff;
+  border: 1px solid #e3e8ef;
+  border-radius: 10px;
+  padding: 8px;
+}
+
+.agent-version-item.selected {
+  border-color: #aeb9eb;
+  box-shadow: 0 0 0 2px rgba(86, 103, 216, 0.08);
+}
+
+.agent-version-select {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.agent-version-marker {
+  align-items: center;
+  background: #f0f3f7;
+  border-radius: 7px;
+  color: #6d7a8b;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 800;
+  height: 27px;
+  justify-content: center;
+  width: 27px;
+}
+
+.agent-version-item.selected .agent-version-marker {
+  background: #eef0ff;
+  color: #5667d8;
+}
+
+.agent-version-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-version-copy strong {
+  color: #3b485b;
+  font-size: 11px;
+}
+
+.agent-version-copy small {
+  color: #8b97a6;
+  font-size: 9px;
+}
+
+.agent-version-select .latest-tag {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.agent-version-actions {
+  border-top: 1px solid #edf0f4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 7px 0 0 35px;
+}
+
+.version-action-link {
+  background: transparent;
+  border: 0;
+  color: #5667d8;
+  cursor: pointer;
+  font-size: 9px;
+  padding: 0;
+}
+
+.version-action-link.danger {
+  color: #b06b62;
+}
+
+.version-action-link:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.version-history-state,
+.version-history-error {
+  align-items: center;
+  display: flex;
+  font-size: 10px;
+  gap: 6px;
+  line-height: 1.45;
+  padding: 8px 2px;
+}
+
+.version-history-state {
+  color: #8995a4;
+}
+
+.version-history-error {
+  color: #b06b62;
+}
+
+.modal-action-hint {
+  color: #8b97a6;
+  font-size: 10px;
+  margin-left: auto;
+  margin-right: 2px;
+}
+
+.mount-revision-field small {
+  min-height: 28px;
+}
+
+@media (max-width: 900px) {
+  .agent-editor-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-version-rail {
+    position: static;
+  }
+
+  .agent-version-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .agent-version-list {
+    grid-template-columns: 1fr;
+  }
+
+  .modal-action-hint {
     display: none;
   }
 }

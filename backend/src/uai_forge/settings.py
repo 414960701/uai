@@ -13,7 +13,7 @@ class Settings:
     database_path: str = field(
         default_factory=lambda: os.environ.get(
             "UAI_FORGE_DATABASE_PATH",
-            str(Path(".uai-forge/forge.db").resolve()),
+            str(Path(".uai-forge/forge-v3.db").resolve()),
         )
     )
     control_api_key: Optional[str] = field(

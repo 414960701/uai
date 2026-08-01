@@ -1,0 +1,38 @@
+change_id: CHG-0031
+status: in_progress
+implementation_status: in_progress
+requirements:
+  EXT-009:
+    contracts:
+      - requirements.md
+      - design.md
+    implementation:
+      - backend/src/uai_forge/models.py::PluginKind.SANDBOX
+      - backend/src/uai_forge/models.py::SandboxBinding
+      - backend/src/uai_forge/ports.py::SandboxProvider
+      - backend/src/uai_forge/registry.py::register_sandbox
+      - backend/src/uai_forge/sandbox.py::DockerSandbox
+    verification:
+      - backend/tests/test_registry.py::test_builtin_tool_catalog_contains_remote_read_only_baseline
+      - backend/tests/test_sandbox.py
+  SEC-008:
+    contracts:
+      - requirements.md
+      - design.md
+    implementation:
+      - backend/src/uai_forge/sandbox.py::DockerSandbox.command_for
+      - backend/src/uai_forge/sandbox_tools.py::SandboxExecTool
+    verification:
+      - backend/tests/test_sandbox.py::test_docker_sandbox_command_is_hardened_and_argv_only
+      - backend/tests/test_sandbox.py::test_sandbox_request_rejects_empty_or_nul_command_parts
+    limits:
+      - 当前只证明本地 argv builder 与 registry 边界，不证明 Docker daemon、kernel、镜像或 egress 的生产隔离
+  DEP-005:
+    contracts:
+      - requirements.md
+      - design.md
+    implementation:
+      - docs/research/sandbox-runtime-baseline-2026-08.md
+      - docs/architecture/adr/ADR-0010-extensible-sandbox-runtimes.md
+    verification:
+      - acceptance.md

@@ -6,7 +6,7 @@ import json
 import re
 import time
 import uuid
-from typing import Any, AsyncIterator, Dict, List
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
 
@@ -31,6 +31,65 @@ from .ports import (
     TokenUsage,
     ToolCall,
 )
+
+
+def _reported_int(value: Any) -> Optional[int]:
+    """Read a non-negative provider counter without leaking its raw payload."""
+
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0, parsed)
+
+
+def _reported_from(mapping: Any, *keys: str) -> Optional[int]:
+    if not isinstance(mapping, dict):
+        return None
+    for key in keys:
+        if key not in mapping:
+            continue
+        parsed = _reported_int(mapping.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _openai_token_usage(raw_usage: Any) -> TokenUsage:
+    usage = raw_usage if isinstance(raw_usage, dict) else {}
+    cached_input_tokens = None
+    for details_key in ("prompt_tokens_details", "input_tokens_details"):
+        cached_input_tokens = _reported_from(usage.get(details_key), "cached_tokens")
+        if cached_input_tokens is not None:
+            break
+    if cached_input_tokens is None:
+        cached_input_tokens = _reported_from(
+            usage,
+            "prompt_cache_hit_tokens",
+            "cache_read_input_tokens",
+        )
+    return TokenUsage(
+        input_tokens=_reported_from(usage, "prompt_tokens", "input_tokens") or 0,
+        output_tokens=_reported_from(usage, "completion_tokens", "output_tokens") or 0,
+        cached_input_tokens=cached_input_tokens,
+        cache_creation_input_tokens=_reported_from(
+            usage,
+            "cache_creation_input_tokens",
+            "prompt_cache_creation_tokens",
+        ),
+    )
+
+
+def _anthropic_token_usage(raw_usage: Any) -> TokenUsage:
+    usage = raw_usage if isinstance(raw_usage, dict) else {}
+    return TokenUsage(
+        input_tokens=_reported_from(usage, "input_tokens") or 0,
+        output_tokens=_reported_from(usage, "output_tokens") or 0,
+        cached_input_tokens=_reported_from(usage, "cache_read_input_tokens"),
+        cache_creation_input_tokens=_reported_from(usage, "cache_creation_input_tokens"),
+    )
 
 
 OPENAI_COMPATIBLE_MANIFEST = PluginManifest(
@@ -638,10 +697,7 @@ class OpenAICompatibleProvider(ModelProvider):
         return ModelOutput(
             content=message.get("content") or "",
             tool_calls=tool_calls,
-            usage=TokenUsage(
-                input_tokens=int(usage.get("prompt_tokens") or 0),
-                output_tokens=int(usage.get("completion_tokens") or 0),
-            ),
+            usage=_openai_token_usage(usage),
             raw={
                 "id": raw.get("id"),
                 "finish_reason": choice.get("finish_reason"),
@@ -717,12 +773,7 @@ class OpenAICompatibleProvider(ModelProvider):
                             if function.get("arguments"):
                                 current["arguments"] += str(function["arguments"])
                     usage_raw = raw.get("usage") or {}
-                    usage = None
-                    if usage_raw:
-                        usage = TokenUsage(
-                            input_tokens=int(usage_raw.get("prompt_tokens") or 0),
-                            output_tokens=int(usage_raw.get("completion_tokens") or 0),
-                        )
+                    usage = _openai_token_usage(usage_raw) if usage_raw else None
                     if text or usage is not None:
                         yield ModelStreamChunk(text=text or "", usage=usage)
 
@@ -899,10 +950,7 @@ class AnthropicMessagesProvider(ModelProvider):
         return ModelOutput(
             content="".join(text_parts),
             tool_calls=tool_calls,
-            usage=TokenUsage(
-                input_tokens=int(usage.get("input_tokens") or 0),
-                output_tokens=int(usage.get("output_tokens") or 0),
-            ),
+            usage=_anthropic_token_usage(usage),
             raw={
                 "id": raw.get("id"),
                 "stop_reason": raw.get("stop_reason"),
@@ -941,6 +989,8 @@ class AnthropicMessagesProvider(ModelProvider):
         endpoint = f"{self.base_url}/messages" if self.base_url.endswith("/v1") else f"{self.base_url}/v1/messages"
         input_tokens = 0
         output_tokens = 0
+        cached_input_tokens: Optional[int] = None
+        cache_creation_input_tokens: Optional[int] = None
         tool_call_parts: Dict[int, Dict[str, str]] = {}
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             async with client.stream("POST", endpoint, headers=headers, json=payload) as response:
@@ -953,8 +1003,13 @@ class AnthropicMessagesProvider(ModelProvider):
                     except json.JSONDecodeError:
                         continue
                     if raw.get("type") == "message_start":
-                        input_tokens = int(
-                            (raw.get("message") or {}).get("usage", {}).get("input_tokens") or 0
+                        message_usage = (raw.get("message") or {}).get("usage") or {}
+                        input_tokens = _reported_from(message_usage, "input_tokens") or 0
+                        cached_input_tokens = _reported_from(
+                            message_usage, "cache_read_input_tokens"
+                        )
+                        cache_creation_input_tokens = _reported_from(
+                            message_usage, "cache_creation_input_tokens"
                         )
                     elif raw.get("type") == "content_block_start":
                         block = raw.get("content_block") or {}
@@ -966,9 +1021,16 @@ class AnthropicMessagesProvider(ModelProvider):
                                 "arguments": "",
                             }
                     elif raw.get("type") == "message_delta":
-                        output_tokens = int(
-                            (raw.get("usage") or {}).get("output_tokens") or 0
-                        )
+                        message_usage = raw.get("usage") or {}
+                        output_tokens = _reported_from(message_usage, "output_tokens") or 0
+                        if _reported_from(message_usage, "cache_read_input_tokens") is not None:
+                            cached_input_tokens = _reported_from(
+                                message_usage, "cache_read_input_tokens"
+                            )
+                        if _reported_from(message_usage, "cache_creation_input_tokens") is not None:
+                            cache_creation_input_tokens = _reported_from(
+                                message_usage, "cache_creation_input_tokens"
+                            )
                     delta = raw.get("delta") or {}
                     if (
                         raw.get("type") == "content_block_delta"
@@ -984,10 +1046,17 @@ class AnthropicMessagesProvider(ModelProvider):
                     if not isinstance(text, str):
                         text = ""
                     usage = None
-                    if input_tokens or output_tokens:
+                    if (
+                        input_tokens
+                        or output_tokens
+                        or cached_input_tokens is not None
+                        or cache_creation_input_tokens is not None
+                    ):
                         usage = TokenUsage(
                             input_tokens=input_tokens,
                             output_tokens=output_tokens,
+                            cached_input_tokens=cached_input_tokens,
+                            cache_creation_input_tokens=cache_creation_input_tokens,
                         )
                     if text or usage is not None:
                         yield ModelStreamChunk(text=text or "", usage=usage)

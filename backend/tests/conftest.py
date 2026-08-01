@@ -19,7 +19,14 @@ def seed_implicit_test_model_configs(monkeypatch):
 
     original_save_agent = SQLiteRepository.save_agent
 
-    async def save_agent_with_config(self, tenant_id, spec, expected_revision=None):
+    async def save_agent_with_config(
+        self,
+        tenant_id,
+        spec,
+        expected_revision=None,
+        *,
+        status="draft",
+    ):
         config_id = spec.model.model_config_id
         if await self.get_model_config(tenant_id, config_id) is None:
             provider_id = (
@@ -41,6 +48,12 @@ def seed_implicit_test_model_configs(monkeypatch):
                     updated_at=now,
                 ),
             )
-        return await original_save_agent(self, tenant_id, spec, expected_revision)
+        return await original_save_agent(
+            self,
+            tenant_id,
+            spec,
+            expected_revision,
+            status=status,
+        )
 
     monkeypatch.setattr(SQLiteRepository, "save_agent", save_agent_with_config)

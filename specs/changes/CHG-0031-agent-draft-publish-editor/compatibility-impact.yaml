@@ -1,0 +1,19 @@
+kind: compatibility-impact
+id: CHG-0031-COMPATIBILITY
+status: breaking
+target: 0.1
+changes:
+  - surface: "GET /api/v1/agents/{agent_id}/revisions"
+    impact: "response items now include status/is_latest/spec metadata"
+  - surface: "PATCH /api/v1/agents/{agent_id}"
+    impact: "saves a draft; publishing requires the explicit publish action"
+  - surface: "RunRecord"
+    impact: "instance_id compatibility field is removed"
+  - surface: "SQLite schema"
+    impact: "revision lifecycle columns are required; unsupported databases require rebuild"
+migration:
+  strategy: "backup_and_rebuild"
+  supported: false
+  data_loss_expected: true
+  runtime_behavior: "unsupported schemas fail closed; no in-place migration is attempted"
+  rollback: "restore the pre-change database and image"

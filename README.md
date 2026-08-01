@@ -1,15 +1,15 @@
 # UAI Forge
 
 UAI Forge 是一个以扩展契约为中心的 Python Agent 框架和多 Agent 控制面。
-它把 Agent 定义、不可变修订、运行实例、子 Agent 挂载、执行预算和事件流分开，
+它把 Agent 定义、草稿/发布修订、子 Agent 挂载、执行预算和事件流分开，
 使同一套领域逻辑可在本地单进程运行，并提供经过可重复 smoke 验证的单节点容器制品。
 当前环境字段只是运行上下文标签，不会自动创建容器或云资源。
 
 当前版本是可运行的 `0.1.0` 单进程基线，包含：
 
 - Python 3.9+ 异步 Agent 运行时与 FastAPI 控制 API。
-- Agent 配置修订、乐观并发控制与多个运行实例。
-- 实例级策略 override 使用显式 allowlist，只能收紧固定 revision 的执行上限。
+- Agent 配置的 draft/published 生命周期、乐观并发控制、历史回滚与继续编辑。
+- Run 可选择 Agent revision；不选择时使用 latest，已提交 Run 固定实际 revision。
 - Agent-as-tool 子 Agent 挂载、静态环检测和动态调用路径保护。
 - 共享 step / tool / token 预算、深度、超时与双层并发闸门。
 - Provider、Tool、Memory、Middleware、Storage、Event Bus、Scheduler、UI
@@ -20,8 +20,8 @@ UAI Forge 是一个以扩展契约为中心的 Python Agent 框架和多 Agent �
 - 租户级统一 `ModelConfig`（provider、protocol、model、endpoint 与加密凭证）；支持草稿、连接检查、版本/CAS、启用/停用和显式 Secret `keep|replace|clear`，控制台仅展示脱敏信息。
 - 支持多个独立 ModelConfig/AK；选择厂商或已知服务地址会自动带出对应推荐模型，自定义地址保留当前模型。
 - SetupStatus、CapabilityStatus、Agent Readiness、Problem Details 与 schema compatibility doctor，帮助空库沿真实前置条件完成首个任务。
-- React/TypeScript 管理后台：可发布 Agent 修订，配置模型、工具权限、记忆、中间件、
-  子 Agent 固定修订/并发/输入模板，管理多个实例，并查看真实运行事件。
+- React/TypeScript 管理后台：可保存/发布草稿、查看版本历史、回滚和继续编辑，配置模型、
+  工具权限、记忆、中间件、子 Agent 版本/并发/输入模板，并查看真实运行事件。
 - Docker、本地命令、Kubernetes 单副本示例、规格、ADR、威胁模型与需求追踪。
 
 ## 架构
@@ -30,7 +30,7 @@ UAI Forge 是一个以扩展契约为中心的 Python Agent 框架和多 Agent �
 flowchart LR
   UI["Control Center<br/>React + TypeScript"]
   API["Control Plane<br/>FastAPI"]
-  Registry["Agent / Revision / Instance"]
+  Registry["Agent / Draft / Published Revision"]
   Runtime["Guarded Runtime<br/>async Python"]
   Plugins["Plugin Registry<br/>capability + protocol"]
   Store[("SQLite local<br/>PostgreSQL adapter target")]
@@ -88,7 +88,7 @@ Messages；DeepSeek、通义千问、Kimi、智谱、豆包、混元、MiniMax�
 不要依赖仅用于开发测试的默认 master key。
 
 首次运行不会写入示例 Agent 或运行记录；请先在“凭证&模型配置”创建数据库模型连接，再
-通过后台创建 Agent 和 Instance。真实模型调用只会使用已启用且已配置凭证的连接。
+通过后台创建 Agent 并保存为草稿，再发布到可协作版本。真实模型调用只会使用已启用且已配置凭证的连接。
 
 ## Docker
 
@@ -98,8 +98,8 @@ docker compose up --build
 
 后台位于 `http://localhost:3000`，API 文档位于
 `http://localhost:8000/docs`。SQLite 数据保存在命名卷
-`uai-forge-data-v2` 中；该版本化名称用于避开 ADR-0007 之前的 legacy 配置卷，旧卷不会被
-静默迁移。默认只绑定
+`uai-forge-data-v3` 中；该版本化名称对应当前 Agent draft/publish schema。旧 schema 卷不会被
+静默迁移，启动会要求 backup/rebuild。默认只绑定
 `127.0.0.1`；需要远程访问时，必须先配置控制密钥、可信 CORS/TLS，再显式把
 `UAI_FORGE_BIND_ADDRESS` 设为所需接口。
 
@@ -132,15 +132,15 @@ make verify
 make container-smoke
 ```
 
-2026-08-01 当前工作树的验证结果以 `artifacts/evidence-summary.json` 为准；最近一次后端
-门禁为 `113 passed`，前端 lint、typecheck、production build 与 SSR/source 合同测试全部通过。
+2026-08-02 当前工作树的验证结果以 `artifacts/evidence-summary.json` 为准；最近一次后端
+门禁为 `155 passed`，前端 lint、typecheck、production build 与 SSR/source 合同测试全部通过。
 单节点 Compose smoke 还验证了双镜像
 构建、双容器健康、容器内 doctor、空数据库、生产 provider 注册和 Web 运行镜像的开发
 工具裁剪与 production-only audit。完整开发工具链 audit 会
 单独审查，不能用未经验证的破坏性主版本升级静默消除。
 
 测试覆盖版本冲突、跨租户数据隔离、挂载环、子 Agent 委派、共享预算、
-实例策略收紧、mount 权限交集、插件配置与工具参数 Schema、记忆启停、密钥输入拒绝、
+运行策略收紧、mount 权限交集、插件配置与工具参数 Schema、记忆启停、密钥输入拒绝、
 非 SQLite/EventBroker 端口替身、安全计算器、API CRUD/运行生命周期、SSE 竞态、
 真实事件 history 和服务端渲染。
 
@@ -148,14 +148,14 @@ make container-smoke
 
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
-| `UAI_FORGE_DATABASE_PATH` | `.uai-forge/forge.db` | SQLite 文件路径 |
+| `UAI_FORGE_DATABASE_PATH` | `.uai-forge/forge-v3.db` | 当前 Agent lifecycle SQLite 文件路径；旧文件不会自动迁移 |
 | `UAI_FORGE_CONTROL_API_KEY` | 空 | 设置后所有 `/api/v1` 请求必须携带密钥 |
 | `UAI_FORGE_CREDENTIAL_MASTER_KEY` | 空（仅开发回退） | 数据库凭据加密主密钥；部署必须由 Secret Manager 注入 |
 | `UAI_FORGE_ALLOWED_ORIGINS` | 本地后台地址 | 逗号分隔 CORS 来源 |
 | `UAI_FORGE_HOST` | `0.0.0.0` | API 监听地址 |
 | `UAI_FORGE_PORT` | `8000` | API 端口 |
 | `UAI_FORGE_BIND_ADDRESS` | `127.0.0.1` | Compose 发布到宿主机的绑定地址；远程暴露前先配置密钥/CORS/TLS |
-| `UAI_FORGE_DATA_VOLUME` | `uai-forge-data-v2` | Compose SQLite 命名卷；旧 schema 卷不会自动迁移 |
+| `UAI_FORGE_DATA_VOLUME` | `uai-forge-data-v3` | Compose SQLite 命名卷；旧 schema 卷不会自动迁移 |
 | `UAI_FORGE_DNS_SERVER` | `1.1.1.1` | Compose 后端容器的 DNS；按本地网络策略覆盖 |
 | `UAI_FORGE_WEB_HOST` | `0.0.0.0` | production Web 监听地址 |
 | `PORT` | `3000` | production Web 容器内端口 |

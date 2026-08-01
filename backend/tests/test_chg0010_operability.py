@@ -64,7 +64,6 @@ def test_empty_setup_status_and_capability_maturity(tmp_path):
         assert payload["next_action"] == "create_model_config"
         assert payload["model_connections"]["total"] == 0
         assert payload["agents"]["total"] == 0
-        assert payload["instances"]["ready"] == 0
 
         capabilities = client.get("/api/v1/capabilities").json()
         states = {item["id"]: item["state"] for item in capabilities}

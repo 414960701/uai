@@ -11,12 +11,13 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 from .models import (
-    AgentInstance,
+    AgentRevisionInfo,
     AgentSpec,
     ModelConfig,
     ModelConfigReference,
@@ -33,12 +34,12 @@ from .secrets import SecretDecryptionError, decrypt_secret, encrypt_secret, mask
 T = TypeVar("T")
 
 SCHEMA_COMPONENT = "sqlite"
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 LEGACY_CONFIGURATION_TABLES = {"credential_profiles", "model_profiles"}
+LEGACY_AGENT_RUNTIME_TABLES = {"instances"}
 REQUIRED_TABLES = {
     "agents",
     "agent_revisions",
-    "instances",
     "runs",
     "run_events",
     "model_configs",
@@ -75,7 +76,12 @@ class SQLiteRepository:
     def __init__(self, path: str, credential_master_key: Optional[str] = None) -> None:
         self.path = str(Path(path).expanduser().resolve())
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self._write_lock = asyncio.Lock()
+        # Writes may be scheduled by background Run tasks while a control-plane
+        # request is still publishing plan events. A thread lock keeps the
+        # SQLite critical section safe even when an ASGI test client uses more
+        # than one event loop; the actual blocking work remains in a worker
+        # thread below.
+        self._write_lock = threading.Lock()
         # The key is a bootstrap concern and is never stored in SQLite.
         self.credential_master_key = credential_master_key or (
             f"uai-forge-development-key:{self.path}"
@@ -108,13 +114,14 @@ class SQLiteRepository:
         return await asyncio.to_thread(runner)
 
     async def _write(self, operation: Callable[[sqlite3.Connection], T]) -> T:
-        async with self._write_lock:
+        acquired = await asyncio.to_thread(self._write_lock.acquire)
+        try:
             def runner() -> T:
                 with self._connect() as connection:
-                    # Start an explicit transaction before any DDL or DML.
-                    # SQLite's legacy implicit-transaction mode does not
-                    # reliably group ALTER TABLE with the following writes,
-                    # which could leave a failed migration half-applied.
+                    # Start an explicit transaction before any DDL or DML so
+                    # creating a fresh database is atomic. Existing databases
+                    # are validated before any business read or write; this
+                    # adapter never performs in-place schema migration.
                     connection.execute("BEGIN")
                     try:
                         result = operation(connection)
@@ -125,6 +132,9 @@ class SQLiteRepository:
                         raise
 
             return await asyncio.to_thread(runner)
+        finally:
+            if acquired:
+                self._write_lock.release()
 
     @staticmethod
     def _table_names(connection: sqlite3.Connection) -> set:
@@ -152,47 +162,75 @@ class SQLiteRepository:
                 "schema.legacy_model_configuration",
                 "database contains pre-ADR-0007 CredentialProfile/ModelProfile tables; back up and rebuild configuration with ModelConfig",
             )
+        legacy_runtime = sorted(tables.intersection(LEGACY_AGENT_RUNTIME_TABLES))
+        if legacy_runtime:
+            raise SchemaCompatibilityError(
+                "schema.legacy_agent_runtime",
+                "database contains the removed Agent Instance table; back up and rebuild with Agent latest/revision lifecycle",
+            )
         if not tables:
             return {"status": "new", "version": CURRENT_SCHEMA_VERSION, "tables": []}
-        meta_exists = "schema_meta" in tables
-        version = 1
-        if meta_exists:
-            row = connection.execute(
-                "SELECT version FROM schema_meta WHERE component = ?",
-                (SCHEMA_COMPONENT,),
-            ).fetchone()
-            if row is None:
-                raise SchemaCompatibilityError(
-                    "schema.version_missing",
-                    "schema_meta exists but has no sqlite component version; restore a backup or run doctor",
-                )
-            version = int(row["version"])
-        model_columns = cls._column_names(connection, "model_configs") if "model_configs" in tables else set()
-        if not meta_exists and {"version", "lifecycle", "verification_json"}.issubset(model_columns):
-            version = CURRENT_SCHEMA_VERSION
+        if "schema_meta" not in tables:
+            raise SchemaCompatibilityError(
+                "schema.version_missing",
+                "database has no schema_meta marker for the current lifecycle schema; back up and rebuild",
+            )
+        row = connection.execute(
+            "SELECT version FROM schema_meta WHERE component = ?",
+            (SCHEMA_COMPONENT,),
+        ).fetchone()
+        if row is None:
+            raise SchemaCompatibilityError(
+                "schema.version_missing",
+                "schema_meta exists but has no sqlite component version; back up and rebuild",
+            )
+        version = int(row["version"])
         if version > CURRENT_SCHEMA_VERSION:
             raise SchemaCompatibilityError(
                 "schema.version_too_new",
                 f"database schema version {version} is newer than supported version {CURRENT_SCHEMA_VERSION}; use a compatible binary or backup",
             )
-        if version < 1:
-            raise SchemaCompatibilityError("schema.version_invalid", "database schema version is invalid")
+        if version < CURRENT_SCHEMA_VERSION:
+            raise SchemaCompatibilityError(
+                "schema.version_unsupported",
+                f"database schema version {version} is not the current Agent lifecycle schema {CURRENT_SCHEMA_VERSION}; back up and rebuild",
+            )
         missing = sorted(REQUIRED_TABLES.difference(tables))
         if missing:
             raise SchemaCompatibilityError(
                 "schema.required_table_missing",
                 "database is missing required tables: " + ", ".join(missing),
             )
-        missing_model_columns = sorted(
-            {"version", "lifecycle", "verification_json"}.difference(model_columns)
-        )
-        if missing_model_columns and version >= CURRENT_SCHEMA_VERSION:
+        required_columns = {
+            "agents": {"tenant_id", "id", "revision", "name", "spec_json", "created_at", "updated_at"},
+            "agent_revisions": {
+                "tenant_id", "agent_id", "revision", "spec_json", "created_at", "updated_at",
+                "status", "published_at",
+            },
+            "runs": {"tenant_id", "id", "agent_id", "session_id", "status", "run_json", "created_at", "finished_at"},
+            "run_events": {"tenant_id", "run_id", "sequence", "type", "event_json", "created_at"},
+            "model_configs": {
+                "tenant_id", "id", "name", "provider", "protocol", "model", "base_url",
+                "secret_ciphertext", "masked_secret", "config_json", "metadata_json", "enabled",
+                "version", "lifecycle", "verification_json", "created_at", "updated_at",
+            },
+            "runtime_configs": {"tenant_id", "key", "value_json", "version", "updated_at"},
+            "schema_meta": {"component", "version", "updated_at"},
+        }
+        for table, columns in required_columns.items():
+            missing_columns = sorted(columns.difference(cls._column_names(connection, table)))
+            if missing_columns:
+                raise SchemaCompatibilityError(
+                    "schema.required_column_missing",
+                    f"database table {table} is missing required columns: {', '.join(missing_columns)}; back up and rebuild",
+                )
+        if "instance_id" in cls._column_names(connection, "runs"):
             raise SchemaCompatibilityError(
-                "schema.required_column_missing",
-                "database is missing required ModelConfig columns: " + ", ".join(missing_model_columns),
+                "schema.legacy_run_target",
+                "database runs table contains removed instance_id; back up and rebuild with agent_revision",
             )
         return {
-            "status": "compatible" if version == CURRENT_SCHEMA_VERSION else "migratable",
+            "status": "compatible",
             "version": version,
             "tables": sorted(tables),
         }
@@ -217,23 +255,15 @@ class SQLiteRepository:
                     revision INTEGER NOT NULL,
                     spec_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    PRIMARY KEY (tenant_id, agent_id, revision)
-                );
-                CREATE TABLE instances (
-                    tenant_id TEXT NOT NULL,
-                    id TEXT NOT NULL,
-                    agent_id TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    instance_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    PRIMARY KEY (tenant_id, id)
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    published_at TEXT,
+                    PRIMARY KEY (tenant_id, agent_id, revision)
                 );
                 CREATE TABLE runs (
                     tenant_id TEXT NOT NULL,
                     id TEXT NOT NULL,
                     agent_id TEXT NOT NULL,
-                    instance_id TEXT,
                     session_id TEXT NOT NULL,
                     status TEXT NOT NULL,
                     run_json TEXT NOT NULL,
@@ -295,52 +325,15 @@ class SQLiteRepository:
             (SCHEMA_COMPONENT, CURRENT_SCHEMA_VERSION, now),
         )
 
-    @staticmethod
-    def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
-        columns = SQLiteRepository._column_names(connection, "model_configs")
-        if "version" not in columns:
-            connection.execute("ALTER TABLE model_configs ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
-        if "lifecycle" not in columns:
-            connection.execute("ALTER TABLE model_configs ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'enabled'")
-        if "verification_json" not in columns:
-            connection.execute(
-                "ALTER TABLE model_configs ADD COLUMN verification_json TEXT NOT NULL DEFAULT '{\"status\": \"never\"}'"
-            )
-        connection.execute(
-            "UPDATE model_configs SET lifecycle = CASE WHEN enabled = 1 THEN 'enabled' ELSE 'disabled' END WHERE lifecycle IS NULL OR lifecycle = ''"
-        )
-        connection.execute(
-            "UPDATE model_configs SET verification_json = '{\"status\": \"never\"}' WHERE verification_json IS NULL OR verification_json = ''"
-        )
-        now = utc_now().isoformat()
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS schema_meta (component TEXT PRIMARY KEY, version INTEGER NOT NULL, updated_at TEXT NOT NULL)"
-        )
-        connection.execute(
-            "INSERT INTO schema_meta (component, version, updated_at) VALUES (?, ?, ?) ON CONFLICT(component) DO UPDATE SET version=excluded.version, updated_at=excluded.updated_at",
-            (SCHEMA_COMPONENT, CURRENT_SCHEMA_VERSION, now),
-        )
-
     async def initialize(self) -> None:
         def operation(connection: sqlite3.Connection) -> None:
             compatibility = self._inspect_compatibility(connection)
             if compatibility["status"] == "new":
                 self._create_current_schema(connection)
                 return
-            if compatibility["version"] < CURRENT_SCHEMA_VERSION:
-                self._migrate_v1_to_v2(connection)
-                return
-            # A schema_meta-less v2 database is accepted only when it already
-            # exposes every v2 column; record the missing marker explicitly.
-            if "schema_meta" not in self._table_names(connection):
-                now = utc_now().isoformat()
-                connection.execute(
-                    "CREATE TABLE schema_meta (component TEXT PRIMARY KEY, version INTEGER NOT NULL, updated_at TEXT NOT NULL)"
-                )
-                connection.execute(
-                    "INSERT INTO schema_meta (component, version, updated_at) VALUES (?, ?, ?)",
-                    (SCHEMA_COMPONENT, CURRENT_SCHEMA_VERSION, now),
-                )
+            # _inspect_compatibility raises before this point for every
+            # unsupported database. The current schema is read-only at boot;
+            # lifecycle changes require an explicit backup/rebuild.
 
         await self._write(operation)
 
@@ -407,24 +400,81 @@ class SQLiteRepository:
         return AgentSpec.model_validate_json(row["spec_json"]) if row else None
 
     async def list_agent_revisions(self, tenant_id: str, agent_id: str) -> List[AgentSpec]:
+        """Return revision specs for runtime and legacy internal callers."""
+
+        records = await self.list_agent_revision_infos(tenant_id, agent_id)
+        return [item.spec for item in records]
+
+    async def list_agent_revision_infos(
+        self, tenant_id: str, agent_id: str
+    ) -> List[AgentRevisionInfo]:
         rows = await self._read(
             lambda connection: connection.execute(
                 """
-                SELECT spec_json FROM agent_revisions
-                WHERE tenant_id = ? AND agent_id = ?
-                ORDER BY revision DESC
+                SELECT revisions.*, agents.revision AS latest_revision
+                FROM agent_revisions AS revisions
+                JOIN agents
+                  ON agents.tenant_id = revisions.tenant_id
+                 AND agents.id = revisions.agent_id
+                WHERE revisions.tenant_id = ? AND revisions.agent_id = ?
+                ORDER BY revisions.revision DESC
                 """,
                 (tenant_id, agent_id),
             ).fetchall()
         )
-        return [AgentSpec.model_validate_json(row["spec_json"]) for row in rows]
+        return [
+            AgentRevisionInfo(
+                agent_id=row["agent_id"],
+                revision=int(row["revision"]),
+                status=row["status"],
+                is_latest=int(row["revision"]) == int(row["latest_revision"]),
+                spec=AgentSpec.model_validate_json(row["spec_json"]),
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+                published_at=row["published_at"],
+            )
+            for row in rows
+        ]
+
+    async def get_agent_revision_info(
+        self, tenant_id: str, agent_id: str, revision: int
+    ) -> Optional[AgentRevisionInfo]:
+        row = await self._read(
+            lambda connection: connection.execute(
+                """
+                SELECT revisions.*, agents.revision AS latest_revision
+                FROM agent_revisions AS revisions
+                JOIN agents
+                  ON agents.tenant_id = revisions.tenant_id
+                 AND agents.id = revisions.agent_id
+                WHERE revisions.tenant_id = ? AND revisions.agent_id = ? AND revisions.revision = ?
+                """,
+                (tenant_id, agent_id, revision),
+            ).fetchone()
+        )
+        if row is None:
+            return None
+        return AgentRevisionInfo(
+            agent_id=row["agent_id"],
+            revision=int(row["revision"]),
+            status=row["status"],
+            is_latest=int(row["revision"]) == int(row["latest_revision"]),
+            spec=AgentSpec.model_validate_json(row["spec_json"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            published_at=row["published_at"],
+        )
 
     async def save_agent(
         self,
         tenant_id: str,
         spec: AgentSpec,
         expected_revision: Optional[int] = None,
+        *,
+        status: str = "draft",
     ) -> AgentSpec:
+        if status not in {"draft", "published"}:
+            raise ValueError("agent revision status must be draft or published")
         now = utc_now()
 
         def operation(connection: sqlite3.Connection) -> AgentSpec:
@@ -438,10 +488,20 @@ class SQLiteRepository:
                     raise RevisionConflictError(
                         f"expected revision {expected_revision}; current is {current['revision']}"
                     )
+                history_max = int(
+                    connection.execute(
+                        "SELECT COALESCE(MAX(revision), 0) FROM agent_revisions WHERE tenant_id = ? AND agent_id = ?",
+                        (tenant_id, spec.id),
+                    ).fetchone()[0]
+                )
                 saved = spec.model_copy(
                     update={
                         "tenant_id": tenant_id,
-                        "revision": int(current["revision"]) + 1,
+                        # ``agents.revision`` is the mutable latest pointer.
+                        # A rollback can point it at an older immutable
+                        # snapshot, so the next revision must come from the
+                        # history sequence rather than latest + 1.
+                        "revision": max(history_max, int(current["revision"])) + 1,
                         "created_at": current_spec.created_at,
                         "updated_at": now,
                     }
@@ -482,12 +542,110 @@ class SQLiteRepository:
             connection.execute(
                 """
                 INSERT INTO agent_revisions (
-                    tenant_id, agent_id, revision, spec_json, created_at
-                ) VALUES (?, ?, ?, ?, ?)
+                    tenant_id, agent_id, revision, spec_json, created_at,
+                    updated_at, status, published_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (tenant_id, saved.id, saved.revision, payload, now.isoformat()),
+                (
+                    tenant_id,
+                    saved.id,
+                    saved.revision,
+                    payload,
+                    now.isoformat(),
+                    now.isoformat(),
+                    status,
+                    now.isoformat() if status == "published" else None,
+                ),
             )
             return saved
+
+        return await self._write(operation)
+
+    async def publish_agent(
+        self,
+        tenant_id: str,
+        agent_id: str,
+        expected_revision: int,
+    ) -> AgentSpec:
+        """Mark the current latest snapshot as published without rewriting it."""
+
+        def operation(connection: sqlite3.Connection) -> AgentSpec:
+            current = connection.execute(
+                "SELECT revision, spec_json FROM agents WHERE tenant_id = ? AND id = ?",
+                (tenant_id, agent_id),
+            ).fetchone()
+            if current is None:
+                raise RecordNotFoundError(f"agent not found: {agent_id}")
+            if int(current["revision"]) != expected_revision:
+                raise RevisionConflictError(
+                    f"expected latest revision {expected_revision}; current is {current['revision']}"
+                )
+            now = utc_now().isoformat()
+            cursor = connection.execute(
+                """
+                UPDATE agent_revisions
+                SET status = 'published', published_at = ?, updated_at = ?
+                WHERE tenant_id = ? AND agent_id = ? AND revision = ?
+                """,
+                (now, now, tenant_id, agent_id, expected_revision),
+            )
+            if cursor.rowcount != 1:
+                raise RecordNotFoundError(
+                    f"agent revision not found: {agent_id}@{expected_revision}"
+                )
+            return AgentSpec.model_validate_json(current["spec_json"])
+
+        return await self._write(operation)
+
+    async def rollback_agent(
+        self,
+        tenant_id: str,
+        agent_id: str,
+        revision: int,
+        expected_revision: Optional[int] = None,
+    ) -> AgentSpec:
+        """Move latest to an existing immutable revision without rewriting history."""
+
+        def operation(connection: sqlite3.Connection) -> AgentSpec:
+            current = connection.execute(
+                "SELECT revision FROM agents WHERE tenant_id = ? AND id = ?",
+                (tenant_id, agent_id),
+            ).fetchone()
+            if current is None:
+                raise RecordNotFoundError(f"agent not found: {agent_id}")
+            if expected_revision is not None and int(current["revision"]) != expected_revision:
+                raise RevisionConflictError(
+                    f"expected latest revision {expected_revision}; current is {current['revision']}"
+                )
+            target = connection.execute(
+                """
+                SELECT spec_json FROM agent_revisions
+                WHERE tenant_id = ? AND agent_id = ? AND revision = ?
+                """,
+                (tenant_id, agent_id, revision),
+            ).fetchone()
+            if target is None:
+                raise RecordNotFoundError(
+                    f"agent revision not found: {agent_id}@{revision}"
+                )
+            latest = AgentSpec.model_validate_json(target["spec_json"])
+            now = utc_now()
+            connection.execute(
+                """
+                UPDATE agents
+                SET revision = ?, name = ?, spec_json = ?, updated_at = ?
+                WHERE tenant_id = ? AND id = ?
+                """,
+                (
+                    latest.revision,
+                    latest.name,
+                    latest.model_dump_json(),
+                    now.isoformat(),
+                    tenant_id,
+                    agent_id,
+                ),
+            )
+            return latest
 
         return await self._write(operation)
 
@@ -500,77 +658,6 @@ class SQLiteRepository:
             return cursor.rowcount > 0
 
         return await self._write(operation)
-
-    async def list_instances(self, tenant_id: str) -> List[AgentInstance]:
-        rows = await self._read(
-            lambda connection: connection.execute(
-                """
-                SELECT instance_json FROM instances
-                WHERE tenant_id = ? ORDER BY name COLLATE NOCASE
-                """,
-                (tenant_id,),
-            ).fetchall()
-        )
-        return [AgentInstance.model_validate_json(row["instance_json"]) for row in rows]
-
-    async def get_instance(self, tenant_id: str, instance_id: str) -> Optional[AgentInstance]:
-        row = await self._read(
-            lambda connection: connection.execute(
-                "SELECT instance_json FROM instances WHERE tenant_id = ? AND id = ?",
-                (tenant_id, instance_id),
-            ).fetchone()
-        )
-        return AgentInstance.model_validate_json(row["instance_json"]) if row else None
-
-    async def save_instance(self, tenant_id: str, instance: AgentInstance) -> AgentInstance:
-        now = utc_now()
-
-        def operation(connection: sqlite3.Connection) -> AgentInstance:
-            current = connection.execute(
-                "SELECT instance_json FROM instances WHERE tenant_id = ? AND id = ?",
-                (tenant_id, instance.id),
-            ).fetchone()
-            created_at = (
-                AgentInstance.model_validate_json(current["instance_json"]).created_at
-                if current
-                else now
-            )
-            saved = instance.model_copy(
-                update={"tenant_id": tenant_id, "created_at": created_at, "updated_at": now}
-            )
-            connection.execute(
-                """
-                INSERT INTO instances (
-                    tenant_id, id, agent_id, name, instance_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(tenant_id, id) DO UPDATE SET
-                    agent_id=excluded.agent_id,
-                    name=excluded.name,
-                    instance_json=excluded.instance_json,
-                    updated_at=excluded.updated_at
-                """,
-                (
-                    tenant_id,
-                    saved.id,
-                    saved.agent_id,
-                    saved.name,
-                    saved.model_dump_json(),
-                    saved.created_at.isoformat(),
-                    saved.updated_at.isoformat(),
-                ),
-            )
-            return saved
-
-        return await self._write(operation)
-
-    async def delete_instance(self, tenant_id: str, instance_id: str) -> bool:
-        return await self._write(
-            lambda connection: connection.execute(
-                "DELETE FROM instances WHERE tenant_id = ? AND id = ?",
-                (tenant_id, instance_id),
-            ).rowcount
-            > 0
-        )
 
     # ------------------------------------------------------------------
     # Database-backed configuration.  Secrets are encrypted before SQLite
@@ -881,15 +968,14 @@ class SQLiteRepository:
             connection.execute(
                 """
                 INSERT INTO runs (
-                    tenant_id, id, agent_id, instance_id, session_id, status,
+                    tenant_id, id, agent_id, session_id, status,
                     run_json, created_at, finished_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run.tenant_id,
                     run.id,
                     run.agent_id,
-                    run.instance_id,
                     run.session_id,
                     run.status.value,
                     run.model_dump_json(),

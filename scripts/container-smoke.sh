@@ -166,9 +166,6 @@ curl --fail --silent --show-error \
   "http://127.0.0.1:${SMOKE_API_PORT}/api/v1/agents" \
   >"$SMOKE_TMP/agents.json"
 curl --fail --silent --show-error \
-  "http://127.0.0.1:${SMOKE_API_PORT}/api/v1/instances" \
-  >"$SMOKE_TMP/instances.json"
-curl --fail --silent --show-error \
   "http://127.0.0.1:${SMOKE_API_PORT}/api/v1/model-configs" \
   >"$SMOKE_TMP/model-configs.json"
 curl --fail --silent --show-error \
@@ -179,7 +176,7 @@ curl --fail --silent --show-error \
   >"$SMOKE_TMP/runtime-config.json"
 
 python3 - "$SMOKE_TMP/doctor.json" "$SMOKE_TMP/providers.json" \
-  "$SMOKE_TMP/agents.json" "$SMOKE_TMP/instances.json" \
+  "$SMOKE_TMP/agents.json" \
   "$SMOKE_TMP/model-configs.json" "$SMOKE_TMP/model-catalog.json" \
   "$SMOKE_TMP/runtime-config.json" >"$SMOKE_TMP/summary.json" <<'PY'
 import json
@@ -189,7 +186,7 @@ records = []
 for path in sys.argv[1:]:
     with open(path, encoding="utf-8") as source:
         records.append(json.load(source))
-doctor, providers, agents, instances, model_configs, model_catalog, runtime_config = records
+doctor, providers, agents, model_configs, model_catalog, runtime_config = records
 
 provider_ids = [item.get("id") for item in providers]
 if provider_ids != ["anthropic_messages", "openai_compatible"]:
@@ -201,7 +198,6 @@ if not all(item.get("models") for item in model_catalog.get("providers", [])):
     raise SystemExit(f"provider catalog has no recommended models: {model_catalog}")
 for label, value in {
     "agents": agents,
-    "instances": instances,
     "model_configs": model_configs,
     "runtime_config": runtime_config,
 }.items():

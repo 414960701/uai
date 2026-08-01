@@ -1,0 +1,47 @@
+change_id: CHG-0030
+status: complete
+implementation_status: complete
+requirements:
+  EXT-008:
+    contracts:
+      - requirements.md
+      - design.md
+    implementation:
+      - backend/src/uai_forge/web_tools.py::WebSearchTool
+      - backend/src/uai_forge/web_tools.py::WebFetchTool
+      - backend/src/uai_forge/web_tools.py::WebJsonTool
+      - backend/src/uai_forge/web_tools.py::WebRssTool
+      - backend/src/uai_forge/builtins.py::register_builtins
+    verification:
+      - backend/tests/test_web_tools.py
+      - backend/tests/test_registry.py::test_builtin_tool_catalog_contains_remote_read_only_baseline
+      - docs/testing/manual-browser-2026-08-02.md
+    limits:
+      - 默认只做 HTTPS 文本检索/抓取，不执行 JavaScript、浏览器交互或文件下载
+      - DNS rebinding 与真实部署 egress ACL 仍需部署边界和后续 SSRF 专项测试
+  UI-007:
+    contracts:
+      - requirements.md
+      - design.md
+    implementation:
+      - backend/src/uai_forge/api.py::create_agent
+      - backend/src/uai_forge/models.py::default_tool_bindings
+      - app/control-center.tsx::defaultAgentToolBindings
+    verification:
+      - backend/tests/test_api.py::test_new_agent_defaults_mount_read_only_tools
+      - backend/tests/test_api.py::test_new_agent_explicit_empty_tools_stays_empty
+      - tests/rendered-html.test.mjs::new Agent defaults mount remote read-only tools
+      - docs/testing/manual-browser-2026-08-02.md
+  CFG-008:
+    contracts:
+      - requirements.md
+      - design.md
+    implementation:
+      - backend/src/uai_forge/models.py::ExecutionPolicy
+      - backend/src/uai_forge/models.py::ChildMount
+      - app/control-center.tsx::NewAgentModal
+    verification:
+      - backend/tests/test_defaults.py
+      - tests/rendered-html.test.mjs::new Agent defaults use usable execution budgets
+      - npm run typecheck
+      - docs/testing/manual-browser-2026-08-02.md

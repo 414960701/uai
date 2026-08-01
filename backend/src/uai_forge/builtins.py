@@ -12,6 +12,8 @@ from .providers import (
     create_openai_compatible_provider,
 )
 from .registry import PluginRegistry
+from .sandbox import SANDBOX_DOCKER_MANIFEST, create_docker_sandbox
+from .sandbox_tools import SANDBOX_EXEC_MANIFEST, create_sandbox_exec
 from .tools import (
     CALCULATOR_MANIFEST,
     ECHO_MANIFEST,
@@ -19,6 +21,16 @@ from .tools import (
     create_calculator,
     create_echo,
     create_utc_now,
+)
+from .web_tools import (
+    WEB_FETCH_MANIFEST,
+    WEB_JSON_MANIFEST,
+    WEB_RSS_MANIFEST,
+    WEB_SEARCH_MANIFEST,
+    create_web_fetch,
+    create_web_json,
+    create_web_rss,
+    create_web_search,
 )
 
 
@@ -28,6 +40,15 @@ def register_builtins(registry: PluginRegistry) -> None:
     registry.register_tool(CALCULATOR_MANIFEST, create_calculator)
     registry.register_tool(ECHO_MANIFEST, create_echo)
     registry.register_tool(UTC_NOW_MANIFEST, create_utc_now)
+    registry.register_tool(WEB_SEARCH_MANIFEST, create_web_search)
+    registry.register_tool(WEB_FETCH_MANIFEST, create_web_fetch)
+    registry.register_tool(WEB_JSON_MANIFEST, create_web_json)
+    registry.register_tool(WEB_RSS_MANIFEST, create_web_rss)
+    registry.register_sandbox(SANDBOX_DOCKER_MANIFEST, create_docker_sandbox)
+    registry.register_tool(
+        SANDBOX_EXEC_MANIFEST,
+        lambda binding: create_sandbox_exec(binding, registry),
+    )
     registry.register_memory(IN_PROCESS_MEMORY_MANIFEST, create_in_process_memory)
     registry.register_middleware(AUDIT_MIDDLEWARE_MANIFEST, create_audit_tags)
     registry.register_manifest(

@@ -1,16 +1,18 @@
 """UAI Forge public package surface."""
 
 from .models import (
-    AgentInstance,
     AgentSpec,
     ChildMount,
     ExecutionPolicy,
-    InstanceConfigOverrides,
-    InstanceExecutionPolicyOverrides,
     ModelBinding,
     ModelConfig,
+    ExecutionPlan,
+    PlanStep,
+    PlanStatus,
+    PlanStepStatus,
     PluginManifest,
     RunRequest,
+    SandboxBinding,
     ToolBinding,
 )
 from .ports import (
@@ -19,12 +21,14 @@ from .ports import (
     EventStorePort,
     EventStreamPort,
     RepositoryPort,
+    SandboxProvider,
+    SandboxRequest,
+    SandboxResult,
 )
 from .registry import PluginRegistry
 from .runtime import AgentRuntime
 
 __all__ = [
-    "AgentInstance",
     "AgentRuntime",
     "AgentSpec",
     "ChildMount",
@@ -32,15 +36,21 @@ __all__ = [
     "EventStorePort",
     "EventStreamPort",
     "ExecutionPolicy",
-    "InstanceConfigOverrides",
-    "InstanceExecutionPolicyOverrides",
     "ModelBinding",
     "ModelConfig",
+    "ExecutionPlan",
+    "PlanStep",
+    "PlanStatus",
+    "PlanStepStatus",
     "ConfigurationPort",
     "PluginManifest",
     "PluginRegistry",
     "RepositoryPort",
+    "SandboxProvider",
+    "SandboxRequest",
+    "SandboxResult",
     "RunRequest",
+    "SandboxBinding",
     "ToolBinding",
 ]
 

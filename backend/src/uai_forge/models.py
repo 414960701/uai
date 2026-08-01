@@ -75,6 +75,7 @@ def reject_inline_secrets(value: Dict[str, Any]) -> Dict[str, Any]:
 class PluginKind(str, Enum):
     PROVIDER = "provider"
     TOOL = "tool"
+    SANDBOX = "sandbox"
     MEMORY = "memory"
     STORAGE = "storage"
     EVENT_BUS = "event_bus"
@@ -293,7 +294,6 @@ class SetupStatus(StrictModel):
     connection: Literal["connected", "unauthorized", "incompatible", "unavailable"]
     model_connections: SetupResourceSummary = Field(default_factory=SetupResourceSummary)
     agents: SetupResourceSummary = Field(default_factory=SetupResourceSummary)
-    instances: SetupResourceSummary = Field(default_factory=SetupResourceSummary)
     runs: SetupResourceSummary = Field(default_factory=SetupResourceSummary)
     next_action: Literal[
         "connect",
@@ -412,6 +412,47 @@ class ToolBinding(StrictModel):
         return self.alias or self.plugin_id.replace(".", "_").replace("-", "_")
 
 
+class SandboxBinding(StrictModel):
+    """Configuration for an execution-isolation provider.
+
+    Sandbox bindings are deliberately separate from tool bindings. A tool may
+    request a sandbox, but the agent does not receive a sandbox merely because
+    it has a read-only tool mounted.
+    """
+
+    plugin_id: str
+    enabled: bool = True
+    config: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("config")
+    @classmethod
+    def reject_plaintext_credentials(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        return reject_inline_secrets(value)
+
+
+DEFAULT_AGENT_TOOL_PLUGIN_IDS = (
+    "tool.web_search",
+    "tool.web_fetch",
+    "tool.web_json",
+    "tool.web_rss",
+    "tool.calculator",
+    "tool.utc_now",
+)
+
+
+def default_tool_bindings() -> List[ToolBinding]:
+    """Return the safe, read-only tools mounted for a new Agent by default."""
+
+    return [
+        ToolBinding(
+            plugin_id=plugin_id,
+            alias=plugin_id.split(".", 1)[-1].replace("-", "_"),
+            permission="auto",
+        )
+        for plugin_id in DEFAULT_AGENT_TOOL_PLUGIN_IDS
+    ]
+
+
 class MemoryBinding(StrictModel):
     plugin_id: str = "memory.in_process"
     enabled: bool = True
@@ -446,7 +487,7 @@ class ChildMount(StrictModel):
             "Null inherits the upstream scope; an empty list denies all plugin tools."
         ),
     )
-    max_concurrency: int = Field(default=2, ge=1, le=64)
+    max_concurrency: int = Field(default=4, ge=1, le=64)
     input_template: str = "{input}"
 
     @field_validator("alias")
@@ -475,49 +516,13 @@ class ChildMount(StrictModel):
 
 
 class ExecutionPolicy(StrictModel):
-    max_steps: int = Field(default=8, ge=1, le=128)
-    max_depth: int = Field(default=4, ge=0, le=16)
-    max_tool_calls: int = Field(default=24, ge=0, le=1024)
-    max_parallel_children: int = Field(default=4, ge=1, le=128)
-    timeout_seconds: float = Field(default=120.0, gt=0, le=3600)
-    token_budget: int = Field(default=32_000, ge=1)
+    max_steps: int = Field(default=20, ge=1, le=128)
+    max_depth: int = Field(default=6, ge=0, le=16)
+    max_tool_calls: int = Field(default=64, ge=0, le=1024)
+    max_parallel_children: int = Field(default=6, ge=1, le=128)
+    timeout_seconds: float = Field(default=300.0, gt=0, le=3600)
+    token_budget: int = Field(default=64_000, ge=1)
     fail_fast: bool = True
-
-
-class InstanceExecutionPolicyOverrides(StrictModel):
-    """The only execution-policy leaves an Instance may tighten in 0.1.x."""
-
-    max_steps: Optional[int] = Field(default=None, ge=1, le=128, strict=True)
-    max_depth: Optional[int] = Field(default=None, ge=0, le=16, strict=True)
-    max_tool_calls: Optional[int] = Field(default=None, ge=0, le=1024, strict=True)
-    max_parallel_children: Optional[int] = Field(
-        default=None,
-        ge=1,
-        le=128,
-        strict=True,
-    )
-    timeout_seconds: Optional[float] = Field(
-        default=None,
-        gt=0,
-        le=3600,
-        strict=True,
-    )
-    token_budget: Optional[int] = Field(default=None, ge=1, strict=True)
-    fail_fast: Optional[bool] = Field(default=None, strict=True)
-
-
-class InstanceConfigOverrides(StrictModel):
-    """Fail-closed allowlist for non-secret per-Instance configuration."""
-
-    policy: Optional[InstanceExecutionPolicyOverrides] = None
-
-    @model_serializer
-    def serialize_without_empty_defaults(self):
-        # Preserve the historical `{}` representation for an Instance that has
-        # no overrides while still exposing a concrete OpenAPI/JSON schema.
-        if self.policy is None:
-            return {}
-        return {"policy": self.policy.model_dump(exclude_none=True)}
 
 
 class AgentSpec(StrictModel):
@@ -552,41 +557,17 @@ class AgentSpec(StrictModel):
         return self
 
 
-_RESTRICTABLE_POLICY_FIELDS = (
-    "max_steps",
-    "max_depth",
-    "max_tool_calls",
-    "max_parallel_children",
-    "timeout_seconds",
-    "token_budget",
-)
+class AgentRevisionInfo(StrictModel):
+    """Administrative view of an immutable Agent snapshot."""
 
-
-def build_effective_agent_spec(
-    definition: AgentSpec,
-    overrides: InstanceConfigOverrides,
-) -> AgentSpec:
-    """Build a validated per-Run view without mutating the stored revision."""
-
-    candidate = definition.model_dump(mode="python")
-    effective_policy = definition.policy.model_dump(mode="python")
-    requested = overrides.policy
-    if requested is not None:
-        for field_name in _RESTRICTABLE_POLICY_FIELDS:
-            override_value = getattr(requested, field_name)
-            if override_value is not None:
-                effective_policy[field_name] = min(
-                    effective_policy[field_name],
-                    override_value,
-                )
-        if requested.fail_fast is not None:
-            # `True` is the stricter behavior: a child/tool failure aborts the
-            # current frame instead of being converted into an error result.
-            effective_policy["fail_fast"] = (
-                effective_policy["fail_fast"] or requested.fail_fast
-            )
-    candidate["policy"] = effective_policy
-    return AgentSpec.model_validate(candidate)
+    agent_id: str
+    revision: int = Field(ge=1)
+    status: Literal["draft", "published"]
+    is_latest: bool = False
+    spec: AgentSpec
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    published_at: Optional[datetime] = None
 
 
 class AgentPatch(StrictModel):
@@ -604,49 +585,17 @@ class AgentPatch(StrictModel):
     enabled: Optional[bool] = None
 
 
-class InstanceStatus(str, Enum):
-    STOPPED = "stopped"
-    READY = "ready"
-    DEGRADED = "degraded"
+class AgentRollbackRequest(StrictModel):
+    """Move the mutable ``latest`` pointer to an immutable revision."""
+
+    revision: int = Field(ge=1)
+    expected_revision: int = Field(ge=1)
 
 
-class AgentInstance(StrictModel):
-    id: str = Field(default_factory=lambda: new_id("ins"))
-    tenant_id: str = "default"
-    name: str = Field(min_length=2, max_length=80)
-    agent_id: str
-    agent_revision: Optional[int] = None
-    environment: str = "local"
-    status: InstanceStatus = InstanceStatus.READY
-    max_concurrency: int = Field(default=4, ge=1, le=256)
-    config_overrides: InstanceConfigOverrides = Field(
-        default_factory=InstanceConfigOverrides
-    )
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
+class AgentPublishRequest(StrictModel):
+    """Publish the current latest draft using a compare-and-swap guard."""
 
-    @field_validator("config_overrides", mode="before")
-    @classmethod
-    def reject_plaintext_credentials(cls, value: Any) -> Any:
-        if isinstance(value, dict):
-            return reject_inline_secrets(value)
-        return value
-
-
-class InstancePatch(StrictModel):
-    name: Optional[str] = Field(default=None, min_length=2, max_length=80)
-    agent_revision: Optional[int] = Field(default=None, ge=1)
-    environment: Optional[str] = None
-    status: Optional[InstanceStatus] = None
-    max_concurrency: Optional[int] = Field(default=None, ge=1, le=256)
-    config_overrides: Optional[InstanceConfigOverrides] = None
-
-    @field_validator("config_overrides", mode="before")
-    @classmethod
-    def reject_plaintext_credentials(cls, value: Any) -> Any:
-        if isinstance(value, dict):
-            return reject_inline_secrets(value)
-        return value
+    expected_revision: int = Field(ge=1)
 
 
 class RunStatus(str, Enum):
@@ -681,9 +630,130 @@ class ExecutionMode(str, Enum):
     PLAN = "plan"
 
 
+class PlanStatus(str, Enum):
+    """Public lifecycle of a reviewable plan artifact."""
+
+    PROPOSED = "proposed"
+    NEEDS_REVISION = "needs_revision"
+    APPROVED = "approved"
+    EXECUTING = "executing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
+
+
+class PlanStepStatus(str, Enum):
+    PROPOSED = "proposed"
+    APPROVED = "approved"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class PlanStep(StrictModel):
+    id: str = Field(min_length=1, max_length=80)
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=2_000)
+    scope: List[str] = Field(default_factory=list, max_length=8)
+    dependencies: List[str] = Field(default_factory=list, max_length=12)
+    risk: Literal["low", "medium", "high"] = "medium"
+    status: PlanStepStatus = PlanStepStatus.PROPOSED
+
+
+class ExecutionPlan(StrictModel):
+    """A user-visible plan, separate from hidden model reasoning."""
+
+    plan_id: str = Field(default_factory=lambda: new_id("plan"), min_length=1, max_length=120)
+    run_id: str = Field(min_length=1, max_length=120)
+    session_id: str = Field(min_length=1, max_length=120)
+    version: int = Field(default=1, ge=1)
+    title: str = Field(min_length=1, max_length=200)
+    goal: str = Field(min_length=1, max_length=2_000)
+    assumptions: List[str] = Field(default_factory=list, max_length=12)
+    steps: List[PlanStep] = Field(min_length=1, max_length=24)
+    risks: List[str] = Field(default_factory=list, max_length=12)
+    status: PlanStatus = PlanStatus.PROPOSED
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class TodoStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class TodoItem(StrictModel):
+    """A public task-monitor item, never a transcript of hidden reasoning."""
+
+    id: str = Field(min_length=1, max_length=80)
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=1_000)
+    status: TodoStatus = TodoStatus.PENDING
+
+
+class TaskTodoList(StrictModel):
+    """Provider-neutral TodoList for complex execute-mode Runs."""
+
+    todo_id: str = Field(default_factory=lambda: new_id("todo"), min_length=1, max_length=120)
+    run_id: str = Field(min_length=1, max_length=120)
+    session_id: str = Field(min_length=1, max_length=120)
+    title: str = Field(default="任务清单", min_length=1, max_length=200)
+    items: List[TodoItem] = Field(min_length=2, max_length=24)
+    status: TodoStatus = TodoStatus.PENDING
+    source: Literal["automatic", "plan"] = "automatic"
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class ChoiceOption(StrictModel):
+    id: str = Field(min_length=1, max_length=80)
+    label: str = Field(min_length=1, max_length=160)
+    description: str = Field(default="", max_length=500)
+    recommended: bool = False
+
+
+class ChoicePrompt(StrictModel):
+    """A safe, explicit user choice emitted as a public interaction artifact."""
+
+    prompt_id: str = Field(default_factory=lambda: new_id("choice"), min_length=1, max_length=120)
+    run_id: str = Field(min_length=1, max_length=120)
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=1_000)
+    selection_type: Literal["single", "multiple"] = "single"
+    options: List[ChoiceOption] = Field(min_length=2, max_length=8)
+    required: bool = False
+    status: Literal["open", "resolved", "skipped"] = "open"
+    selected_ids: List[str] = Field(default_factory=list, max_length=8)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class PlanEditRequest(StrictModel):
+    expected_version: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=200)
+    goal: str = Field(min_length=1, max_length=2_000)
+    assumptions: List[str] = Field(default_factory=list, max_length=12)
+    steps: List[PlanStep] = Field(min_length=1, max_length=24)
+    risks: List[str] = Field(default_factory=list, max_length=12)
+
+
+class PlanApprovalRequest(StrictModel):
+    expected_version: int = Field(ge=1)
+
+
+class ChoiceResolutionRequest(StrictModel):
+    action: Literal["continue", "skip"]
+    selected_ids: List[str] = Field(default_factory=list, max_length=8)
+
+
 class RunRequest(StrictModel):
-    agent_id: Optional[str] = None
-    instance_id: Optional[str] = None
+    agent_id: str = Field(min_length=1, max_length=120)
+    agent_revision: Optional[int] = Field(default=None, ge=1)
     input: str = Field(min_length=1, max_length=100_000)
     session_id: str = Field(default_factory=lambda: new_id("ses"))
     thinking_mode: ThinkingMode = ThinkingMode.AUTO
@@ -695,23 +765,19 @@ class RunRequest(StrictModel):
     def reject_plaintext_credentials(cls, value: Dict[str, Any]) -> Dict[str, Any]:
         return reject_inline_secrets(value)
 
-    @model_validator(mode="after")
-    def choose_target(self) -> "RunRequest":
-        if bool(self.agent_id) == bool(self.instance_id):
-            raise ValueError("provide exactly one of agent_id or instance_id")
-        return self
-
-
 class RunRecord(StrictModel):
     id: str = Field(default_factory=lambda: new_id("run"))
     tenant_id: str = "default"
     agent_id: str
-    instance_id: Optional[str] = None
+    agent_revision: Optional[int] = Field(default=None, ge=1)
     session_id: str
     status: RunStatus = RunStatus.QUEUED
     input: str
     output: Optional[str] = None
     error: Optional[str] = None
+    plan: Optional[ExecutionPlan] = None
+    todo: Optional[TaskTodoList] = None
+    choice: Optional[ChoicePrompt] = None
     metrics: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
     started_at: Optional[datetime] = None
@@ -739,6 +805,20 @@ class EventType(str, Enum):
     DELEGATION_FAILED = "delegation.failed"
     PERMISSION_REQUIRED = "permission.required"
     BUDGET_UPDATED = "budget.updated"
+    PLAN_PROPOSED = "plan.proposed"
+    PLAN_UPDATED = "plan.updated"
+    PLAN_APPROVED = "plan.approved"
+    PLAN_EXECUTION_STARTED = "plan.execution_started"
+    PLAN_COMPLETED = "plan.completed"
+    PLAN_FAILED = "plan.failed"
+    PLAN_REJECTED = "plan.rejected"
+    PLAN_CANCELLED = "plan.cancelled"
+    TODO_CREATED = "todo.created"
+    TODO_UPDATED = "todo.updated"
+    TODO_COMPLETED = "todo.completed"
+    TODO_FAILED = "todo.failed"
+    CHOICE_PROMPTED = "choice.prompted"
+    CHOICE_RESOLVED = "choice.resolved"
 
 
 class RunEvent(StrictModel):

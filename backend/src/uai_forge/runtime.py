@@ -377,7 +377,7 @@ class AgentRuntime:
                 if chunk.tool_calls:
                     tool_calls.extend(chunk.tool_calls)
                 if chunk.usage is not None:
-                    usage = chunk.usage
+                    usage = self._merge_usage(usage, chunk.usage)
         except Exception:
             # A stream can be retried only before any public output was exposed.
             # Completed tool calls are private until the model response returns,
@@ -387,9 +387,37 @@ class AgentRuntime:
             return await provider.complete(request)
 
         content = "".join(parts)
-        if usage is None or usage.total_tokens == 0:
+        if usage is None:
             usage = TokenUsage(output_tokens=max(0, len(content) // 4))
+        elif usage.total_tokens == 0:
+            usage = usage.model_copy(
+                update={"output_tokens": max(0, len(content) // 4)}
+            )
         return ModelOutput(content=content, tool_calls=tool_calls, usage=usage)
+
+    @staticmethod
+    def _merge_usage(
+        current: Optional[TokenUsage],
+        incoming: TokenUsage,
+    ) -> TokenUsage:
+        """Merge partial stream usage without losing cache dimensions."""
+
+        if current is None:
+            return incoming
+        return TokenUsage(
+            input_tokens=incoming.input_tokens or current.input_tokens,
+            output_tokens=incoming.output_tokens or current.output_tokens,
+            cached_input_tokens=(
+                incoming.cached_input_tokens
+                if incoming.cached_input_tokens is not None
+                else current.cached_input_tokens
+            ),
+            cache_creation_input_tokens=(
+                incoming.cache_creation_input_tokens
+                if incoming.cache_creation_input_tokens is not None
+                else current.cache_creation_input_tokens
+            ),
+        )
 
     @staticmethod
     def _delegation_definition(mount: ChildMount) -> Dict[str, Any]:
@@ -636,8 +664,27 @@ class AgentRuntime:
                     ModelMessage(
                         role="system",
                         content=(
-                            "当前是计划模式：只生成可审阅的执行计划，不调用工具、"
-                            "不委派子 Agent，也不执行外部副作用。"
+                            "当前是计划模式：先研究当前已提供的上下文并生成可审阅的执行计划；"
+                            "不调用工具、不委派子 Agent，也不执行外部副作用。不要输出隐藏思考或"
+                            "逐步推理，只输出用户可以修改和批准的计划。请尽量使用以下公开结构："
+                            "\n# 计划标题\n## 目标\n...\n## 假设\n- ...\n"
+                            "## 步骤\n1. ...\n2. ...\n## 风险\n- ...\n"
+                            "如果缺少仓库或外部事实，明确写入假设和风险，不要伪造已完成的调查。"
+                        ),
+                    ),
+                )
+            else:
+                history.insert(
+                    -1,
+                    ModelMessage(
+                        role="system",
+                        content=(
+                            "当任务确实需要用户在有限选项中做决定时，可以在公开答复末尾追加一个安全选择标记，"
+                            "格式必须是单行 HTML 注释：<!-- uai-choice:{\"title\":\"...\",\"description\":\"...\","
+                            "\"selection_type\":\"single\",\"required\":false,\"options\":[{\"id\":\"a\","
+                            "\"label\":\"选项 A\",\"description\":\"...\",\"recommended\":true},{\"id\":\"b\","
+                            "\"label\":\"选项 B\",\"description\":\"...\"}]} -->。"
+                            "只在需要明确用户选择时使用，不要把隐藏思考、凭据、原始工具参数或大段 JSON 放进标记。"
                         ),
                     ),
                 )
@@ -701,8 +748,7 @@ class AgentRuntime:
                         "run_id": run.id,
                         "agent_id": spec.id,
                         "agent_name": spec.name,
-                        "instance_id": run.instance_id,
-                        "environment": run.metrics.get("environment"),
+                        "agent_revision": spec.revision,
                         "depth": depth,
                         "local_step": local_step + 1,
                         "execution_mode": execution_mode.value,
@@ -713,8 +759,7 @@ class AgentRuntime:
                     "run_id": run.id,
                     "session_id": run.session_id,
                     "agent_id": spec.id,
-                    "instance_id": run.instance_id,
-                    "environment": run.metrics.get("environment"),
+                    "agent_revision": spec.revision,
                     "depth": depth,
                 }
                 for middleware in middlewares:
@@ -1167,8 +1212,7 @@ class AgentRuntime:
             "run_id": run.id,
             "session_id": run.session_id,
             "agent_id": spec.id,
-            "instance_id": run.instance_id,
-            "environment": run.metrics.get("environment"),
+            "agent_revision": spec.revision,
             "depth": depth,
         }
         arguments = call.arguments

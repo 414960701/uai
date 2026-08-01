@@ -13,6 +13,10 @@
 | Claude | [What are projects?](https://support.claude.com/en/articles/9517075-what-are-projects) | 每个项目拥有独立聊天历史和知识库；项目指令与知识在项目内生效；共享项目明确区分查看和编辑权限。 |
 | Cursor | [Cursor 文档](https://cursor.com/cn/docs) | Agent、规划、评审、工具、技能、MCP 和子代理被组织在同一套工作区导航中；中文界面保留稳定的 Agent、MCP 等代码术语。 |
 | Vercel AI SDK | [AI SDK UI Chatbot](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot) | 对话 UI 需要消息持久化、恢复流、工具使用和错误处理；工具过程应该可观察但不阻塞主对话阅读。 |
+| Replit Agent | [Plan Mode](https://docs.replit.com/features/agent/plan-mode) | Plan 从输入框模式选择进入；复杂任务先生成结构化任务列表，用户可以继续对话修改，也可以批准后进入 Build。 |
+| Claude Code | [Permission modes](https://code.claude.com/docs/en/permission-modes) | Plan 是只读研究与提案阶段；计划完成后明确提供批准、继续规划或编辑计划的分支，批准会退出 Plan。 |
+| Cursor Agent | [Plan 模式](https://cursor.com/docs/agent/modes) | 复杂关键词可建议 Plan；先澄清、检索代码库、生成可编辑方案，准备好后再开始构建，简单任务直接 Agent。 |
+| Kiro CLI | [Terminal UI](https://kiro.dev/docs/cli/terminal-ui/) | 思考块默认流式展示，长内容收成 tail view 可展开；工具有标题、spinner、完成状态、可折叠输出，另有独立 Activity tray。 |
 
 ## 设计结论
 
@@ -35,5 +39,19 @@ Agent 对话
 回答表面采用“正文优先”的层级：常用 Markdown 在前端安全投影为段落、标题、列表、加粗和
 行内代码；公开执行阶段保留在正文下方的低强调活动条，完整 Trace 继续放在运行详情。
 
-本设计沿用 UAI Forge 当前的浅色控制台和绿色状态色，不引入品牌依赖、第三方 Agent SDK 或
+本设计沿用 UAI Forge 当前的浅色控制台和低饱和蓝主操作色、绿色状态色，不引入品牌依赖、第三方 Agent SDK 或
 独立聊天后端。
+
+## 2026-08-01 新鲜公开检索结论
+
+本轮通过 Google 以 `agent chat UI thinking collapse task monitor plan mode` 检索，并直接核对
+Replit、Claude Code、Cursor 和 Kiro 的公开文档。可落地的共同模式不是“把所有内部思考铺开”，
+而是把用户可介入的状态分成三层：
+
+1. **主回答层**：回答持续流式出现；运行中的阶段用一行低强调活动摘要表达。
+2. **协作层**：复杂度足够时自动生成 Todo/任务列表；Plan 由用户在输入框主动选择，生成后
+   进入可编辑、可批准、可继续规划的审阅状态。
+3. **诊断层**：工具输出、模型/Agent 事件和完整 Trace 放在可收起的侧栏或 Activity tray；终态
+   默认折叠，用户需要时再展开。
+
+这也解释了当前页面“看起来不是一个水平”的核心差距：不是缺少更多事件，而是默认信息层级反了。

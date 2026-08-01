@@ -7,12 +7,13 @@ from uai_forge.builtins import register_builtins
 from uai_forge.events import EventBroker
 from uai_forge.graph import AgentGraphValidator
 from uai_forge.models import (
-    AgentInstance,
     AgentSpec,
     ChildMount,
     EventType,
     ExecutionMode,
     ExecutionPolicy,
+    PlanEditRequest,
+    PlanStep,
     RunEvent,
     RunRequest,
     RunStatus,
@@ -23,6 +24,7 @@ from uai_forge.registry import PluginRegistry
 from uai_forge.run_manager import InvalidTopologyError, RunManager
 from uai_forge.runtime import AgentRuntime
 from uai_forge.storage import SQLiteRepository
+from uai_forge.ports import TokenUsage
 from test_support import register_test_provider
 
 
@@ -69,6 +71,19 @@ async def test_streaming_model_publishes_deltas_and_trace_chain(tmp_path):
     assert all(event.trace_id == events[0].trace_id for event in events)
     assert all(event.span_id for event in events)
     assert events[-1].type == EventType.RUN_COMPLETED
+
+
+def test_stream_usage_merge_preserves_partial_cache_dimensions():
+    merged = AgentRuntime._merge_usage(
+        TokenUsage(input_tokens=11, cached_input_tokens=8),
+        TokenUsage(output_tokens=5, cache_creation_input_tokens=1),
+    )
+
+    assert merged.input_tokens == 11
+    assert merged.output_tokens == 5
+    assert merged.cached_input_tokens == 8
+    assert merged.cache_creation_input_tokens == 1
+    assert merged.total_tokens == 16
 
 
 @pytest.mark.asyncio
@@ -253,6 +268,86 @@ async def test_plan_mode_blocks_tools_and_child_delegation(tmp_path):
         and "不调用工具或子 Agent" in event.payload.get("message", "")
         for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_creates_reviewable_plan_and_approval_starts_pinned_execution(tmp_path):
+    repository, manager = await make_runtime(tmp_path)
+    agent = await repository.save_agent(
+        "default",
+        AgentSpec(
+            id="agt_plan_review_flow",
+            name="Plan Review Agent",
+            system_prompt="Produce a clear implementation plan.",
+            policy=ExecutionPolicy(max_steps=3),
+        ),
+    )
+
+    plan_run = await manager.start(
+        "default",
+        RunRequest(
+            agent_id=agent.id,
+            input="整理一个可审阅的发布流程",
+            execution_mode=ExecutionMode.PLAN,
+        ),
+    )
+    finished_plan = await manager.wait("default", plan_run.id)
+    assert finished_plan is not None
+    assert finished_plan.plan is not None
+    assert finished_plan.plan.plan_id.startswith("plan_")
+    assert finished_plan.plan.status.value == "proposed"
+    assert finished_plan.plan.steps
+    assert finished_plan.metrics["plan_id"] == finished_plan.plan.plan_id
+
+    edited = await manager.edit_plan(
+        "default",
+        plan_run.id,
+        PlanEditRequest(
+            expected_version=finished_plan.plan.version,
+            title="发布流程（已审阅）",
+            goal="按批准后的步骤完成发布准备",
+            assumptions=["当前环境为本地测试环境"],
+            steps=[
+                PlanStep(
+                    id="step_01",
+                    title="检查配置",
+                    description="检查模型和运行配置",
+                    risk="low",
+                ),
+                PlanStep(
+                    id="step_02",
+                    title="执行验证",
+                    description="运行回归验证并记录结果",
+                    risk="medium",
+                ),
+            ],
+            risks=["发布前需要再次确认外部副作用边界"],
+        ),
+    )
+    assert edited.version == 2
+    assert edited.status.value == "needs_revision"
+
+    execution = await manager.approve_plan("default", plan_run.id, edited.version)
+    assert execution.id != plan_run.id
+    assert execution.metrics["execution_mode"] == "execute"
+    assert execution.metrics["source_plan_id"] == edited.plan_id
+    assert execution.metrics["source_plan_run_id"] == plan_run.id
+    assert execution.metrics["root_revision"] == agent.revision
+
+    finished_execution = await manager.wait("default", execution.id)
+    assert finished_execution is not None
+    assert finished_execution.status == RunStatus.SUCCEEDED
+    source_after = await repository.get_run("default", plan_run.id)
+    assert source_after is not None and source_after.plan is not None
+    assert source_after.plan.status.value == "completed"
+    assert all(step.status.value == "completed" for step in source_after.plan.steps)
+
+    plan_events = await repository.list_events("default", plan_run.id)
+    assert [event.type for event in plan_events].count(EventType.PLAN_PROPOSED) == 1
+    assert [event.type for event in plan_events].count(EventType.PLAN_UPDATED) == 1
+    assert [event.type for event in plan_events].count(EventType.PLAN_APPROVED) == 1
+    assert [event.type for event in plan_events].count(EventType.PLAN_EXECUTION_STARTED) == 1
+    assert [event.type for event in plan_events].count(EventType.PLAN_COMPLETED) == 1
 
 
 @pytest.mark.asyncio
@@ -570,7 +665,7 @@ async def test_three_level_delegation_with_one_root_slot_does_not_deadlock(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_instance_validates_its_pinned_root_revision_not_invalid_latest(tmp_path):
+async def test_run_can_pin_agent_revision_not_invalid_latest(tmp_path):
     repository, manager = await make_runtime(tmp_path)
     root_v1 = await repository.save_agent(
         "default",
@@ -578,15 +673,6 @@ async def test_instance_validates_its_pinned_root_revision_not_invalid_latest(tm
             id="agt_pinned_valid_root",
             name="Pinned Valid Root",
             system_prompt="v1 is valid",
-        ),
-    )
-    instance = await repository.save_instance(
-        "default",
-        AgentInstance(
-            id="ins_pinned_valid_root",
-            name="Pinned Valid Root Instance",
-            agent_id=root_v1.id,
-            agent_revision=root_v1.revision,
         ),
     )
     await repository.save_agent(
@@ -604,16 +690,21 @@ async def test_instance_validates_its_pinned_root_revision_not_invalid_latest(tm
 
     run = await manager.start(
         "default",
-        RunRequest(instance_id=instance.id, input="inspect the pinned valid root"),
+        RunRequest(
+            agent_id=root_v1.id,
+            agent_revision=root_v1.revision,
+            input="inspect the pinned valid root",
+        ),
     )
     finished = await manager.wait("default", run.id)
 
     assert finished.status == RunStatus.SUCCEEDED
+    assert finished.agent_revision == root_v1.revision
     assert finished.metrics["root_revision"] == root_v1.revision
 
 
 @pytest.mark.asyncio
-async def test_instance_rejects_invalid_pinned_root_even_when_latest_is_valid(tmp_path):
+async def test_run_rejects_invalid_pinned_revision_even_when_latest_is_valid(tmp_path):
     repository, manager = await make_runtime(tmp_path)
     root_v1 = await repository.save_agent(
         "default",
@@ -624,15 +715,6 @@ async def test_instance_rejects_invalid_pinned_root_even_when_latest_is_valid(tm
             children=[
                 ChildMount(alias="self_cycle", agent_id="agt_pinned_invalid_root"),
             ],
-        ),
-    )
-    instance = await repository.save_instance(
-        "default",
-        AgentInstance(
-            id="ins_pinned_invalid_root",
-            name="Pinned Invalid Root Instance",
-            agent_id=root_v1.id,
-            agent_revision=root_v1.revision,
         ),
     )
     await repository.save_agent(
@@ -649,8 +731,40 @@ async def test_instance_rejects_invalid_pinned_root_even_when_latest_is_valid(tm
     with pytest.raises(InvalidTopologyError, match="mounted-agent cycle detected"):
         await manager.start(
             "default",
-            RunRequest(instance_id=instance.id, input="must reject the pinned invalid root"),
+            RunRequest(
+                agent_id=root_v1.id,
+                agent_revision=root_v1.revision,
+                input="must reject the pinned invalid root",
+            ),
         )
+
+
+@pytest.mark.asyncio
+async def test_run_uses_latest_agent_revision_by_default(tmp_path):
+    repository, manager = await make_runtime(tmp_path)
+    v1 = await repository.save_agent(
+        "default",
+        AgentSpec(
+            id="agt_latest_default",
+            name="Latest Default",
+            system_prompt="v1",
+        ),
+    )
+    v2 = await repository.save_agent(
+        "default",
+        v1.model_copy(update={"system_prompt": "v2"}),
+        expected_revision=v1.revision,
+    )
+
+    run = await manager.start(
+        "default",
+        RunRequest(agent_id=v1.id, input="use the latest revision"),
+    )
+    finished = await manager.wait("default", run.id)
+
+    assert finished.status == RunStatus.SUCCEEDED
+    assert finished.agent_revision == v2.revision
+    assert finished.metrics["root_revision"] == v2.revision
 
 
 @pytest.mark.asyncio
@@ -762,7 +876,7 @@ async def test_new_parent_revision_uses_its_updated_mount_concurrency(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_instance_override_builds_restricted_effective_spec_and_runtime_context(
+async def test_agent_revision_context_is_server_derived(
     tmp_path,
     monkeypatch,
 ):
@@ -770,8 +884,8 @@ async def test_instance_override_builds_restricted_effective_spec_and_runtime_co
     definition = await repository.save_agent(
         "default",
         AgentSpec(
-            id="agt_instance_override_context",
-            name="Instance Override Context",
+            id="agt_revision_context",
+            name="Revision Context",
             system_prompt="Use the echo tool when requested.",
             tools=[ToolBinding(plugin_id="tool.echo", alias="echo")],
             policy=ExecutionPolicy(
@@ -786,28 +900,6 @@ async def test_instance_override_builds_restricted_effective_spec_and_runtime_co
         ),
     )
     immutable_revision = definition.model_dump_json()
-    instance = await repository.save_instance(
-        "default",
-        AgentInstance(
-            id="ins_instance_override_context",
-            name="Instance Override Context",
-            agent_id=definition.id,
-            agent_revision=definition.revision,
-            environment="test-sandbox",
-            config_overrides={
-                "policy": {
-                    "max_steps": 3,
-                    "max_depth": 8,
-                    "max_tool_calls": 20,
-                    "max_parallel_children": 2,
-                    "timeout_seconds": 60,
-                    "token_budget": 500,
-                    "fail_fast": True,
-                }
-            },
-        ),
-    )
-
     provider_metadata = []
     middleware_context = {}
     tool_context = {}
@@ -875,7 +967,8 @@ async def test_instance_override_builds_restricted_effective_spec_and_runtime_co
     run = await manager.start(
         "default",
         RunRequest(
-            instance_id=instance.id,
+            agent_id=definition.id,
+            agent_revision=definition.revision,
             input='tool:echo {"input": "inspect context"}',
         ),
     )
@@ -884,75 +977,26 @@ async def test_instance_override_builds_restricted_effective_spec_and_runtime_co
     started = next(event for event in events if event.type == EventType.RUN_STARTED)
 
     assert finished.status == RunStatus.SUCCEEDED
-    assert finished.metrics["instance_id"] == instance.id
-    assert finished.metrics["environment"] == "test-sandbox"
+    assert finished.agent_revision == definition.revision
     assert finished.metrics["effective_policy"] == {
-        "max_steps": 3,
+        "max_steps": 8,
         "max_depth": 4,
         "max_tool_calls": 10,
-        "max_parallel_children": 2,
+        "max_parallel_children": 5,
         "timeout_seconds": 30.0,
-        "token_budget": 500,
-        "fail_fast": True,
+        "token_budget": 1_000,
+        "fail_fast": False,
     }
-    assert started.payload["instance_id"] == instance.id
-    assert started.payload["environment"] == "test-sandbox"
+    assert started.payload["agent_revision"] == definition.revision
     for context in (provider_metadata[0], middleware_context, tool_context):
-        assert context["instance_id"] == instance.id
-        assert context["environment"] == "test-sandbox"
+        assert context["agent_revision"] == definition.revision
     assert (
         await repository.get_agent("default", definition.id, definition.revision)
     ).model_dump_json() == immutable_revision
 
 
 @pytest.mark.asyncio
-async def test_instance_step_override_actually_tightens_shared_run_budget(tmp_path):
-    repository, manager = await make_runtime(tmp_path)
-    child = await repository.save_agent(
-        "default",
-        AgentSpec(
-            id="agt_instance_override_child",
-            name="Instance Override Child",
-            system_prompt="Return the delegated input.",
-        ),
-    )
-    parent = await repository.save_agent(
-        "default",
-        AgentSpec(
-            id="agt_instance_override_parent",
-            name="Instance Override Parent",
-            system_prompt="Delegate the task.",
-            children=[ChildMount(alias="child", agent_id=child.id)],
-            policy=ExecutionPolicy(max_steps=8, max_depth=4),
-        ),
-    )
-    instance = await repository.save_instance(
-        "default",
-        AgentInstance(
-            id="ins_instance_override_budget",
-            name="Instance Override Budget",
-            agent_id=parent.id,
-            agent_revision=parent.revision,
-            config_overrides={"policy": {"max_steps": 1}},
-        ),
-    )
-
-    run = await manager.start(
-        "default",
-        RunRequest(
-            instance_id=instance.id,
-            input="delegate:child consume the effective shared budget",
-        ),
-    )
-    finished = await manager.wait("default", run.id)
-
-    assert finished.status == RunStatus.FAILED
-    assert finished.metrics["effective_policy"]["max_steps"] == 1
-    assert "step budget exhausted" in finished.error
-
-
-@pytest.mark.asyncio
-async def test_direct_agent_run_keeps_empty_instance_context(tmp_path):
+async def test_direct_agent_run_uses_agent_revision_context(tmp_path):
     repository, manager = await make_runtime(tmp_path)
     agent = await repository.save_agent(
         "default",
@@ -965,14 +1009,12 @@ async def test_direct_agent_run_keeps_empty_instance_context(tmp_path):
 
     run = await manager.start(
         "default",
-        RunRequest(agent_id=agent.id, input="run without an Instance"),
+        RunRequest(agent_id=agent.id, input="run the current Agent"),
     )
     finished = await manager.wait("default", run.id)
     events = await repository.list_events("default", run.id)
     started = next(event for event in events if event.type == EventType.RUN_STARTED)
 
     assert finished.status == RunStatus.SUCCEEDED
-    assert finished.metrics["instance_id"] is None
-    assert finished.metrics["environment"] is None
-    assert started.payload["instance_id"] is None
-    assert started.payload["environment"] is None
+    assert finished.agent_revision == agent.revision
+    assert started.payload["agent_revision"] == agent.revision

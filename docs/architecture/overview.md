@@ -25,7 +25,7 @@ exactly-once、生产级租户认证或未知插件沙箱。
 ## 设计目标
 
 1. Python 运行时、Web 控制面和部署适配器共享自有领域合同。
-2. Agent 定义、定义修订、运行实例、会话和 Run 各自有独立生命周期。
+2. Agent 定义、定义修订、会话和 Run 各自有独立生命周期；Run 直接选择 Agent revision。
 3. 模型、工具、记忆、存储、消息总线、沙箱、策略和观测通过端口替换。
 4. bounded nested call 和 durable peer session 是两种不同的多 Agent 语义。
 5. 所有公共事件、配置和插件合同都有显式版本和兼容规则。
@@ -53,7 +53,7 @@ flowchart LR
   Runtime -. "后续" .-> Peer["Durable peer session"]
   Repository -. "后续" .-> Postgres[("PostgreSQL")]
   EventBus -. "后续" .-> Redis["Redis / NATS"]
-  Runtime -. "后续" .-> Sandbox["Workspace / Sandbox"]
+  Runtime -. "显式 opt-in" .-> Sandbox["SandboxProvider / child executor"]
 ```
 
 Web 和 FastAPI 是适配器，不是领域模型的所有者。MCP、A2A、AG-UI、OpenAI-compatible
@@ -64,8 +64,7 @@ API 和任一开源框架都只能出现在边缘适配器中。
 | 概念 | `0.1.0` 表示 | 当前状态 | 目标边界 |
 |---|---|---|---|
 | Agent Definition | `AgentSpec.id` | `Partial` | 稳定身份，不直接承载运行状态 |
-| Agent Revision | `AgentSpec.revision` 与 `agent_revisions` | `Implemented` | 不可变快照，可被实例和 mount 钉住 |
-| Agent Instance | `AgentInstance` | `Partial` | 环境、容量和配置覆盖；当前 override 与运行中容量变更尚未完全应用 |
+| Agent Revision | `AgentSpec.revision` 与 `agent_revisions` | `Implemented` | 不可变快照，可被 Run 和 mount 钉住 |
 | Session | `RunRequest.session_id` 与 Memory key | `Partial` | 一等持久资源，保存会话状态、权限上下文和 peer inbox |
 | Run | `RunRecord` | `Partial` | 一次可恢复执行，有显式状态机、lease 和取消树 |
 | Invocation / Step | 仅存在于内存调用栈和事件 | `Specified` | 可持久化模型、工具、子 Agent 执行边界 |
@@ -73,9 +72,11 @@ API 和任一开源框架都只能出现在边缘适配器中。
 | Agent Mount | `ChildMount` | `Partial`（bounded） | 显式声明调用语义、权限、预算和共享资源策略 |
 | Team / Peer Inbox | 无 | `Specified` | 独立 Session 通过持久 inbox 和版本化消息协作 |
 | Workspace | 无正式端口 | `Planned` | 本地、容器或远程沙箱；默认不隐式共享 |
+| Sandbox | `SandboxProvider`、`sandbox.docker` adapter | `Partial` | 子容器 argv 执行边界已实现；rootless/dedicated executor、VM/Wasm adapter 与生产 TCK 待补 |
 
 当前 `AgentSpec` 同时承担 Definition 最新视图和 Revision 内容。未来拆分资源时必须保持
-已有 Agent ID、revision 查询和 API 兼容，不能在没有迁移的情况下重解释旧记录。
+当前 Agent ID、revision 查询和生命周期状态属于同一 v3 合同；旧数据库不在读取路径内，
+必须备份后重建，不能在没有显式 schema change 的情况下重解释旧记录。
 
 ## `0.1.0` 组件
 
@@ -98,9 +99,11 @@ flowchart TB
   Validator --> RepositoryPort
 ```
 
-- `SQLiteRepository` 保存 Agent 最新视图、不可变修订、Instance、Run 和有序 Run Event。
+- `SQLiteRepository` 保存 Agent latest 指针视图、draft/published 不可变修订、Run 和有序
+  Run Event；运行实例不是独立资源，旧 Instance 表不属于当前 schema。
 - `PluginRegistry` 注册内置适配器并发现 `uai_forge.plugins` entry points。
-- `AgentGraphValidator` 检查缺失节点、禁用节点、缺失 revision 和基本静态 mount 环。
+- `AgentGraphValidator` 检查缺失节点、禁用节点、缺失 revision 和基本静态 mount 环；
+  未固定的 mount 解析子 Agent 的 latest 标签。
   遍历使用 mount 实际钉住的 revision，并以 `(Agent ID, revision)` 区分已访问节点；旧
   revision 与 latest 拓扑相反的正反例已有回归测试。
 - `RunManager` 在单进程内创建 `asyncio.Task`、限制一个 Session 同时一个 Run，并处理取消。
@@ -119,6 +122,11 @@ flowchart TB
 具体存储类型分支。当前唯一内置持久化/实时适配器仍是 `SQLiteRepository` /
 `EventBroker`；尚无 PostgreSQL、Redis/NATS、CheckpointStore、OutboxStore、LeaseStore
 或正式 adapter TCK，不能据此宣称具备多 worker 云端持久执行。
+
+沙箱执行也通过自有 `SandboxProvider` 端口隔离。当前 `sandbox.docker` 只接受 argv、stdin
+和可收紧的资源/超时参数，构造无网络、只读 rootfs、无 capability 的子容器命令；Docker CLI、
+`runsc`、`kata-runtime`、Firecracker、Wasm 和远程 executor 都属于边缘实现。控制面不把
+rootful Docker socket 或宿主挂载交给 Agent，且新 Agent 不默认挂载 `tool.sandbox_exec`。
 
 ## 当前执行语义
 
@@ -185,7 +193,7 @@ stateDiagram-v2
 |---|---|---|
 | 用途 | 父 Agent 把有限任务当工具调用 | 长时间、异步或跨进程协作 |
 | `0.1.0` | `Implemented`（三层单槽调用链已验证） | `Specified` |
-| 身份 | 父 Run 内的嵌套 invocation | 独立 Agent Instance、Session 和 Run |
+| 身份 | 父 Run 内的嵌套 invocation | 独立 Agent、Session 和 Run |
 | 生命周期 | 不长于父 Run | 可在父 Run 结束后继续 |
 | 预算 | 必须继承并消耗父根预算 | 自有预算，同时受 Team/租户配额 |
 | 取消 | 父取消必须取消嵌套调用 | 通过持久消息和取消策略协商 |
@@ -256,7 +264,7 @@ payload_schema, payload
 ## 架构不变量
 
 - 所有持久记录和查询必须带可信来源的 `tenant_id`。
-- Agent Revision 一旦被 Run 或 Instance 引用就不可变。
+- Agent Revision 一旦被 Run 或 mount 引用就不可变。
 - 子 Agent 的有效权限不得超过父权限、mount scope 和子策略的交集。
 - 一个 Run 的事件 sequence 严格递增；终态之后不得再产生非诊断业务事件。
 - 同一幂等键和副作用类型最多产生一个已提交外部结果。

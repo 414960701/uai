@@ -1,0 +1,32 @@
+kind: evidence-index
+id: CHG-0031-TRACEABILITY
+status: complete
+requirements:
+  - id: CORE-009
+    status: implemented
+    implementation:
+      - backend/src/uai_forge/models.py::AgentRevisionInfo
+      - backend/src/uai_forge/storage.py::SQLiteRepository.save_agent
+      - backend/src/uai_forge/storage.py::SQLiteRepository.publish_agent
+      - backend/src/uai_forge/storage.py::SQLiteRepository.rollback_agent
+      - backend/src/uai_forge/api.py::create_agent_draft
+      - backend/src/uai_forge/api.py::publish_agent
+      - backend/src/uai_forge/api.py::rollback_agent
+    verification:
+      - backend/tests/test_api.py::test_agent_draft_publish_lifecycle_and_version_history
+      - backend/tests/test_api.py::test_latest_pointer_rolls_back_and_next_publish_keeps_revision_sequence
+      - backend/tests/test_compatibility_and_endpoints.py::test_previous_schema_version_requires_explicit_backup_and_rebuild
+      - backend/tests/test_compatibility_and_endpoints.py::test_unsupported_agent_lifecycle_schema_is_rejected_without_writes
+  - id: UI-009
+    status: implemented
+    implementation:
+      - app/control-center.tsx::EditAgentModal
+      - app/control-center.tsx::RunModal
+      - app/control-center.tsx::MountRevisionField
+      - app/globals.css::CHG-0031 Agent draft/publish workspace
+    verification:
+      - tests/rendered-html.test.mjs::removes instance navigation and keeps revision run selectors
+      - npm run lint
+      - npm run typecheck
+      - npm test
+      - .venv/bin/python -m pytest backend/tests -q

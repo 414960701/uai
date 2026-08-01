@@ -16,15 +16,15 @@ from .settings import Settings
 
 async def _doctor(settings: Settings) -> int:
     container = Container.build(settings)
-    # Doctor is deliberately read-only.  Runtime startup performs migrations,
-    # but diagnostics must not create a new database, stamp schema_meta, or
-    # partially migrate a failed database while the operator is inspecting it.
+    # Doctor is deliberately read-only. Runtime startup only creates a fresh
+    # database; unsupported existing schemas require an explicit backup/rebuild
+    # and are never migrated while the operator is inspecting them.
     schema = await container.repository.compatibility_status()
     if schema.get("status") != "compatible":
         is_new = schema.get("status") == "new"
         payload = {
             "database": settings.database_path,
-            "status": "ok" if is_new else "migration_required" if schema.get("status") == "migratable" else "incompatible",
+            "status": "ok" if is_new else "incompatible",
             "agents": 0,
             "plugins": len(container.registry.manifests()),
             "providers": [
@@ -36,10 +36,10 @@ async def _doctor(settings: Settings) -> int:
             "migration": {
                 "dry_run": True,
                 "writes_performed": False,
-                "pending": ["v1_to_v2"] if schema.get("status") == "migratable" else [],
+                "pending": [],
             },
         }
-        if not is_new and schema.get("status") != "migratable":
+        if not is_new:
             payload["remediation"] = schema.get(
                 "remediation",
                 {"action": "backup_and_rebuild", "target": "database"},

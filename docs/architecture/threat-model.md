@@ -54,6 +54,8 @@ last_reviewed: 2026-07-30
 | `SEC-THR-014` | 大输入、高并发或无限队列 DoS | 有长度、预算和部分 semaphore；订阅 queue 有界 | API rate limit、租户配额、queue backpressure、payload/并发上限 |
 | `SEC-THR-015` | 恶意 Revision 或插件版本替换历史语义 | Agent revision 已保留；插件组合未钉住 | Run 钉住 Agent/插件/策略版本，制品签名和 SBOM，历史记录不可变 |
 | `SEC-THR-016` | 原始 chain-of-thought 泄露 | 当前模型输出不专门建模 CoT | 明确禁止持久化/展示原始 CoT，仅保存简短可审核决策摘要 |
+| `SEC-THR-017` | Agent 通过 Docker socket/host mount 获得宿主控制权 | 当前 sandbox adapter 不暴露 socket/mount；真实 daemon 部署尚未完成 | rootless/dedicated executor、禁止 rootful socket、镜像 allowlist/digest、宿主 egress 和 escape/故障演练 |
+| `SEC-THR-018` | 沙箱命令/输出造成宿主或租户 DoS | adapter 有 CPU/memory/pids/timeout/output 边界；无租户总配额 | 父 Run budget、租户配额、队列 backpressure、容器回收和资源指标 |
 
 ## Fail-closed 决策链
 

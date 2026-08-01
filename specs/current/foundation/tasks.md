@@ -16,8 +16,8 @@ last_reviewed: 2026-07-31
   需求：`CORE-001`, `PROTO-001`
 - [x] `TASK-002` 保存 Agent 最新视图和不可变 revision，加入乐观并发。
   需求：`CORE-002`
-- [x] `TASK-003` 建立 Instance CRUD 和 revision 引用。
-  需求：`CORE-003`（仅部分完成）
+- [x] `TASK-003` 保存 Agent revision 并支持 Run 直接引用显式 revision 或 latest。
+  需求：`CORE-002`, `CORE-003`, `RUN-010`
 - [x] `TASK-004` 实现 mount 图检查和 bounded child。
   需求：`MAG-001`, `MAG-002`
 - [x] `TASK-005` 实现共享预算、并发和 Run terminal event。
@@ -28,10 +28,10 @@ last_reviewed: 2026-07-31
   需求：`EXT-001`
 - [x] `TASK-008` Web live/disconnected 明示、构建、SSR、lint 和 typecheck。
   需求：`UI-002`
-- [x] `TASK-009` 将 Instance overrides 通过 Schema allowlist 真正应用到 Runtime。
-  需求：`CORE-003`
-- [ ] `TASK-010` 完整 Agent revision 编辑、Instance/mount/policy schema 表单。
-  需求：`UI-001`（结构化基础字段已完成；Schema 自动表单、Instance override 与 peer 未完成）
+- [x] `TASK-009` 在 Run 提交前校验根 Agent revision、拓扑和运行时合同。
+  需求：`CORE-003`, `RUN-010`
+- [x] `TASK-010` 完整 Agent revision 草稿/发布状态/回滚 UX、mount/policy 表单。
+  需求：`CORE-009`, `UI-001`, `UI-009`（插件 JSON Schema 自动表单、revision diff 与 peer 仍属后续范围）
 - [x] `TASK-011` 让图 validator 沿 mount 钉住的 revision 递归并补正反例。
   需求：`MAG-001`
 - [x] `TASK-012` 修复嵌套委派重入根 semaphore 的单槽死锁。
@@ -42,8 +42,8 @@ last_reviewed: 2026-07-31
   需求：`RUN-008`
 - [x] `TASK-015` 抽取执行核心最小 Repository/Event Port，并用非 SQLite 替身完成真实 Run。
   需求：`EXT-005`
-- [x] `TASK-016` 增加高级 Agent revision/mount/plugin 配置、多 Instance 启停和真实事件视图。
-  需求：`UI-001`, `UI-002`, `RUN-002`
+- [x] `TASK-016` 增加高级 Agent revision/mount/plugin 配置、Run 版本选择和真实事件视图。
+  需求：`UI-001`, `UI-002`, `RUN-002`, `RUN-010`
 - [x] `TASK-017` 实现 child 本地预算/timeout/depth/并发与 mount 工具 scope 交集。
   需求：`MAG-003`, `MAG-006`, `MAG-007`
 - [x] `TASK-018` 实现插件 config、工具/委派 arguments 的 JSON Schema fail-closed
@@ -61,6 +61,12 @@ last_reviewed: 2026-07-31
 - [x] `TASK-022` 统一租户 ModelConfig、Claude Messages 协议、Provider 模型目录和
   “凭证&模型配置”控制台入口；Agent 只保存 `model_config_id`。
   需求：`CFG-001`, `SEC-001`, `EXT-007`, `UI-001`
+- [x] `TASK-023` 增加受限 Web Search/Web Fetch/JSON/RSS，并为新建 Agent 默认挂载六项只读基础工具；
+  同步放宽多步执行预算和子 Agent 默认并发。
+  需求：`EXT-008`, `UI-007`, `CFG-008`
+- [x] `TASK-024` 增加可插拔 `SandboxProvider`、Docker 子容器适配器和显式沙箱执行工具；
+  默认 Agent 不自动挂载。
+  需求：`EXT-009`, `SEC-008`
 
 ## Wave 1：可恢复执行 `0.2`
 

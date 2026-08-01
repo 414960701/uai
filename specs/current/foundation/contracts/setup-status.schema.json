@@ -4,12 +4,11 @@
   "title": "UAI Forge SetupStatus v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["connection", "model_connections", "agents", "instances", "runs", "next_action"],
+  "required": ["connection", "model_connections", "agents", "runs", "next_action"],
   "properties": {
     "connection": {"enum": ["connected", "unauthorized", "incompatible", "unavailable"]},
     "model_connections": {"$ref": "#/$defs/resource"},
     "agents": {"$ref": "#/$defs/resource"},
-    "instances": {"$ref": "#/$defs/resource"},
     "runs": {"$ref": "#/$defs/resource"},
     "next_action": {"enum": ["connect", "create_model_config", "verify_model_config", "create_agent", "run_agent", "none"]}
   },

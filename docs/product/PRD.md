@@ -17,7 +17,7 @@ last_reviewed: 2026-07-31
 ## 目标
 
 - `OBJ-001`：一套 Python 3 运行时支持单 Agent 和多 Agent 协作。
-- `OBJ-002`：Web 后台可管理 Agent 定义、修订、实例、挂载、运行和扩展。
+- `OBJ-002`：Web 后台可管理 Agent 定义、修订、挂载、运行和扩展。
 - `OBJ-003`：稳定内核不绑定任何一个开源框架或模型提供商。
 - `OBJ-004`：本地和云端使用相同领域合同，仅替换部署适配器。
 - `OBJ-005`：需求、设计、实现和测试可追踪，减少 AI 开发漂移。
@@ -26,14 +26,15 @@ last_reviewed: 2026-07-31
 
 - 平台开发者：编写 Provider、Tool、Memory 或基础设施适配器。
 - Agent 构建者：配置提示词、模型、工具、子 Agent 与策略。
-- 运行人员：发布实例、发起/取消运行、查看调用链和预算。
+- 运行人员：选择 Agent revision、发起/取消运行、查看调用链和预算。
 - 安全/审计人员：验证权限、版本、事件、租户和密钥边界。
 
 ## MVP 能力
 
 1. Agent 定义以版本化修订保存，更新使用乐观并发。
-2. 一个定义可创建多个运行实例，并携带目标环境标签；`0.1.x` 不负责云资源调度。
-3. 父 Agent 可按 alias 挂载多个子 Agent。
+2. 发起 Run 时可选择 Agent 的历史 revision；未选择时使用提交时 Agent 的 latest 标签。
+3. 父 Agent 可按 alias 挂载多个子 Agent，并可让挂载留空以跟随子 Agent latest，或显式
+   固定历史 revision。
 4. 子调用受到深度、总 step、总 tool call、token、超时和并发限制。
 5. 挂载图有缺失节点、禁用节点、版本钉住和循环检查。
 6. Provider、Tool、Memory、Middleware 可通过稳定协议扩展。
@@ -54,7 +55,7 @@ last_reviewed: 2026-07-31
 ## 成功标准
 
 - 后端单测/集成测、前端 lint/typecheck/build/SSR 测试全部通过。
-- 从后台可创建多个数据库 Agent 和 Instance。
+- 从后台可创建多个数据库 Agent 和不可变 revision。
 - 在完成真实模型配置后，通过后台发起委派 Run，事件包含
   `delegation.started`、`delegation.completed`、`run.completed`。
 - 静态环用例不能运行。

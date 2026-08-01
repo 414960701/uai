@@ -106,7 +106,11 @@ async def test_openai_compatible_provider_maps_core_request(monkeypatch):
                 },
             }
         ],
-        "usage": {"prompt_tokens": 12, "completion_tokens": 8},
+        "usage": {
+            "prompt_tokens": 12,
+            "completion_tokens": 8,
+            "prompt_tokens_details": {"cached_tokens": 7},
+        },
     }
     monkeypatch.setattr("uai_forge.providers.httpx.AsyncClient", FakeAsyncClient)
     binding = ModelBinding(
@@ -143,6 +147,7 @@ async def test_openai_compatible_provider_maps_core_request(monkeypatch):
     assert output.tool_calls[0].name == "lookup"
     assert output.tool_calls[0].arguments == {"q": "uai"}
     assert output.usage.total_tokens == 20
+    assert output.usage.cached_input_tokens == 7
 
 
 @pytest.mark.asyncio
@@ -155,7 +160,12 @@ async def test_anthropic_messages_provider_maps_tools_and_usage(monkeypatch):
             {"type": "text", "text": "先查一下。"},
             {"type": "tool_use", "id": "toolu_1", "name": "lookup", "input": {"q": "uai"}},
         ],
-        "usage": {"input_tokens": 18, "output_tokens": 6},
+        "usage": {
+            "input_tokens": 18,
+            "output_tokens": 6,
+            "cache_read_input_tokens": 13,
+            "cache_creation_input_tokens": 2,
+        },
     }
     monkeypatch.setattr("uai_forge.providers.httpx.AsyncClient", FakeAsyncClient)
     binding = ModelBinding(
@@ -204,6 +214,8 @@ async def test_anthropic_messages_provider_maps_tools_and_usage(monkeypatch):
     assert output.content == "先查一下。"
     assert output.tool_calls[0].arguments == {"q": "uai"}
     assert output.usage.total_tokens == 24
+    assert output.usage.cached_input_tokens == 13
+    assert output.usage.cache_creation_input_tokens == 2
 
 
 @pytest.mark.asyncio
@@ -319,7 +331,7 @@ async def test_openai_compatible_provider_streams_text_and_usage(monkeypatch):
     FakeStreamingClient.lines = [
         'data: {"choices":[{"delta":{"content":"先"}}]}',
         'data: {"choices":[{"delta":{"content":"回答"}}]}',
-        'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3}}',
+        'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":4}}}',
         "data: [DONE]",
     ]
     monkeypatch.setattr("uai_forge.providers.httpx.AsyncClient", FakeStreamingClient)
@@ -345,6 +357,7 @@ async def test_openai_compatible_provider_streams_text_and_usage(monkeypatch):
     assert "".join(chunk.text for chunk in chunks) == "先回答"
     usage = next(chunk.usage for chunk in chunks if chunk.usage is not None)
     assert usage.total_tokens == 10
+    assert usage.cached_input_tokens == 4
     assert FakeStreamingClient.last_request["json"]["stream"] is True
 
 
@@ -352,7 +365,7 @@ async def test_openai_compatible_provider_streams_text_and_usage(monkeypatch):
 async def test_anthropic_messages_provider_streams_text_and_usage(monkeypatch):
     FakeStreamingClient.lines = [
         'event: message_start',
-        'data: {"type":"message_start","message":{"usage":{"input_tokens":11}}}',
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":11,"cache_read_input_tokens":8,"cache_creation_input_tokens":1}}}',
         'event: content_block_delta',
         'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"流式"}}',
         'data: {"type":"message_delta","usage":{"output_tokens":5}}',
@@ -381,6 +394,9 @@ async def test_anthropic_messages_provider_streams_text_and_usage(monkeypatch):
     assert "".join(chunk.text for chunk in chunks) == "流式完成"
     assert any(chunk.usage and chunk.usage.input_tokens == 11 for chunk in chunks)
     assert any(chunk.usage and chunk.usage.output_tokens == 5 for chunk in chunks)
+    final_usage = next(chunk.usage for chunk in reversed(chunks) if chunk.usage is not None)
+    assert final_usage.cached_input_tokens == 8
+    assert final_usage.cache_creation_input_tokens == 1
 
 
 @pytest.mark.asyncio

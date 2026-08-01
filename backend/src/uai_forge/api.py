@@ -16,11 +16,12 @@ from pydantic import ValidationError
 from . import __version__
 from .container import Container
 from .models import (
-    AgentInstance,
+    AgentPublishRequest,
     AgentPatch,
+    AgentRevisionInfo,
+    AgentRollbackRequest,
     AgentSpec,
     GraphValidationResult,
-    InstancePatch,
     ModelConfig,
     ModelConfigPatch,
     ModelConfigReferences,
@@ -31,6 +32,10 @@ from .models import (
     ModelConfigWrite,
     AgentReadiness,
     CapabilityStatus,
+    ChoiceResolutionRequest,
+    ExecutionPlan,
+    PlanApprovalRequest,
+    PlanEditRequest,
     ProblemDetails,
     ProblemFieldError,
     ProblemResource,
@@ -45,13 +50,18 @@ from .models import (
     RunEvent,
     RunRecord,
     RunRequest,
+    default_tool_bindings,
     new_id,
     utc_now,
 )
 from .registry import PluginBindingError
 from .settings import Settings
 from .endpoints import EndpointPolicyError, endpoint_summary, validate_endpoint_url
-from .storage import ConfigurationConflictError, RevisionConflictError
+from .storage import (
+    ConfigurationConflictError,
+    RecordNotFoundError,
+    RevisionConflictError,
+)
 
 
 def create_app(settings: Settings = None) -> FastAPI:
@@ -518,7 +528,7 @@ def create_app(settings: Settings = None) -> FastAPI:
                 state="implemented",
                 summary="SQLite 持久化 Run Event，支持按 sequence 历史回放和单进程 SSE",
                 limits=["单写节点", "不等同分布式消息总线"],
-                evidence_refs=["backend/tests/test_api.py::test_run_lifecycle_from_instance"],
+                evidence_refs=["backend/tests/test_api.py::test_run_lifecycle_from_agent_revision"],
             ),
             CapabilityStatus(
                 id="provider_connection_checks",
@@ -564,10 +574,13 @@ def create_app(settings: Settings = None) -> FastAPI:
             ),
             CapabilityStatus(
                 id="plugin_isolation",
-                state="planned",
-                summary="未知插件当前只能管理员预安装并视为可信 in-process 代码",
-                limits=["没有进程/容器沙箱"],
-                evidence_refs=["docs/architecture/adr/ADR-0004-plugin-trust.md"],
+                state="partial",
+                summary="显式 opt-in 的 Docker 子容器沙箱已接入，未知插件仍视为可信 in-process 代码",
+                limits=["默认 Agent 不挂载", "rootless/dedicated executor 与生产级隔离仍待验收"],
+                evidence_refs=[
+                    "backend/src/uai_forge/sandbox.py",
+                    "docs/architecture/adr/ADR-0010-extensible-sandbox-runtimes.md",
+                ],
             ),
         ]
 
@@ -578,7 +591,6 @@ def create_app(settings: Settings = None) -> FastAPI:
     ) -> SetupStatus:
         configs = await current.repository.list_model_configs(tenant)
         agents = await current.repository.list_agents(tenant)
-        instances = await current.repository.list_instances(tenant)
         runs = await current.repository.list_runs(tenant, limit=500)
         readiness = [await agent_readiness_for(current, tenant, item.id) for item in agents]
         config_issues: List[ReadinessIssue] = []
@@ -622,10 +634,6 @@ def create_app(settings: Settings = None) -> FastAPI:
                 runnable=runnable_agents,
                 blocking_issues=[issue for item in readiness for issue in item.issues][:50],
             ),
-            instances=SetupResourceSummary(
-                total=len(instances),
-                ready=sum(1 for item in instances if item.status.value == "ready"),
-            ),
             runs=SetupResourceSummary(
                 total=len(runs),
                 active=sum(1 for run in runs if run.status.value in active_statuses),
@@ -661,7 +669,6 @@ def create_app(settings: Settings = None) -> FastAPI:
             "plugin_protocol": "1.x",
             "features": [
                 "versioned_agents",
-                "agent_instances",
                 "mounted_subagents",
                 "event_replay",
                 "budget_guards",
@@ -1073,6 +1080,11 @@ def create_app(settings: Settings = None) -> FastAPI:
         tenant: str = Depends(tenant_id),
         current: Container = Depends(get_container),
     ) -> AgentSpec:
+        # Omitted tools means "use the safe first-party baseline" for a new
+        # Agent. An explicit [] remains an intentional no-tool configuration,
+        # so existing and least-privilege callers can opt out.
+        if "tools" not in spec.model_fields_set:
+            spec = spec.model_copy(update={"tools": default_tool_bindings()})
         current.registry.validate_agent_spec(spec)
         await validate_model_config_reference(
             current, tenant, spec.model.model_config_id, spec.model.config
@@ -1094,8 +1106,7 @@ def create_app(settings: Settings = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="agent not found")
         return spec
 
-    @app.patch("/api/v1/agents/{agent_id}", response_model=AgentSpec, dependencies=protected)
-    async def update_agent(
+    async def save_agent_draft(
         agent_id: str,
         patch: AgentPatch,
         tenant: str = Depends(tenant_id),
@@ -1120,10 +1131,111 @@ def create_app(settings: Settings = None) -> FastAPI:
         )
         try:
             return await current.repository.save_agent(
-                tenant, candidate, expected_revision=patch.expected_revision
+                tenant,
+                candidate,
+                expected_revision=patch.expected_revision,
+                status="draft",
             )
         except RevisionConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.patch("/api/v1/agents/{agent_id}", response_model=AgentSpec, dependencies=protected)
+    async def update_agent(
+        agent_id: str,
+        patch: AgentPatch,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> AgentSpec:
+        return await save_agent_draft(agent_id, patch, tenant, current)
+
+    @app.post(
+        "/api/v1/agents/{agent_id}/draft",
+        response_model=AgentSpec,
+        dependencies=protected,
+    )
+    async def create_agent_draft(
+        agent_id: str,
+        patch: AgentPatch,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> AgentSpec:
+        return await save_agent_draft(agent_id, patch, tenant, current)
+
+    @app.post(
+        "/api/v1/agents/{agent_id}/publish",
+        response_model=AgentRevisionInfo,
+        dependencies=protected,
+    )
+    async def publish_agent(
+        agent_id: str,
+        request: AgentPublishRequest,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> AgentRevisionInfo:
+        spec = await current.repository.get_agent(tenant, agent_id)
+        if spec is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        if spec.revision != request.expected_revision:
+            raise HTTPException(
+                status_code=409,
+                detail=f"expected latest revision {request.expected_revision}; current is {spec.revision}",
+            )
+        current.registry.validate_agent_spec(spec)
+        await validate_model_config_reference(
+            current, tenant, spec.model.model_config_id, spec.model.config
+        )
+        try:
+            await current.repository.publish_agent(
+                tenant,
+                agent_id,
+                request.expected_revision,
+            )
+        except RecordNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RevisionConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        record = await current.repository.get_agent_revision_info(
+            tenant, agent_id, request.expected_revision
+        )
+        if record is None:
+            raise HTTPException(status_code=404, detail="agent revision not found")
+        return record
+
+    @app.post(
+        "/api/v1/agents/{agent_id}/rollback",
+        response_model=AgentRevisionInfo,
+        dependencies=protected,
+    )
+    async def rollback_agent(
+        agent_id: str,
+        request: AgentRollbackRequest,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> AgentRevisionInfo:
+        target = await current.repository.get_agent(tenant, agent_id, request.revision)
+        if target is None:
+            raise HTTPException(status_code=404, detail="agent revision not found")
+        current.registry.validate_agent_spec(target)
+        await validate_model_config_reference(
+            current, tenant, target.model.model_config_id, target.model.config
+        )
+        try:
+            await current.repository.rollback_agent(
+                tenant,
+                agent_id,
+                request.revision,
+                expected_revision=request.expected_revision,
+            )
+        except RecordNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RevisionConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        record = await current.repository.get_agent_revision_info(
+            tenant, agent_id, request.revision
+        )
+        if record is None:
+            raise HTTPException(status_code=404, detail="agent revision not found")
+        return record
 
     @app.delete(
         "/api/v1/agents/{agent_id}",
@@ -1141,15 +1253,10 @@ def create_app(settings: Settings = None) -> FastAPI:
             for item in agents
             if any(mount.agent_id == agent_id for mount in item.children)
         ]
-        instances = [
-            item.id
-            for item in await current.repository.list_instances(tenant)
-            if item.agent_id == agent_id
-        ]
-        if references or instances:
+        if references:
             raise HTTPException(
                 status_code=409,
-                detail={"mounted_by": references, "instances": instances},
+                detail={"mounted_by": references},
             )
         if not await current.repository.delete_agent(tenant, agent_id):
             raise HTTPException(status_code=404, detail="agent not found")
@@ -1157,15 +1264,17 @@ def create_app(settings: Settings = None) -> FastAPI:
 
     @app.get(
         "/api/v1/agents/{agent_id}/revisions",
-        response_model=List[AgentSpec],
+        response_model=List[AgentRevisionInfo],
         dependencies=protected,
     )
     async def list_revisions(
         agent_id: str,
         tenant: str = Depends(tenant_id),
         current: Container = Depends(get_container),
-    ) -> List[AgentSpec]:
-        return await current.repository.list_agent_revisions(tenant, agent_id)
+    ) -> List[AgentRevisionInfo]:
+        if await current.repository.get_agent(tenant, agent_id) is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        return await current.repository.list_agent_revision_infos(tenant, agent_id)
 
     @app.post(
         "/api/v1/agents/{agent_id}/validate",
@@ -1190,96 +1299,6 @@ def create_app(settings: Settings = None) -> FastAPI:
         current: Container = Depends(get_container),
     ) -> GraphValidationResult:
         return await current.validator.validate(tenant, agent_id)
-
-    @app.get(
-        "/api/v1/instances",
-        response_model=List[AgentInstance],
-        dependencies=protected,
-    )
-    async def list_instances(
-        tenant: str = Depends(tenant_id),
-        current: Container = Depends(get_container),
-    ) -> List[AgentInstance]:
-        return await current.repository.list_instances(tenant)
-
-    @app.post(
-        "/api/v1/instances",
-        response_model=AgentInstance,
-        status_code=status.HTTP_201_CREATED,
-        dependencies=protected,
-    )
-    async def create_instance(
-        instance: AgentInstance,
-        tenant: str = Depends(tenant_id),
-        current: Container = Depends(get_container),
-    ) -> AgentInstance:
-        if await current.repository.get_instance(tenant, instance.id):
-            raise HTTPException(status_code=409, detail="instance id already exists")
-        agent = await current.repository.get_agent(
-            tenant, instance.agent_id, instance.agent_revision
-        )
-        if agent is None:
-            raise HTTPException(status_code=422, detail="referenced agent revision not found")
-        return await current.repository.save_instance(tenant, instance)
-
-    @app.get(
-        "/api/v1/instances/{instance_id}",
-        response_model=AgentInstance,
-        dependencies=protected,
-    )
-    async def get_instance(
-        instance_id: str,
-        tenant: str = Depends(tenant_id),
-        current: Container = Depends(get_container),
-    ) -> AgentInstance:
-        instance = await current.repository.get_instance(tenant, instance_id)
-        if instance is None:
-            raise HTTPException(status_code=404, detail="instance not found")
-        return instance
-
-    @app.patch(
-        "/api/v1/instances/{instance_id}",
-        response_model=AgentInstance,
-        dependencies=protected,
-    )
-    async def update_instance(
-        instance_id: str,
-        patch: InstancePatch,
-        tenant: str = Depends(tenant_id),
-        current: Container = Depends(get_container),
-    ) -> AgentInstance:
-        instance = await current.repository.get_instance(tenant, instance_id)
-        if instance is None:
-            raise HTTPException(status_code=404, detail="instance not found")
-        candidate_data = instance.model_dump()
-        candidate_data.update(patch.model_dump(exclude_none=True))
-        try:
-            candidate = AgentInstance.model_validate(candidate_data)
-        except ValidationError as exc:
-            raise HTTPException(
-                status_code=422,
-                detail=validation_error_detail(exc),
-            ) from exc
-        agent = await current.repository.get_agent(
-            tenant, candidate.agent_id, candidate.agent_revision
-        )
-        if agent is None:
-            raise HTTPException(status_code=422, detail="referenced agent revision not found")
-        return await current.repository.save_instance(tenant, candidate)
-
-    @app.delete(
-        "/api/v1/instances/{instance_id}",
-        status_code=status.HTTP_204_NO_CONTENT,
-        dependencies=protected,
-    )
-    async def delete_instance(
-        instance_id: str,
-        tenant: str = Depends(tenant_id),
-        current: Container = Depends(get_container),
-    ) -> Response:
-        if not await current.repository.delete_instance(tenant, instance_id):
-            raise HTTPException(status_code=404, detail="instance not found")
-        return Response(status_code=204)
 
     @app.get("/api/v1/runs", response_model=List[RunRecord], dependencies=protected)
     async def list_runs(
@@ -1319,6 +1338,96 @@ def create_app(settings: Settings = None) -> FastAPI:
         if run is None:
             raise HTTPException(status_code=404, detail="run not found")
         return run
+
+    @app.get(
+        "/api/v1/runs/{run_id}/plan",
+        response_model=ExecutionPlan,
+        dependencies=protected,
+    )
+    async def get_plan(
+        run_id: str,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> ExecutionPlan:
+        run = await current.repository.get_run(tenant, run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        if run.plan is None:
+            raise HTTPException(status_code=404, detail="run has no plan")
+        return run.plan
+
+    @app.patch(
+        "/api/v1/runs/{run_id}/plan",
+        response_model=ExecutionPlan,
+        dependencies=protected,
+    )
+    async def edit_plan(
+        run_id: str,
+        plan_request: PlanEditRequest,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> ExecutionPlan:
+        try:
+            return await current.runs.edit_plan(tenant, run_id, plan_request)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post(
+        "/api/v1/runs/{run_id}/plan/approve",
+        response_model=RunRecord,
+        status_code=status.HTTP_202_ACCEPTED,
+        dependencies=protected,
+    )
+    async def approve_plan(
+        run_id: str,
+        approval: PlanApprovalRequest,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> RunRecord:
+        try:
+            return await current.runs.approve_plan(tenant, run_id, approval.expected_version)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post(
+        "/api/v1/runs/{run_id}/plan/reject",
+        response_model=ExecutionPlan,
+        dependencies=protected,
+    )
+    async def reject_plan(
+        run_id: str,
+        approval: PlanApprovalRequest,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> ExecutionPlan:
+        try:
+            return await current.runs.reject_plan(tenant, run_id, approval.expected_version)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post(
+        "/api/v1/runs/{run_id}/choice",
+        response_model=RunRecord,
+        dependencies=protected,
+    )
+    async def resolve_choice(
+        run_id: str,
+        choice_request: ChoiceResolutionRequest,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> RunRecord:
+        try:
+            return await current.runs.resolve_choice(tenant, run_id, choice_request)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/api/v1/runs/{run_id}/cancel", dependencies=protected)
     async def cancel_run(

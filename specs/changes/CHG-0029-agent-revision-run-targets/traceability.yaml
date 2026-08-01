@@ -1,0 +1,30 @@
+change_id: CHG-0029
+status: accepted
+implementation_status: complete
+requirements:
+  RUN-010:
+    contracts:
+      - requirements.md
+      - design.md
+      - ../../current/foundation/contracts/setup-status.schema.json
+    implementation:
+      - backend/src/uai_forge/models.py::RunRequest
+      - backend/src/uai_forge/run_manager.py::RunManager._resolve_target
+      - backend/src/uai_forge/storage.py::SQLiteRepository.get_agent
+      - backend/src/uai_forge/storage.py::SQLiteRepository.rollback_agent
+    verification:
+      - backend/tests/test_api.py::test_run_lifecycle_from_agent_revision
+      - backend/tests/test_runtime.py::test_run_can_pin_agent_revision
+      - backend/tests/test_runtime.py::test_run_uses_latest_agent_revision_by_default
+      - backend/tests/test_api.py::test_latest_pointer_rolls_back_and_next_publish_keeps_revision_sequence
+      - backend/tests/test_storage_and_graph.py::test_graph_unpinned_mount_follows_latest_pointer
+  UI-006:
+    contracts:
+      - requirements.md
+      - design.md
+    implementation:
+      - app/control-center.tsx::RunModal
+      - app/control-center.tsx::launchRun
+      - app/control-center.tsx::EditAgentModal
+    verification:
+      - tests/rendered-html.test.mjs::removes instance navigation and keeps revision run selector

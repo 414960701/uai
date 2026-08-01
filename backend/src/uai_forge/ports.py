@@ -5,10 +5,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator, Dict, List, Optional, Protocol, runtime_checkable
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from .models import (
-    AgentInstance,
     AgentSpec,
     ModelConfig,
     ModelConnectionCheckRequest,
@@ -21,6 +20,7 @@ from .models import (
     ThinkingMode,
     ThinkingResolution,
     StrictModel,
+    SandboxBinding,
 )
 
 
@@ -39,13 +39,6 @@ class RepositoryPort(Protocol):
         agent_id: str,
         revision: Optional[int] = None,
     ) -> Optional[AgentSpec]:
-        ...
-
-    async def get_instance(
-        self,
-        tenant_id: str,
-        instance_id: str,
-    ) -> Optional[AgentInstance]:
         ...
 
     async def create_run(self, run: RunRecord) -> RunRecord:
@@ -138,8 +131,17 @@ class ModelMessage(StrictModel):
 
 
 class TokenUsage(StrictModel):
+    """Provider-neutral model token accounting.
+
+    Cache counters are input-token subdivisions.  They are intentionally not
+    added to ``total_tokens`` because providers such as OpenAI already include
+    cached input in their reported prompt total.
+    """
+
     input_tokens: int = 0
     output_tokens: int = 0
+    cached_input_tokens: Optional[int] = Field(default=None, ge=0)
+    cache_creation_input_tokens: Optional[int] = Field(default=None, ge=0)
 
     @property
     def total_tokens(self) -> int:
@@ -258,6 +260,47 @@ class ToolPlugin(ABC):
 
     @abstractmethod
     async def invoke(self, arguments: Dict[str, Any], context: Dict[str, Any]) -> Any:
+        raise NotImplementedError
+
+
+class SandboxRequest(StrictModel):
+    """Provider-neutral request for one isolated, non-shell process."""
+
+    command: List[str] = Field(min_length=1, max_length=32)
+    stdin: str = Field(default="", max_length=1_000_000)
+    timeout_seconds: Optional[float] = Field(default=None, gt=0, le=600)
+    max_output_bytes: Optional[int] = Field(default=None, ge=1, le=2_000_000)
+
+    @field_validator("command")
+    @classmethod
+    def validate_command(cls, value: List[str]) -> List[str]:
+        if any(not item or "\x00" in item for item in value):
+            raise ValueError("sandbox.command_invalid")
+        return value
+
+
+class SandboxResult(StrictModel):
+    """Bounded public result; raw process handles never cross this port."""
+
+    exit_code: Optional[int] = None
+    stdout: str = ""
+    stderr: str = ""
+    timed_out: bool = False
+    truncated: bool = False
+    duration_ms: int = 0
+
+
+class SandboxProvider(ABC):
+    """Execution-isolation port implemented by Docker, VM, WASM, or remote workers."""
+
+    manifest: PluginManifest
+
+    @abstractmethod
+    async def execute(
+        self,
+        request: SandboxRequest,
+        context: Dict[str, Any],
+    ) -> SandboxResult:
         raise NotImplementedError
 
 

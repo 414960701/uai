@@ -26,6 +26,7 @@ import {
   LayoutDashboard,
   Link2,
   LoaderCircle,
+  ListChecks,
   Maximize2,
   Menu,
   MessageSquare,
@@ -40,6 +41,7 @@ import {
   Search,
   Send,
   Server,
+  SkipForward,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -90,7 +92,6 @@ type View =
   | "overview"
   | "chat"
   | "agents"
-  | "instances"
   | "topology"
   | "runs"
   | "plugins"
@@ -120,7 +121,6 @@ type SetupStatus = {
   connection: "connected" | "unauthorized" | "incompatible" | "unavailable";
   model_connections: SetupResourceSummary;
   agents: SetupResourceSummary;
-  instances: SetupResourceSummary;
   runs: SetupResourceSummary;
   next_action: SetupAction;
 };
@@ -194,29 +194,106 @@ type AgentSpec = {
   labels: Record<string, string>;
 };
 
-type AgentInstance = {
-  id: string;
-  name: string;
+type AgentRevisionStatus = "draft" | "published";
+
+type AgentRevisionInfo = {
   agent_id: string;
-  agent_revision?: number;
-  environment: string;
-  status: string;
-  max_concurrency: number;
+  revision: number;
+  status: AgentRevisionStatus;
+  is_latest: boolean;
+  spec: AgentSpec;
+  created_at: string;
+  updated_at: string;
+  published_at?: string | null;
 };
 
 type RunRecord = {
   id: string;
   agent_id: string;
-  instance_id?: string;
+  agent_revision?: number;
   session_id: string;
   status: string;
   input: string;
   output?: string;
   error?: string;
+  plan?: ExecutionPlan;
+  todo?: TaskTodoList;
+  choice?: ChoicePrompt;
   created_at: string;
   started_at?: string;
   finished_at?: string;
   metrics?: Record<string, unknown>;
+};
+
+type PlanStep = {
+  id: string;
+  title: string;
+  description: string;
+  scope: string[];
+  dependencies: string[];
+  risk: "low" | "medium" | "high";
+  status: "proposed" | "approved" | "running" | "completed" | "failed" | "skipped";
+};
+
+type ExecutionPlan = {
+  plan_id: string;
+  run_id: string;
+  session_id: string;
+  version: number;
+  title: string;
+  goal: string;
+  assumptions: string[];
+  steps: PlanStep[];
+  risks: string[];
+  status: "proposed" | "needs_revision" | "approved" | "executing" | "completed" | "failed" | "rejected" | "cancelled";
+  created_at: string;
+  updated_at: string;
+};
+
+type PlanEditPayload = Pick<ExecutionPlan, "title" | "goal" | "assumptions" | "steps" | "risks"> & {
+  expected_version: number;
+};
+
+type TodoStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+
+type TodoItem = {
+  id: string;
+  title: string;
+  description: string;
+  status: TodoStatus;
+};
+
+type TaskTodoList = {
+  todo_id: string;
+  run_id: string;
+  session_id: string;
+  title: string;
+  items: TodoItem[];
+  status: TodoStatus;
+  source: "automatic" | "plan";
+  created_at: string;
+  updated_at: string;
+};
+
+type ChoiceOption = {
+  id: string;
+  label: string;
+  description: string;
+  recommended?: boolean;
+};
+
+type ChoicePrompt = {
+  prompt_id: string;
+  run_id: string;
+  title: string;
+  description: string;
+  selection_type: "single" | "multiple";
+  options: ChoiceOption[];
+  required: boolean;
+  status: "open" | "resolved" | "skipped";
+  selected_ids: string[];
+  created_at: string;
+  updated_at: string;
 };
 
 type PluginManifest = {
@@ -359,8 +436,8 @@ const THINKING_MODE_OPTIONS: Array<{ value: ThinkingMode; label: string; hint: s
 ];
 
 const EXECUTION_MODE_OPTIONS: Array<{ value: ExecutionMode; label: string; hint: string }> = [
-  { value: "execute", label: "执行", hint: "运行工具与子 Agent" },
-  { value: "plan", label: "计划模式", hint: "只生成计划，不调用工具" },
+  { value: "execute", label: "执行模式", hint: "运行工具与子 Agent" },
+  { value: "plan", label: "计划模式（Plan）", hint: "使用当前模型生成计划，审阅后执行" },
 ];
 
 function thinkingModeLabel(value: unknown): string {
@@ -379,6 +456,40 @@ function executionModeHint(value: ExecutionMode): string {
   return EXECUTION_MODE_OPTIONS.find((item) => item.value === value)?.hint || "运行工具与子 Agent";
 }
 
+const PLAN_STATUS_LABELS: Record<ExecutionPlan["status"], string> = {
+  proposed: "待审阅",
+  needs_revision: "已修改，待重新确认",
+  approved: "已批准",
+  executing: "执行中",
+  completed: "已完成",
+  failed: "执行失败",
+  rejected: "已拒绝",
+  cancelled: "已取消",
+};
+
+const PLAN_STEP_STATUS_LABELS: Record<PlanStep["status"], string> = {
+  proposed: "待确认",
+  approved: "已批准",
+  running: "运行中",
+  completed: "已完成",
+  failed: "失败",
+  skipped: "跳过",
+};
+
+function planStatusLabel(status: ExecutionPlan["status"]): string {
+  return PLAN_STATUS_LABELS[status] || status;
+}
+
+function cleanPlanCopy(value: string): string {
+  return value
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .trim();
+}
+
 type AgentFlowNodeData = {
   agent: AgentSpec;
   mount?: ChildMount;
@@ -393,7 +504,6 @@ const NAV_ITEMS: Array<{ id: View; label: string; icon: LucideIcon }> = [
   { id: "overview", label: "总览", icon: LayoutDashboard },
   { id: "chat", label: "Agent 对话", icon: MessageSquare },
   { id: "agents", label: "Agent", icon: Bot },
-  { id: "instances", label: "运行实例", icon: Server },
   { id: "topology", label: "协作拓扑", icon: Network },
   { id: "runs", label: "运行记录", icon: Activity },
   { id: "plugins", label: "扩展中心", icon: Blocks },
@@ -444,6 +554,26 @@ const PLUGIN_LOCALIZED_COPY: Record<string, { name: string; description: string 
     name: "UTC 时间",
     description: "返回当前 UTC 时间，适合验证时间和工具事件。",
   },
+  "tool.web_search": {
+    name: "Web 搜索",
+    description: "搜索公开网页并返回有界的标题、链接和摘要；结果仅作外部参考。",
+  },
+  "tool.web_fetch": {
+    name: "网页访问",
+    description: "访问公开 HTTPS 页面并提取正文，不执行脚本或提交表单。",
+  },
+  "tool.web_json": {
+    name: "公开 JSON",
+    description: "读取公开 HTTPS JSON 接口并返回有界结构化数据，不接受凭据或自定义请求头。",
+  },
+  "tool.web_rss": {
+    name: "RSS / Atom",
+    description: "读取公开 HTTPS RSS 或 Atom 订阅，返回有界的文章标题、链接和摘要。",
+  },
+  "tool.sandbox_exec": {
+    name: "沙箱执行",
+    description: "在显式配置的隔离运行时中执行无 Shell 的 argv 命令；默认不挂载，建议保持 confirm 权限。",
+  },
   "memory.in_process": {
     name: "进程内记忆",
     description: "用于本地开发和测试的有界短期会话记忆。",
@@ -483,6 +613,32 @@ function localizedPluginName(pluginId: string, plugins: PluginManifest[] = []): 
   if (localized) return localized.name;
   const manifest = plugins.find((plugin) => plugin.id === pluginId);
   return manifest ? pluginPresentation(manifest).name : pluginId;
+}
+
+const DEFAULT_AGENT_TOOL_PLUGIN_IDS = [
+  "tool.web_search",
+  "tool.web_fetch",
+  "tool.web_json",
+  "tool.web_rss",
+  "tool.calculator",
+  "tool.utc_now",
+];
+
+function defaultAgentToolBindings(plugins: PluginManifest[]): ToolBindingSpec[] {
+  const available = new Set(
+    plugins
+      .filter((plugin) => plugin.kind === "tool" && plugin.available)
+      .map((plugin) => plugin.id),
+  );
+  return DEFAULT_AGENT_TOOL_PLUGIN_IDS
+    .filter((pluginId) => available.has(pluginId))
+    .map((pluginId) => ({
+      plugin_id: pluginId,
+      alias: pluginId.split(".").pop()?.replace(/-/g, "_") || pluginId,
+      enabled: true,
+      permission: "auto" as const,
+      config: {},
+    }));
 }
 
 type ProviderOption = {
@@ -1058,6 +1214,306 @@ function ChatOutput({ value, streaming = false }: { value: string; streaming?: b
   );
 }
 
+function PlanCard({
+  plan,
+  compact = false,
+  busy = false,
+  onSave,
+  onApprove,
+  onReject,
+}: {
+  plan: ExecutionPlan;
+  compact?: boolean;
+  busy?: boolean;
+  onSave?: (payload: PlanEditPayload) => Promise<void>;
+  onApprove?: (plan: ExecutionPlan) => Promise<void>;
+  onReject?: (plan: ExecutionPlan) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(cleanPlanCopy(plan.title));
+  const [goal, setGoal] = useState(cleanPlanCopy(plan.goal));
+  const [assumptions, setAssumptions] = useState(plan.assumptions.map(cleanPlanCopy).join("\n"));
+  const [steps, setSteps] = useState(plan.steps.map((step) => cleanPlanCopy(step.description)).join("\n"));
+  const [risks, setRisks] = useState(plan.risks.map(cleanPlanCopy).join("\n"));
+  const [actionError, setActionError] = useState("");
+
+  const reviewable = plan.status === "proposed" || plan.status === "needs_revision";
+  const stepLines = steps.split("\n").map((item) => item.trim()).filter(Boolean);
+  const save = async () => {
+    if (!onSave || !title.trim() || !goal.trim() || !stepLines.length) return;
+    const editedSteps = stepLines.map((description, index) => {
+      const previous = plan.steps[index];
+      return {
+        id: previous?.id || `step_${String(index + 1).padStart(2, "0")}`,
+        title: cleanPlanCopy(description.split(/[:：]/, 1)[0].slice(0, 60)) || `步骤 ${index + 1}`,
+        description: cleanPlanCopy(description),
+        scope: previous?.scope || [],
+        dependencies: previous?.dependencies || [],
+        risk: previous?.risk || "medium",
+        status: "proposed" as const,
+      };
+    });
+    setActionError("");
+    try {
+      await onSave({
+        expected_version: plan.version,
+        title: title.trim(),
+        goal: goal.trim(),
+        assumptions: assumptions.split("\n").map(cleanPlanCopy).filter(Boolean),
+        steps: editedSteps,
+        risks: risks.split("\n").map(cleanPlanCopy).filter(Boolean),
+      });
+      setEditing(false);
+    } catch (error) {
+      setActionError(problemMessage(error, "计划保存失败，请重新加载后再试"));
+    }
+  };
+
+  const approve = async () => {
+    if (!onApprove) return;
+    setActionError("");
+    try {
+      await onApprove(plan);
+    } catch (error) {
+      setActionError(problemMessage(error, "计划批准失败，请重新加载后再试"));
+    }
+  };
+
+  const reject = async () => {
+    if (!onReject) return;
+    setActionError("");
+    try {
+      await onReject(plan);
+    } catch (error) {
+      setActionError(problemMessage(error, "计划暂不执行失败，请重新加载后再试"));
+    }
+  };
+
+  const beginEdit = () => {
+    setTitle(cleanPlanCopy(plan.title));
+    setGoal(cleanPlanCopy(plan.goal));
+    setAssumptions(plan.assumptions.map(cleanPlanCopy).join("\n"));
+    setSteps(plan.steps.map((step) => cleanPlanCopy(step.description)).join("\n"));
+    setRisks(plan.risks.map(cleanPlanCopy).join("\n"));
+    setActionError("");
+    setEditing(true);
+  };
+
+  return (
+    <section className={`plan-card ${compact ? "compact" : ""}`} aria-label="执行计划">
+      <header className="plan-card-head">
+        <div className="plan-card-title">
+          <span className="plan-card-icon"><Workflow size={15} /></span>
+          <span><strong>执行计划</strong><small>v{plan.version} · {planStatusLabel(plan.status)}</small></span>
+        </div>
+        <span className={`plan-status ${plan.status}`}>{planStatusLabel(plan.status)}</span>
+      </header>
+      {editing ? (
+        <div className="plan-editor">
+          <label><span>计划标题</span><input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+          <label><span>目标</span><textarea rows={3} value={goal} onChange={(event) => setGoal(event.target.value)} /></label>
+          <label><span>假设（每行一条）</span><textarea rows={3} value={assumptions} onChange={(event) => setAssumptions(event.target.value)} /></label>
+          <label><span>步骤（每行一条）</span><textarea rows={Math.min(8, Math.max(3, stepLines.length + 1))} value={steps} onChange={(event) => setSteps(event.target.value)} /></label>
+          <label><span>风险（每行一条）</span><textarea rows={3} value={risks} onChange={(event) => setRisks(event.target.value)} /></label>
+          <div className="plan-card-actions">
+            <button type="button" className="button button-primary" onClick={() => void save()} disabled={busy || !stepLines.length}><Check size={14} />保存修改</button>
+            <button type="button" className="button button-ghost" onClick={() => setEditing(false)} disabled={busy}>取消</button>
+          </div>
+          {actionError && <div className="form-error plan-action-error" role="alert"><OctagonAlert size={14} />{actionError}</div>}
+        </div>
+      ) : (
+        <>
+          <div className="plan-card-goal"><small>目标</small><p>{cleanPlanCopy(plan.goal)}</p></div>
+          <ol className="plan-step-list">
+            {plan.steps.map((step, index) => (
+              <li key={step.id} className={`plan-step ${step.status}`}>
+                <span className="plan-step-number">{step.status === "completed" ? <Check size={12} /> : index + 1}</span>
+                <span className="plan-step-copy"><strong>{cleanPlanCopy(step.title)}</strong><small>{cleanPlanCopy(step.description)}</small><em>{PLAN_STEP_STATUS_LABELS[step.status]} · 风险{step.risk === "high" ? "高" : step.risk === "medium" ? "中" : "低"}</em></span>
+              </li>
+            ))}
+          </ol>
+          {!compact && <div className="plan-card-meta">
+            <div><small>假设</small><ul>{plan.assumptions.map((item) => <li key={item}>{cleanPlanCopy(item)}</li>)}</ul></div>
+            <div><small>风险</small><ul>{plan.risks.map((item) => <li key={item}>{cleanPlanCopy(item)}</li>)}</ul></div>
+          </div>}
+          {reviewable && (onSave || onApprove || onReject) && <div className="plan-card-actions">
+            {onApprove && <button type="button" className="button button-primary" onClick={() => void approve()} disabled={busy}><Play size={14} fill="currentColor" />批准并执行</button>}
+            {onSave && <button type="button" className="button button-secondary" onClick={beginEdit} disabled={busy} aria-label="修改计划" title="修改计划并继续规划"><Braces size={14} />继续规划</button>}
+            {onReject && <button type="button" className="button button-ghost plan-reject" onClick={() => void reject()} disabled={busy}><X size={14} />暂不执行</button>}
+          </div>}
+          {actionError && <div className="form-error plan-action-error" role="alert"><OctagonAlert size={14} />{actionError}</div>}
+        </>
+      )}
+      <p className="plan-card-note">{compact ? "计划步骤可在右侧任务监视器中跟踪。" : "只显示可审阅的计划摘要；模型隐藏思考内容不会写入计划。"}</p>
+    </section>
+  );
+}
+
+function todoStatusLabel(status: TodoStatus): string {
+  return {
+    pending: "待处理",
+    running: "进行中",
+    completed: "已完成",
+    failed: "未完成",
+    skipped: "已跳过",
+  }[status];
+}
+
+function monitorItemStatus(status: string): TodoStatus {
+  if (status === "running" || status === "active") return "running";
+  if (status === "completed" || status === "complete") return "completed";
+  if (status === "failed") return "failed";
+  if (status === "skipped" || status === "cancelled") return "skipped";
+  return "pending";
+}
+
+function TaskMonitor({
+  run,
+  agent,
+  plugins,
+  progress,
+  compact = false,
+  onOpenTrace,
+}: {
+  run: RunRecord;
+  agent?: AgentSpec;
+  plugins: PluginManifest[];
+  progress?: PublicProgress | null;
+  compact?: boolean;
+  onOpenTrace?: () => void;
+}) {
+  const planItems = run.plan?.steps.map((step) => ({
+    id: step.id,
+    title: step.title,
+    description: step.description,
+    status: monitorItemStatus(step.status),
+  })) || [];
+  const items = run.todo?.items || planItems;
+  if (!run.todo && !run.plan) return null;
+  const isPlan = Boolean(run.plan && !run.todo);
+  const completed = items.filter((item) => monitorItemStatus(item.status) === "completed").length;
+  const active = items.find((item) => monitorItemStatus(item.status) === "running");
+  const monitorStatus = run.todo ? run.todo.status : run.plan?.status === "proposed" || run.plan?.status === "needs_revision" ? "pending" : run.plan?.status === "executing" ? "running" : run.plan?.status === "completed" ? "completed" : run.plan?.status === "failed" ? "failed" : "pending";
+  const progressPercent = items.length ? Math.round((completed / items.length) * 100) : 0;
+  const visiblePlugins = (agent?.tools || [])
+    .map((tool) => plugins.find((plugin) => plugin.id === tool.plugin_id)?.display_name || tool.alias || tool.plugin_id)
+    .filter((item, index, list) => list.indexOf(item) === index)
+    .slice(0, compact ? 3 : 6);
+  const artifactLabel = run.plan ? "执行计划" : run.output ? "最终回答" : "等待产物";
+  const monitorStatusLabel = isPlan && run.plan ? planStatusLabel(run.plan.status) : todoStatusLabel(monitorItemStatus(monitorStatus));
+  const liveProgressMessage = (run.status === "running" || run.status === "queued") ? progress?.message : null;
+  const progressLabel = active
+    ? `当前：${active.title}`
+    : liveProgressMessage
+      || (monitorStatus === "completed"
+        ? "所有步骤已完成"
+        : monitorStatus === "running"
+          ? "正在执行计划"
+          : monitorStatus === "failed"
+            ? "执行未完成"
+            : isPlan
+              ? "等待你审阅并批准"
+              : run.status === "succeeded"
+                ? "任务已收束"
+                : "等待执行");
+
+  return (
+    <section className={`task-monitor ${compact ? "compact" : ""}`} aria-label="任务监视器">
+      <header className="task-monitor-head">
+        <div className="task-monitor-title"><span className="task-monitor-icon"><ListChecks size={15} /></span><span><strong>{run.todo ? "任务监视器" : "计划进度"}</strong><small>{run.todo ? "自动 TodoList" : "计划步骤"}</small></span></div>
+        <div className="task-monitor-head-actions"><span className={`task-monitor-status ${monitorStatus}`}>{monitorStatusLabel}</span>{onOpenTrace && <button type="button" className="task-monitor-trace-link" onClick={onOpenTrace}>查看 Trace <ChevronRight size={12} /></button>}</div>
+      </header>
+      <section className="task-monitor-section task-monitor-todos" aria-label={isPlan ? "计划步骤" : "Todos"}>
+        <div className="task-monitor-section-head"><strong>{isPlan ? "计划步骤" : "Todos"}</strong><span>{completed} / {items.length}</span></div>
+        <div className="task-monitor-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }} /></div>
+        <div className="task-monitor-progress"><span>{progressLabel}</span></div>
+        <ol className="task-monitor-list">
+          {items.map((item) => {
+            const status = monitorItemStatus(item.status);
+            return <li className={`task-monitor-item ${status}`} key={item.id}><span className="task-monitor-item-mark">{status === "completed" ? <Check size={11} /> : status === "running" ? <LoaderCircle size={11} className="spinning" /> : status === "failed" ? <X size={11} /> : <span />}</span><span><strong>{item.title}</strong>{!compact && <small>{item.description}</small>}</span></li>;
+          })}
+        </ol>
+      </section>
+      {!compact && <div className="task-monitor-details">
+        <details className="task-monitor-detail" open>
+          <summary><span><strong>产物</strong><small>{run.plan ? "执行计划已生成" : run.output ? "最终回答已生成" : "等待产物"}</small></span><ChevronDown size={14} /></summary>
+          <div className="task-monitor-detail-body"><strong>{artifactLabel}</strong><small>{run.plan ? "计划内容已在主对话展示" : run.output ? "可在对话区查看" : "完成后自动出现"}</small></div>
+        </details>
+        <details className="task-monitor-detail">
+          <summary><span><strong>能力与 MCP</strong><small>{visiblePlugins.length ? `${visiblePlugins.length} 个已挂载能力` : "按需启用"}</small></span><ChevronDown size={14} /></summary>
+          <div className="task-monitor-detail-body"><strong>{visiblePlugins.length ? visiblePlugins.join(" · ") : "按需启用"}</strong><small>仅展示已挂载的公开能力</small></div>
+        </details>
+      </div>}
+    </section>
+  );
+}
+
+function ChoiceCard({
+  choice,
+  onResolve,
+}: {
+  choice: ChoicePrompt;
+  onResolve: (choice: ChoicePrompt, action: "continue" | "skip", selectedIds: string[]) => Promise<void>;
+}) {
+  const [selectedIds, setSelectedIds] = useState<string[]>(choice.selected_ids || []);
+  const [busy, setBusy] = useState(false);
+  const open = choice.status === "open";
+  const recommended = choice.options.find((option) => option.recommended);
+  const selectionLabel = selectedIds.length ? `已选 ${selectedIds.length} 项` : choice.required ? "请选择一项" : "可以跳过";
+  const toggle = (optionId: string) => {
+    if (!open || busy) return;
+    setSelectedIds((current) => choice.selection_type === "single"
+      ? [optionId]
+      : current.includes(optionId) ? current.filter((item) => item !== optionId) : [...current, optionId]);
+  };
+  const resolve = async (action: "continue" | "skip") => {
+    if (action === "continue" && choice.required && !selectedIds.length) return;
+    setBusy(true);
+    try {
+      await onResolve(choice, action, selectedIds);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className={`choice-card ${open ? "open" : "resolved"}`} aria-label="用户选择">
+      <header className="choice-card-head">
+        <div className="choice-card-heading">
+          <span className="choice-card-kicker">{open ? "需要你的选择" : "选择结果"} · {choice.selection_type === "single" ? "单选" : "多选"}</span>
+          <strong>{choice.title}</strong>
+        </div>
+        <div className="choice-card-head-meta">
+          <span className="choice-card-progress">{choice.options.length} 项</span>
+          <span>{open ? (choice.required ? "必选" : "可跳过") : choice.status === "skipped" ? "已跳过" : "已确认"}</span>
+        </div>
+      </header>
+      {choice.description && <p className="choice-card-description">{choice.description}</p>}
+      {open && recommended && <div className="choice-card-recommendation"><Sparkles size={13} /><span><strong>推荐</strong><small>{recommended.label}</small></span></div>}
+      <div className="choice-card-options" role={choice.selection_type === "single" ? "radiogroup" : "group"} aria-label="可选项">
+        {choice.options.map((option, index) => {
+          const selected = selectedIds.includes(option.id);
+          return <label className={`choice-option ${choice.selection_type} ${selected ? "selected" : ""}`} key={option.id}>
+            <input
+              type={choice.selection_type === "single" ? "radio" : "checkbox"}
+              name={`choice-${choice.prompt_id}`}
+              value={option.id}
+              checked={selected}
+              disabled={!open || busy}
+              onChange={() => toggle(option.id)}
+            />
+            <span className={`choice-option-control ${selected ? "selected" : ""}`} aria-hidden="true">{selected ? <Check size={11} /> : null}</span>
+            <span className="choice-option-index">{index + 1}</span>
+            <span className="choice-option-copy"><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
+            {option.recommended && <em>推荐</em>}
+          </label>;
+        })}
+      </div>
+      {open && <div className="choice-card-actions"><span className="choice-card-selection">{selectionLabel}</span><span className="choice-card-action-buttons"><button type="button" className="button button-ghost" onClick={() => void resolve("skip")} disabled={busy}><SkipForward size={14} />跳过</button><button type="button" className="button button-primary" onClick={() => void resolve("continue")} disabled={busy || (choice.required && !selectedIds.length)}><Check size={14} />继续</button></span></div>}
+      {!open && <p className="choice-card-note">选择结果已记录到这次 Run 的事件时间线。</p>}
+    </section>
+  );
+}
+
 function agentInitials(name: string): string {
   return name.replace(/\s*Agent\s*/gi, "").slice(0, 2);
 }
@@ -1067,6 +1523,57 @@ function previewValue(value: unknown, fallback = "事件已记录"): string {
   const text =
     typeof value === "string" ? value : JSON.stringify(value, null, 0);
   return text.length > 160 ? `${text.slice(0, 160)}…` : text;
+}
+
+function reportedTokenCount(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) {
+    return Math.max(0, Number(value));
+  }
+  return null;
+}
+
+function formatTokenCount(value: number | null): string {
+  return value === null ? "未报告" : Math.round(value).toLocaleString("zh-CN");
+}
+
+function tokenUsageDetail(value: unknown): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "输入 未报告 · 输出 未报告 · 缓存命中 未报告";
+  }
+  const usage = value as Record<string, unknown>;
+  const input = reportedTokenCount(usage.input_tokens);
+  const output = reportedTokenCount(usage.output_tokens);
+  const cached = reportedTokenCount(
+    usage.cached_input_tokens ?? usage.cache_read_input_tokens ?? usage.cached_tokens,
+  );
+  const created = reportedTokenCount(
+    usage.cache_creation_input_tokens ?? usage.cache_write_input_tokens,
+  );
+  return [
+    `输入 ${formatTokenCount(input)}`,
+    `输出 ${formatTokenCount(output)}`,
+    `缓存命中 ${formatTokenCount(cached)}`,
+    created === null ? null : `缓存写入 ${formatTokenCount(created)}`,
+  ].filter(Boolean).join(" · ");
+}
+
+function totalReportedCacheHits(events: RunEvent[]): number | null {
+  let total = 0;
+  let reported = false;
+  for (const event of events) {
+    if (event.type !== "model.completed") continue;
+    const usage = event.payload?.usage;
+    if (!usage || typeof usage !== "object" || Array.isArray(usage)) continue;
+    const value = usage as Record<string, unknown>;
+    const cached = reportedTokenCount(
+      value.cached_input_tokens ?? value.cache_read_input_tokens ?? value.cached_tokens,
+    );
+    if (cached === null) continue;
+    reported = true;
+    total += cached;
+  }
+  return reported ? total : null;
 }
 
 function parseJsonObject(value: string, label: string): Record<string, unknown> {
@@ -1104,6 +1611,20 @@ function eventTitle(type: string): string {
     "delegation.failed": "子 Agent 失败",
     "permission.required": "需要工具授权",
     "budget.updated": "预算已更新",
+    "plan.proposed": "计划已生成",
+    "plan.updated": "计划已修改",
+    "plan.approved": "计划已批准",
+    "plan.execution_started": "已开始按计划执行",
+    "plan.completed": "计划执行完成",
+    "plan.failed": "计划执行失败",
+    "plan.rejected": "计划暂不执行",
+    "plan.cancelled": "计划执行已取消",
+    "todo.created": "任务清单已生成",
+    "todo.updated": "任务清单已更新",
+    "todo.completed": "任务清单已完成",
+    "todo.failed": "任务清单未完成",
+    "choice.prompted": "等待你的选择",
+    "choice.resolved": "选择已确认",
   };
   return labels[type] || type;
 }
@@ -1111,6 +1632,9 @@ function eventTitle(type: string): string {
 function eventTone(type: string): "green" | "blue" | "violet" | "amber" {
   if (type.includes("failed") || type.includes("permission")) return "amber";
   if (type.startsWith("delegation")) return "violet";
+  if (type.startsWith("plan")) return type.includes("approved") || type.includes("completed") ? "green" : "blue";
+  if (type.startsWith("choice")) return "violet";
+  if (type.startsWith("todo")) return type.includes("failed") ? "amber" : type.includes("completed") ? "green" : "blue";
   if (type === "agent.progress" || type === "model.delta") return "blue";
   if (type.startsWith("model") || type.startsWith("budget")) return "blue";
   return "green";
@@ -1165,7 +1689,7 @@ function traceCategory(type: string): TraceFilter {
   if (type.includes("failed") || type.includes("permission")) return "errors";
   if (type.startsWith("tool")) return "tools";
   if (type.startsWith("model")) return "models";
-  if (type.startsWith("agent") || type.startsWith("delegation")) return "agents";
+  if (type.startsWith("agent") || type.startsWith("delegation") || type.startsWith("plan") || type.startsWith("todo") || type.startsWith("choice")) return "agents";
   return "all";
 }
 
@@ -1353,8 +1877,20 @@ function eventDetail(
   if (event.type === "agent.progress") {
     return `${previewValue(payload.message, "执行阶段更新")} · ${previewValue(payload.phase, "working")}`;
   }
+  if (event.type.startsWith("plan.")) {
+    const plan = payload.plan && typeof payload.plan === "object" ? payload.plan as Record<string, unknown> : {};
+    return `${eventTitle(event.type)} · ${previewValue(plan.title, "执行计划")} · ${previewValue(plan.status, "计划状态已记录")}`;
+  }
+  if (event.type.startsWith("todo.")) {
+    const todo = payload.todo && typeof payload.todo === "object" ? payload.todo as Record<string, unknown> : {};
+    return `${eventTitle(event.type)} · ${previewValue(todo.title, "任务清单")} · ${previewValue(todo.status, "任务状态已记录")}`;
+  }
+  if (event.type.startsWith("choice.")) {
+    const choice = payload.choice && typeof payload.choice === "object" ? payload.choice as Record<string, unknown> : {};
+    return `${eventTitle(event.type)} · ${previewValue(choice.title, "等待用户选择")}`;
+  }
   if (event.type === "model.completed") {
-    return `${previewValue(payload.provider, "provider")} / ${previewValue(payload.model, "model")} · 用量 ${previewValue(payload.usage, "未报告")}`;
+    return `${previewValue(payload.provider, "provider")} / ${previewValue(payload.model, "model")} · ${tokenUsageDetail(payload.usage)}`;
   }
   if (event.type === "model.failed") {
     return `${previewValue(payload.provider, "provider")} / ${previewValue(payload.model, "model")} · ${previewValue(payload.error_type, "模型调用失败")}`;
@@ -1408,8 +1944,6 @@ function publicReasoningStatus(value: unknown): PublicReasoningStep["status"] {
 
 function publicReasoningStepFromEvent(
   event: RunEvent,
-  plugins: PluginManifest[] = [],
-  agents: AgentSpec[] = [],
 ): PublicReasoningStep | null {
   const payload = event.payload || {};
   if (event.type === "agent.progress") {
@@ -1428,15 +1962,11 @@ function publicReasoningStepFromEvent(
   };
   }
   if (event.type === "model.started") {
-    const thinking = payload.thinking_mode && payload.thinking_mode !== "auto"
-      ? ` · 思考${thinkingModeLabel(payload.thinking_mode)}${payload.thinking_resolution === "unsupported" ? "（兼容降级）" : ""}`
-      : "";
-    const execution = payload.execution_mode === "plan" ? " · 计划模式" : "";
     return {
       id: `${event.run_id}-${event.sequence}`,
       title: "模型分析",
       phase: "model",
-      detail: `${previewValue(payload.provider, "模型服务")} / ${previewValue(payload.model, "当前模型")} · 第 ${previewValue(payload.step, "—")} 步${thinking}${execution}`,
+      detail: "正在分析当前请求",
       status: "active",
       sequence: event.sequence,
       agentId: event.agent_id,
@@ -1450,7 +1980,7 @@ function publicReasoningStepFromEvent(
       id: `${event.run_id}-${event.sequence}`,
       title: "模型完成分析",
       phase: "model",
-      detail: eventDetail(event, plugins, agents),
+      detail: `分析已完成 · ${tokenUsageDetail(payload.usage)}`,
       status: "complete",
       sequence: event.sequence,
       agentId: event.agent_id,
@@ -1464,8 +1994,32 @@ function publicReasoningStepFromEvent(
       id: `${event.run_id}-${event.sequence}`,
       title: "模型调用失败",
       phase: "model",
-      detail: eventDetail(event, plugins, agents),
+      detail: "模型暂时没有完成分析",
       status: "failed",
+      sequence: event.sequence,
+      agentId: event.agent_id,
+      depth: event.depth,
+      timestamp: event.timestamp,
+      eventType: event.type,
+    };
+  }
+  if (event.type.startsWith("plan.")) {
+    const planDetail: Record<string, string> = {
+      "plan.proposed": "计划已生成，可以审阅",
+      "plan.updated": "计划已更新，等待确认",
+      "plan.approved": "计划已批准，准备执行",
+      "plan.execution_started": "已开始按计划执行",
+      "plan.completed": "计划执行完成",
+      "plan.failed": "计划执行失败",
+      "plan.rejected": "计划暂不执行",
+      "plan.cancelled": "计划执行已取消",
+    };
+    return {
+      id: `${event.run_id}-${event.sequence}`,
+      title: eventTitle(event.type),
+      phase: "plan",
+      detail: planDetail[event.type] || "计划状态已更新",
+      status: event.type.includes("failed") || event.type.includes("rejected") ? "failed" : event.type.includes("cancelled") ? "cancelled" : event.type.includes("completed") ? "complete" : "active",
       sequence: event.sequence,
       agentId: event.agent_id,
       depth: event.depth,
@@ -1480,7 +2034,9 @@ function publicReasoningStepFromEvent(
       id: `${event.run_id}-${event.sequence}`,
       title: event.type.startsWith("tool") ? "工具决策" : "子 Agent 决策",
       phase: event.type.startsWith("tool") ? "tool" : "delegation",
-      detail: eventDetail(event, plugins, agents),
+      detail: event.type.startsWith("tool")
+        ? (failed ? "工具调用失败" : completed ? "工具调用完成" : "正在调用工具")
+        : (failed ? "子 Agent 执行失败" : completed ? "子 Agent 已完成" : "正在委派子 Agent"),
       status: failed ? "failed" : completed ? "complete" : "active",
       sequence: event.sequence,
       agentId: event.agent_id,
@@ -1511,11 +2067,9 @@ function publicOperationTerminalDetail(
 ): string {
   const payload = terminal.payload || {};
   if (start.type === "model.started") {
-    const provider = previewValue(start.payload?.provider, "模型服务");
-    const model = previewValue(start.payload?.model, "当前模型");
     return terminal.type === "model.failed"
-      ? `${provider} / ${model} · ${previewValue(payload.error_type, "模型调用失败")}`
-      : `${provider} / ${model} · 分析完成 · 用量 ${previewValue(payload.usage, "未报告")}`;
+      ? `模型调用未完成 · ${previewValue(payload.error_type, "请稍后重试")}`
+      : `模型分析已完成 · ${tokenUsageDetail(payload.usage)}`;
   }
   if (start.type === "tool.started") {
     const toolId = String(start.payload?.tool || "tool");
@@ -1570,7 +2124,7 @@ function publicReasoningSteps(
       ));
       if (hasStart) continue;
     }
-    const step = publicReasoningStepFromEvent(event, plugins, agents);
+    const step = publicReasoningStepFromEvent(event);
     if (!step) continue;
     if (operationStarts.has(event.type) && event.type !== "agent.started") {
       const terminal = publicOperationTerminal(events, event);
@@ -1659,40 +2213,53 @@ function PublicReasoningPanel({
       : hasCancelled
         ? "已取消"
         : steps.length
-          ? "已完成回答"
+          ? "思考"
           : "等待 Agent 开始";
-  const activityDetail = activityStep?.detail || "公开执行摘要会随 Run 进度更新";
+  const activityDetail = currentStep?.detail
+    || (steps.length ? "公开阶段已完成，点击查看" : "公开执行摘要会随 Run 进度更新");
   const activityIndex = activityStep ? steps.findIndex((step) => step.id === activityStep.id) + 1 : 0;
-  const [compactOpen, setCompactOpen] = useState(false);
+  const [compactOpen, setCompactOpen] = useState(!hasTerminal);
+  const [expanded, setExpanded] = useState(!hasTerminal);
+  const [terminalCompactOpen, setTerminalCompactOpen] = useState(false);
+  const [terminalExpanded, setTerminalExpanded] = useState(false);
+  const visibleCompactOpen = hasTerminal ? terminalCompactOpen : compactOpen;
+  const visibleExpanded = hasTerminal ? terminalExpanded : expanded;
   const summary = currentStep
     ? `${currentStep.title} · 进行中`
     : hasFailure
       ? "已失败"
       : hasCancelled
         ? "已取消"
-      : steps.length
-        ? `已完成 · ${steps.length} 个阶段`
-        : "等待阶段";
+        : steps.length
+          ? `查看 ${steps.length} 步`
+          : "等待阶段";
   if (compact) {
     return (
       <details
         className="public-reasoning compact"
-        open={compactOpen}
-        onToggle={(event) => setCompactOpen(event.currentTarget.open)}
+        open={visibleCompactOpen}
+        onToggle={(event) => {
+          if (hasTerminal) setTerminalCompactOpen(event.currentTarget.open);
+          else setCompactOpen(event.currentTarget.open);
+        }}
       >
         <summary className="public-reasoning-head">
           <span className={`public-reasoning-live-dot ${activityStatus}`} aria-hidden="true"><span /></span>
           <span className="public-reasoning-activity">
             <strong>{activityTitle}</strong>
-            <small><span>思考过程 · 公开摘要</span>{activityDetail ? ` · ${activityDetail}` : ""}</small>
+            <small>{activityDetail}</small>
           </span>
           <span className={`public-reasoning-compact-status ${activityStatus}`}>
-            {activityIndex && steps.length ? `${activityIndex} / ${steps.length}` : publicReasoningStatusLabel(activityStatus === "empty" ? "active" : activityStatus as PublicReasoningStep["status"])}
+            {currentStep && steps.length
+              ? `${activityIndex} / ${steps.length}`
+              : steps.length
+                ? `查看 ${steps.length} 步`
+                : publicReasoningStatusLabel(activityStatus === "empty" ? "active" : activityStatus as PublicReasoningStep["status"])}
           </span>
           <ChevronDown className="public-reasoning-chevron" size={14} aria-hidden="true" />
         </summary>
         <div className="public-reasoning-compact-body">
-          <div className="public-reasoning-compact-caption">公开执行轨迹 · 不显示隐藏思维原文</div>
+          <div className="public-reasoning-compact-caption">公开活动 · 不显示隐藏思维原文</div>
           {steps.length ? (
             <ol className="public-reasoning-compact-track" aria-label="公开执行阶段">
               {steps.map((step) => (
@@ -1710,7 +2277,14 @@ function PublicReasoningPanel({
     );
   }
   return (
-    <details className="public-reasoning" open>
+    <details
+      className="public-reasoning"
+      open={visibleExpanded}
+      onToggle={(event) => {
+        if (hasTerminal) setTerminalExpanded(event.currentTarget.open);
+        else setExpanded(event.currentTarget.open);
+      }}
+    >
       <summary className="public-reasoning-head">
         <span className="public-reasoning-title"><span className="public-reasoning-spark"><Sparkles size={13} /></span><span><strong>思考过程</strong><small>公开阶段 · 公开摘要 · 不显示隐藏思维原文</small></span></span>
         <span className={`public-reasoning-count ${currentStep ? "active" : hasFailure ? "failed" : "complete"}`}>{summary}</span>
@@ -1743,10 +2317,54 @@ function runProjectionFromTerminalEvent(event: RunEvent): Partial<RunRecord> | n
       patch.metrics = event.payload.metrics as Record<string, unknown>;
     }
   }
+  if (event.payload.plan && typeof event.payload.plan === "object") {
+    patch.plan = event.payload.plan as ExecutionPlan;
+  }
+  if (event.payload.todo && typeof event.payload.todo === "object") {
+    patch.todo = event.payload.todo as TaskTodoList;
+  }
+  if (event.payload.choice && typeof event.payload.choice === "object") {
+    patch.choice = event.payload.choice as ChoicePrompt;
+  }
   if (event.type === "run.failed" && typeof event.payload.error === "string") {
     patch.error = event.payload.error;
   }
   return patch;
+}
+
+function runProjectionFromEvent(event: RunEvent): Partial<RunRecord> | null {
+  const patch = runProjectionFromTerminalEvent(event) || {};
+  const payload = event.payload || {};
+  if (payload.todo && typeof payload.todo === "object") {
+    patch.todo = payload.todo as TaskTodoList;
+  }
+  if (payload.plan && typeof payload.plan === "object") {
+    patch.plan = payload.plan as ExecutionPlan;
+  }
+  if (payload.choice && typeof payload.choice === "object") {
+    patch.choice = payload.choice as ChoicePrompt;
+  }
+  if (event.type === "run.started") {
+    patch.status = "running";
+  }
+  return Object.keys(patch).length ? patch : null;
+}
+
+const PLAN_STATUS_ORDER: Record<ExecutionPlan["status"], number> = {
+  proposed: 0,
+  needs_revision: 1,
+  approved: 2,
+  executing: 3,
+  completed: 4,
+  failed: 4,
+  rejected: 4,
+  cancelled: 4,
+};
+
+function planSnapshotIsOlder(candidate: ExecutionPlan, current: ExecutionPlan): boolean {
+  return candidate.version < current.version
+    || (candidate.version === current.version
+      && PLAN_STATUS_ORDER[candidate.status] < PLAN_STATUS_ORDER[current.status]);
 }
 
 function getDefaultApiBase(): string {
@@ -1770,7 +2388,6 @@ export function ControlCenter() {
   const [apiBase, setApiBase] = useState(() => getDefaultApiBase());
   const [apiKey, setApiKey] = useState("");
   const [agents, setAgents] = useState<AgentSpec[]>([]);
-  const [instances, setInstances] = useState<AgentInstance[]>([]);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
   const [modelConfigs, setModelConfigs] = useState<ModelConfig[]>([]);
@@ -1781,10 +2398,10 @@ export function ControlCenter() {
   const [selectedAgent, setSelectedAgent] = useState<AgentSpec | null>(null);
   const [editingAgent, setEditingAgent] = useState<AgentSpec | null>(null);
   const [newAgentOpen, setNewAgentOpen] = useState(false);
-  const [newInstanceOpen, setNewInstanceOpen] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
   const [runBusy, setRunBusy] = useState(false);
   const [chatBusy, setChatBusy] = useState(false);
+  const [planBusy, setPlanBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [agentQuery, setAgentQuery] = useState("");
@@ -1844,7 +2461,6 @@ export function ControlCenter() {
         empty: unknown;
       }> = [
         { key: "agents", request: apiRequest<AgentSpec[]>(`${base}/agents`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setAgents(value as AgentSpec[]), empty: [] },
-        { key: "instances", request: apiRequest<AgentInstance[]>(`${base}/instances`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setInstances(value as AgentInstance[]), empty: [] },
         { key: "runs", request: apiRequest<RunRecord[]>(`${base}/runs?limit=100`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setRuns(value as RunRecord[]), empty: [] },
         { key: "plugins", request: apiRequest<PluginManifest[]>(`${base}/plugins`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setPlugins(value as PluginManifest[]), empty: [] },
         { key: "modelConfigs", request: apiRequest<ModelConfig[]>(`${base}/model-configs`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setModelConfigs(value as ModelConfig[]), empty: [] },
@@ -2019,7 +2635,6 @@ export function ControlCenter() {
     setSetupStatus(null);
     setCapabilities([]);
     setAgents([]);
-    setInstances([]);
     setRuns([]);
     setPlugins([]);
     setModelConfigs([]);
@@ -2033,7 +2648,6 @@ export function ControlCenter() {
     setSetupStatus(null);
     setCapabilities([]);
     setAgents([]);
-    setInstances([]);
     setRuns([]);
     setPlugins([]);
     setModelConfigs([]);
@@ -2060,8 +2674,9 @@ export function ControlCenter() {
       },
       enabled: form.enabled,
     };
+    let created: AgentSpec;
     if (mode === "live") {
-      const created = await apiRequest<AgentSpec>(`${apiBase}/agents`, {
+      created = await apiRequest<AgentSpec>(`${apiBase}/agents`, {
         method: "POST",
         headers: headers(),
         body: JSON.stringify(payload),
@@ -2071,11 +2686,12 @@ export function ControlCenter() {
     } else {
       throw new Error("请先连接 Python 控制面；Agent 配置只写入数据库");
     }
-    setNotice(`${form.name} 已创建`);
+    setNotice(`${form.name} 已保存为草稿，请发布后用于团队协作`);
     setNewAgentOpen(false);
+    setEditingAgent(created);
   }
 
-  async function updateAgent(
+  async function saveAgentDraft(
     agent: AgentSpec,
     form: AgentConfigurationForm,
   ) {
@@ -2096,8 +2712,8 @@ export function ControlCenter() {
     };
     let updated: AgentSpec;
     if (mode === "live") {
-      updated = await apiRequest<AgentSpec>(`${apiBase}/agents/${agent.id}`, {
-        method: "PATCH",
+      updated = await apiRequest<AgentSpec>(`${apiBase}/agents/${agent.id}/draft`, {
+        method: "POST",
         headers: headers(),
         body: JSON.stringify(payload),
       });
@@ -2108,8 +2724,38 @@ export function ControlCenter() {
       current.map((item) => (item.id === updated.id ? updated : item)),
     );
     await refresh();
-    setEditingAgent(null);
-    setNotice(`${updated.name} rev ${updated.revision} 已发布`);
+    setEditingAgent(updated);
+    setNotice(`${updated.name} rev ${updated.revision} 草稿已保存`);
+  }
+
+  async function publishAgent(agent: AgentSpec) {
+    if (mode !== "live") throw new Error("请先连接 Python 控制面；发布只写入数据库");
+    const published = await apiRequest<AgentRevisionInfo>(`${apiBase}/agents/${agent.id}/publish`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ expected_revision: agent.revision }),
+    });
+    setAgents((current) => current.map((item) => (
+      item.id === published.spec.id ? published.spec : item
+    )));
+    await refresh();
+    setEditingAgent(published.spec);
+    setNotice(`${published.spec.name} rev ${published.revision} 已发布，latest 已更新`);
+  }
+
+  async function rollbackAgent(agent: AgentSpec, revision: number) {
+    if (mode !== "live") throw new Error("请先连接 Python 控制面；回滚只写入数据库");
+    const rolledBack = await apiRequest<AgentRevisionInfo>(`${apiBase}/agents/${agent.id}/rollback`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ revision, expected_revision: agent.revision }),
+    });
+    setAgents((current) => current.map((item) => (
+      item.id === rolledBack.spec.id ? rolledBack.spec : item
+    )));
+    await refresh();
+    setEditingAgent(rolledBack.spec);
+    setNotice(`${rolledBack.spec.name} 已回滚到 rev ${rolledBack.revision}，latest 已移动`);
   }
 
   async function updateModelConfig(
@@ -2155,61 +2801,9 @@ export function ControlCenter() {
     setNotice(`${config.name} 已删除`);
   }
 
-  async function createInstance(form: {
-    name: string;
-    agentId: string;
-    environment: string;
-    maxConcurrency: number;
-  }) {
-    const agent = agents.find((item) => item.id === form.agentId);
-    if (!agent) throw new Error("请选择有效的 Agent");
-    const payload = {
-      name: form.name,
-      agent_id: agent.id,
-      agent_revision: agent.revision,
-      environment: form.environment,
-      status: "ready",
-      max_concurrency: form.maxConcurrency,
-      config_overrides: {},
-    };
-    if (mode === "live") {
-      const created = await apiRequest<AgentInstance>(`${apiBase}/instances`, {
-        method: "POST",
-        headers: headers(),
-        body: JSON.stringify(payload),
-      });
-      setInstances((current) => [...current, created]);
-      await refresh();
-    } else {
-      throw new Error("请先连接 Python 控制面；实例配置只写入数据库");
-    }
-    setNotice(`${form.name} 实例已创建`);
-    setNewInstanceOpen(false);
-  }
-
-  async function setInstanceStatus(
-    instance: AgentInstance,
-    nextStatus: "ready" | "stopped",
-  ) {
-    if (mode === "live") {
-      const updated = await apiRequest<AgentInstance>(`${apiBase}/instances/${instance.id}`, {
-        method: "PATCH",
-        headers: headers(),
-        body: JSON.stringify({ status: nextStatus }),
-      });
-      setInstances((current) =>
-        current.map((item) => (item.id === updated.id ? updated : item)),
-      );
-      await refresh();
-    } else {
-      throw new Error("请先连接 Python 控制面；实例状态由数据库控制");
-    }
-    setNotice(`${instance.name} 已${nextStatus === "ready" ? "启用" : "停止"}`);
-  }
-
   async function submitRun(
     targetId: string,
-    targetKind: "agent" | "instance",
+    agentRevision: number | undefined,
     input: string,
     sessionId?: string,
     thinkingMode: ThinkingMode = "auto",
@@ -2222,28 +2816,38 @@ export function ControlCenter() {
       method: "POST",
       headers: headers(),
       body: JSON.stringify({
-        [targetKind === "instance" ? "instance_id" : "agent_id"]: targetId,
+        agent_id: targetId,
+        ...(agentRevision !== undefined ? { agent_revision: agentRevision } : {}),
         input,
         thinking_mode: thinkingMode,
         execution_mode: executionMode,
         ...(sessionId ? { session_id: sessionId } : {}),
       }),
     });
+    const returnedExecutionMode = created.metrics?.execution_mode;
+    if (returnedExecutionMode !== executionMode) {
+      const returnedLabel = returnedExecutionMode === "plan" || returnedExecutionMode === "execute"
+        ? executionModeLabel(returnedExecutionMode)
+        : "未返回";
+      throw new Error(`控制面未确认所选${executionModeLabel(executionMode)}，实际返回：${returnedLabel}`);
+    }
     setRuns((current) => [created, ...current]);
     return created;
   }
 
   async function launchRun(
-    targetId: string,
-    targetKind: "agent" | "instance",
+    agentId: string,
+    agentRevision: number | undefined,
     input: string,
     thinkingMode: ThinkingMode,
     executionMode: ExecutionMode,
   ) {
     setRunBusy(true);
     try {
-      const created = await submitRun(targetId, targetKind, input, undefined, thinkingMode, executionMode);
-      setNotice("运行已提交，事件流正在记录");
+      const created = await submitRun(agentId, agentRevision, input, undefined, thinkingMode, executionMode);
+      setNotice(executionMode === "plan"
+        ? "计划 Run 已提交：完成后停在待审阅，不会执行工具或子 Agent"
+        : "运行已提交，事件流正在记录");
       setRunOpen(false);
       navigate("runs", created.id);
     } finally {
@@ -2260,13 +2864,99 @@ export function ControlCenter() {
   ) {
     setChatBusy(true);
     try {
-      const created = await submitRun(agentId, "agent", input, sessionId, thinkingMode, executionMode);
-      setNotice("消息已发送，Agent 正在运行");
+      const created = await submitRun(agentId, undefined, input, sessionId, thinkingMode, executionMode);
+      setNotice(executionMode === "plan"
+        ? "计划已提交：生成后会停在待审阅，不会执行工具或子 Agent"
+        : "消息已发送，Agent 正在运行");
       navigate("chat", created.id);
       return created;
     } finally {
       setChatBusy(false);
     }
+  }
+
+  async function editPlan(runId: string, payload: PlanEditPayload): Promise<ExecutionPlan> {
+    if (mode !== "live") throw new Error("请先连接 Python 控制面");
+    setPlanBusy(true);
+    try {
+      const plan = await apiRequest<ExecutionPlan>(`${apiBase}/runs/${runId}/plan`, {
+        method: "PATCH",
+        headers: headers(),
+        body: JSON.stringify(payload),
+      });
+      setRuns((current) => current.map((run) => run.id === runId
+        ? { ...run, plan, metrics: { ...run.metrics, plan_id: plan.plan_id, plan_version: plan.version, plan_status: plan.status } }
+        : run));
+      setNotice("计划已保存为新版本，请重新确认后执行");
+      return plan;
+    } finally {
+      setPlanBusy(false);
+    }
+  }
+
+  async function approvePlan(plan: ExecutionPlan): Promise<RunRecord> {
+    if (mode !== "live") throw new Error("请先连接 Python 控制面");
+    setPlanBusy(true);
+    try {
+      const created = await apiRequest<RunRecord>(`${apiBase}/runs/${plan.run_id}/plan/approve`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ expected_version: plan.version }),
+      });
+      setRuns((current) => [
+        created,
+        ...current.map((run) => run.id === plan.run_id && run.plan
+          ? {
+            ...run,
+            plan: {
+              ...run.plan,
+              status: "executing" as const,
+              steps: run.plan.steps.map((step) => ({ ...step, status: "approved" as const })),
+              updated_at: new Date().toISOString(),
+            },
+            metrics: { ...run.metrics, plan_status: "executing" },
+          }
+          : run),
+      ]);
+      setNotice("计划已批准，新的执行 Run 已启动");
+      return created;
+    } finally {
+      setPlanBusy(false);
+    }
+  }
+
+  async function rejectPlan(plan: ExecutionPlan): Promise<void> {
+    if (mode !== "live") throw new Error("请先连接 Python 控制面");
+    setPlanBusy(true);
+    try {
+      const updated = await apiRequest<ExecutionPlan>(`${apiBase}/runs/${plan.run_id}/plan/reject`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ expected_version: plan.version }),
+      });
+      setRuns((current) => current.map((run) => run.id === plan.run_id
+        ? { ...run, plan: updated, metrics: { ...run.metrics, plan_status: updated.status } }
+        : run));
+      setNotice("计划已保留为已拒绝状态，未启动执行");
+    } finally {
+      setPlanBusy(false);
+    }
+  }
+
+  async function resolveChoice(
+    runId: string,
+    action: "continue" | "skip",
+    selectedIds: string[],
+  ): Promise<RunRecord> {
+    if (mode !== "live") throw new Error("请先连接 Python 控制面");
+    const updated = await apiRequest<RunRecord>(`${apiBase}/runs/${runId}/choice`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ action, selected_ids: selectedIds }),
+    });
+    setRuns((current) => current.map((run) => run.id === runId ? updated : run));
+    setNotice(action === "continue" ? "选择已记录，可以继续对话" : "已跳过这次选择");
+    return updated;
   }
 
   async function cancelRun(runId: string) {
@@ -2281,9 +2971,24 @@ export function ControlCenter() {
   }
 
   const projectRun = useCallback((runId: string, patch: Partial<RunRecord>) => {
-    setRuns((current) => current.map((run) => (
-      run.id === runId ? { ...run, ...patch } : run
-    )));
+    setRuns((current) => current.map((run) => {
+      if (run.id !== runId) return run;
+      const stalePlan = Boolean(run.plan && patch.plan && planSnapshotIsOlder(patch.plan, run.plan));
+      const next = { ...run, ...patch };
+      if (patch.metrics) {
+        next.metrics = { ...run.metrics, ...patch.metrics };
+      }
+      if (stalePlan && run.plan) {
+        next.plan = run.plan;
+        next.metrics = {
+          ...next.metrics,
+          plan_id: run.plan.plan_id,
+          plan_version: run.plan.version,
+          plan_status: run.plan.status,
+        };
+      }
+      return next;
+    }));
   }, []);
 
   return (
@@ -2309,10 +3014,12 @@ export function ControlCenter() {
 
         <nav className="main-nav" aria-label="主导航">
           <span className="nav-section-label">工作台</span>
-          {NAV_ITEMS.slice(0, 6).map((item) => (
+          {NAV_ITEMS.slice(0, 5).map((item) => (
             <button
               key={item.id}
               className={`nav-item ${view === item.id ? "active" : ""}`}
+              aria-label={item.label}
+              title={item.label}
               onClick={() => {
                 navigate(item.id);
                 setMobileNav(false);
@@ -2326,10 +3033,12 @@ export function ControlCenter() {
             </button>
           ))}
           <span className="nav-section-label nav-section-spaced">系统</span>
-          {NAV_ITEMS.slice(6).map((item) => (
+          {NAV_ITEMS.slice(5).map((item) => (
             <button
               key={item.id}
               className={`nav-item ${view === item.id ? "active" : ""}`}
+              aria-label={item.label}
+              title={item.label}
               onClick={() => {
                 navigate(item.id);
                 setMobileNav(false);
@@ -2436,7 +3145,6 @@ export function ControlCenter() {
               rootAgent={rootAgent}
               mountedAgents={mountedAgents}
               agents={agents}
-              instances={instances}
               runs={runs}
               plugins={plugins}
               setupStatus={setupStatus}
@@ -2472,6 +3180,11 @@ export function ControlCenter() {
               onSend={sendChatRun}
               onCancel={(id) => void cancelRun(id)}
               onRunProjection={projectRun}
+              onEditPlan={editPlan}
+              onApprovePlan={approvePlan}
+              onRejectPlan={rejectPlan}
+              onResolveChoice={resolveChoice}
+              planBusy={planBusy}
               onResourceSelect={(resourceId) => navigate("chat", resourceId)}
             />
           )}
@@ -2483,18 +3196,6 @@ export function ControlCenter() {
               setQuery={setAgentQuery}
               onCreate={openNewAgent}
               onSelect={openAgentDetails}
-            />
-          )}
-
-          {view === "instances" && (
-            <InstancesView
-              instances={instances}
-              agents={agents}
-              onCreate={() => setNewInstanceOpen(true)}
-              onStatusChange={(instance, status) =>
-                void setInstanceStatus(instance, status)
-              }
-              onRun={openRun}
             />
           )}
 
@@ -2519,6 +3220,10 @@ export function ControlCenter() {
               mode={mode}
               requestHeaders={headers}
               onRunProjection={projectRun}
+              onEditPlan={editPlan}
+              onApprovePlan={approvePlan}
+              onRejectPlan={rejectPlan}
+              planBusy={planBusy}
               resourceId={routeResourceId}
               onResourceSelect={(resourceId) => navigate("runs", resourceId)}
             />
@@ -2585,6 +3290,8 @@ export function ControlCenter() {
           agents={agents}
           plugins={plugins}
           modelConfigs={modelConfigs}
+          apiBase={apiBase}
+          requestHeaders={headers}
           onClose={() => setNewAgentOpen(false)}
           onCreate={createAgent}
         />
@@ -2592,27 +3299,25 @@ export function ControlCenter() {
 
       {editingAgent && (
         <EditAgentModal
+          key={`${editingAgent.id}:${editingAgent.revision}`}
           agent={editingAgent}
           agents={agents}
           plugins={plugins}
           modelConfigs={modelConfigs}
+          apiBase={apiBase}
+          requestHeaders={headers}
           onClose={() => setEditingAgent(null)}
-          onSave={(form) => updateAgent(editingAgent, form)}
-        />
-      )}
-
-      {newInstanceOpen && (
-        <NewInstanceModal
-          agents={agents.filter((agent) => agent.enabled)}
-          onClose={() => setNewInstanceOpen(false)}
-          onCreate={createInstance}
+          onSaveDraft={(form) => saveAgentDraft(editingAgent, form)}
+          onPublish={() => publishAgent(editingAgent)}
+          onRollback={(revision) => rollbackAgent(editingAgent, revision)}
         />
       )}
 
       {runOpen && (
         <RunModal
           agents={agents.filter((agent) => agent.enabled)}
-          instances={instances.filter((instance) => instance.status === "ready")}
+          apiBase={apiBase}
+          requestHeaders={headers}
           readinessIssues={setupStatus?.agents.blocking_issues || []}
           busy={runBusy}
           onClose={() => !runBusy && setRunOpen(false)}
@@ -2664,7 +3369,7 @@ function SetupChecklist({
     {
       action: "run_agent",
       title: "发起首个 Run",
-      detail: setupStatus.runs.total ? `${setupStatus.runs.total} 次运行已记录` : "Instance 可选；可直接运行 Agent",
+      detail: setupStatus.runs.total ? `${setupStatus.runs.total} 次运行已记录` : "可直接运行 Agent；版本在调用时选择",
       complete: setupStatus.runs.total > 0,
     },
   ];
@@ -2688,7 +3393,6 @@ function Overview({
   rootAgent,
   mountedAgents,
   agents,
-  instances,
   runs,
   plugins,
   setupStatus,
@@ -2705,7 +3409,6 @@ function Overview({
   rootAgent?: AgentSpec;
   mountedAgents: AgentSpec[];
   agents: AgentSpec[];
-  instances: AgentInstance[];
   runs: RunRecord[];
   plugins: PluginManifest[];
   setupStatus: SetupStatus | null;
@@ -2845,13 +3548,6 @@ function Overview({
           value={String(agents.length).padStart(2, "0")}
           note={`${agents.filter((agent) => agent.enabled).length} 个已启用`}
           tone="lime"
-        />
-        <MetricCard
-          icon={Box}
-          label="运行实例"
-          value={String(instances.length).padStart(2, "0")}
-          note="environment 仅是运行上下文标签"
-          tone="blue"
         />
         <MetricCard
           icon={CheckCircle2}
@@ -3054,99 +3750,6 @@ function AgentsView({
   );
 }
 
-function InstancesView({
-  instances,
-  agents,
-  onCreate,
-  onStatusChange,
-  onRun,
-}: {
-  instances: AgentInstance[];
-  agents: AgentSpec[];
-  onCreate: () => void;
-  onStatusChange: (
-    instance: AgentInstance,
-    status: "ready" | "stopped",
-  ) => void;
-  onRun: () => void;
-}) {
-  return (
-    <div className="view-stack">
-      <div className="view-heading">
-        <div>
-          <span className="section-kicker">AGENT INSTANCES</span>
-          <h2>运行实例</h2>
-          <p>同一 Agent 修订可以按环境标签创建多个实例，并分别治理并发与启停状态。</p>
-        </div>
-        <div className="heading-actions">
-          <button className="button button-secondary" onClick={onRun}>
-            <Play size={16} /> 发起运行
-          </button>
-          <button className="button button-primary" onClick={onCreate}>
-            <Plus size={17} /> 新建实例
-          </button>
-        </div>
-      </div>
-      <div className="instance-grid">
-        {instances.map((instance) => {
-          const agent = agents.find((item) => item.id === instance.agent_id);
-          const ready = instance.status === "ready";
-          return (
-            <article className="instance-card panel" key={instance.id}>
-              <div className="instance-card-head">
-                <span className="instance-icon">
-                  {instance.environment === "cloud" ? (
-                    <Cloud size={19} />
-                  ) : (
-                    <Server size={19} />
-                  )}
-                </span>
-                <span className={`status-badge ${instance.status}`}>
-                  <span className="status-mini-dot" />
-                  {statusLabel(instance.status)}
-                </span>
-              </div>
-              <h3>{instance.name}</h3>
-              <p>{agent?.name || instance.agent_id}</p>
-              <div className="instance-values">
-                <div>
-                  <span>环境标签</span>
-                  <strong>{instance.environment}</strong>
-                </div>
-                <div>
-                  <span>Agent 修订</span>
-                  <strong>rev {instance.agent_revision || agent?.revision || "latest"}</strong>
-                </div>
-                <div>
-                  <span>最大并发</span>
-                  <strong>×{instance.max_concurrency}</strong>
-                </div>
-              </div>
-              <div className="instance-card-footer">
-                <code>{instance.id}</code>
-                <button
-                  className={`button ${ready ? "button-danger" : "button-secondary"}`}
-                  onClick={() =>
-                    onStatusChange(instance, ready ? "stopped" : "ready")
-                  }
-                >
-                  {ready ? <Square size={13} /> : <Play size={13} />}
-                  {ready ? "停止" : "启用"}
-                </button>
-              </div>
-            </article>
-          );
-        })}
-        <button className="instance-card panel add-instance-card" onClick={onCreate}>
-          <span className="add-agent-icon"><Plus size={24} /></span>
-          <strong>创建运行实例</strong>
-          <p>固定 Agent 修订、环境标签与实例级并发上限；环境标签不触发部署。</p>
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function AgentFlowNode({ data }: NodeProps<AgentFlowNode>) {
   const { agent, mount, root, onSelect } = data;
   return (
@@ -3165,7 +3768,7 @@ function AgentFlowNode({ data }: NodeProps<AgentFlowNode>) {
           <span><TerminalSquare size={12} /> {agent.tools.length}</span>
           <span><Link2 size={12} /> {agent.children.length}</span>
           {!root && <span><Cpu size={12} /> ×{mount?.max_concurrency || 1}</span>}
-          <span>rev {mount?.revision || agent.revision}</span>
+          <span>{mount?.revision ? `rev ${mount.revision}` : "latest"}</span>
         </div>
       </button>
       {root && <Handle type="source" position={Position.Bottom} className="flow-handle" />}
@@ -3218,7 +3821,7 @@ function TopologyView({
         animated: false,
         markerEnd: { type: MarkerType.ArrowClosed, color: "#3f7562" },
         label: mount?.alias || "delegate",
-        data: { alias: mount?.alias, revision: mount?.revision || agent.revision },
+        data: { alias: mount?.alias, revision: mount?.revision },
       };
     });
   }, [mountedAgents, rootAgent]);
@@ -3361,6 +3964,11 @@ function ChatWorkspace({
   onSend,
   onCancel,
   onRunProjection,
+  onEditPlan,
+  onApprovePlan,
+  onRejectPlan,
+  onResolveChoice,
+  planBusy,
   onResourceSelect,
 }: {
   runs: RunRecord[];
@@ -3375,6 +3983,11 @@ function ChatWorkspace({
   onSend: (agentId: string, input: string, sessionId: string, thinkingMode: ThinkingMode, executionMode: ExecutionMode) => Promise<RunRecord>;
   onCancel: (id: string) => void;
   onRunProjection: (id: string, patch: Partial<RunRecord>) => void;
+  onEditPlan: (runId: string, payload: PlanEditPayload) => Promise<ExecutionPlan>;
+  onApprovePlan: (plan: ExecutionPlan) => Promise<RunRecord>;
+  onRejectPlan: (plan: ExecutionPlan) => Promise<void>;
+  onResolveChoice: (runId: string, action: "continue" | "skip", selectedIds: string[]) => Promise<RunRecord>;
+  planBusy: boolean;
   onResourceSelect: (resourceId: string | null) => void;
 }) {
   const enabledAgents = agents.filter((agent) => agent.enabled);
@@ -3388,7 +4001,7 @@ function ChatWorkspace({
   );
   const [draftSession, setDraftSession] = useState(false);
   const [draft, setDraft] = useState("");
-  const [detailsOpen, setDetailsOpen] = useState(true);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [localError, setLocalError] = useState("");
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("auto");
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("execute");
@@ -3404,6 +4017,8 @@ function ChatWorkspace({
   const chatThreadRef = useRef<HTMLDivElement>(null);
   const stickToChatBottomRef = useRef(true);
   const lastChatRunIdRef = useRef("");
+  const composingRef = useRef(false);
+  const compositionEndedRef = useRef(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
   const sessionGroups = useMemo(() => {
@@ -3455,11 +4070,8 @@ function ChatWorkspace({
   const streamOutput = stream.runId === selectedRunId ? stream.output : "";
   const streamProgress = stream.runId === selectedRunId ? stream.progress : null;
   const activeRun = activeSessionRuns.some((run) => run.status === "running" || run.status === "queued");
+  const taskRailVisible = !detailsOpen && Boolean(selectedRun?.todo || selectedRun?.plan);
   const [chatNowMs, setChatNowMs] = useState(0);
-
-  useEffect(() => {
-    if (window.matchMedia("(max-width: 720px)").matches) setDetailsOpen(false);
-  }, []);
 
   const handleChatThreadScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
     const element = event.currentTarget;
@@ -3499,17 +4111,6 @@ function ChatWorkspace({
   }, [selectedRunId, selectedRunStatus]);
 
   useEffect(() => {
-    const saved = selectedRun?.metrics?.thinking_mode;
-    if (saved === "off" || saved === "auto" || saved === "on") {
-      setThinkingMode(saved);
-    }
-    const savedExecution = selectedRun?.metrics?.execution_mode;
-    if (savedExecution === "execute" || savedExecution === "plan") {
-      setExecutionMode(savedExecution);
-    }
-  }, [selectedRun?.id, selectedRun?.metrics?.execution_mode, selectedRun?.metrics?.thinking_mode]);
-
-  useEffect(() => {
     if (!selectedRunId || mode !== "live") {
       setStream({ runId: selectedRunId, events: [], output: "", progress: null, error: "", lastSequence: 0, status: "idle" });
       return undefined;
@@ -3531,13 +4132,15 @@ function ChatWorkspace({
     const applyEvents = (incoming: RunEvent[]) => {
       if (!active || !incoming.length) return;
       cursor = Math.max(cursor, ...incoming.map((event) => event.sequence));
+      for (const event of incoming) {
+        const projection = runProjectionFromEvent(event);
+        if (projection) onRunProjection(selectedRunId, projection);
+      }
       const terminalEvent = incoming.find(
         (event) => Boolean(terminalStatusForEvent(event)) && event.type !== "run.started",
       );
       if (terminalEvent) {
         terminal = true;
-        const projection = runProjectionFromTerminalEvent(terminalEvent);
-        if (projection) onRunProjection(selectedRunId, projection);
       }
       setStream((current) => {
         const events = mergeRunEvents(current.runId === selectedRunId ? current.events : [], incoming);
@@ -3578,6 +4181,9 @@ function ChatWorkspace({
           status: run.status,
           output: run.output,
           error: run.error,
+          plan: run.plan,
+          todo: run.todo,
+          choice: run.choice,
           finished_at: run.finished_at,
           metrics: run.metrics,
         });
@@ -3612,13 +4218,16 @@ function ChatWorkspace({
             headers: requestHeaders(),
             signal: controller.signal,
           });
-          onRunProjection(selectedRunId, {
-            status: run.status,
-            output: run.output,
-            error: run.error,
-            finished_at: run.finished_at,
-            metrics: run.metrics,
-          });
+            onRunProjection(selectedRunId, {
+              status: run.status,
+              output: run.output,
+              error: run.error,
+              plan: run.plan,
+              todo: run.todo,
+              choice: run.choice,
+              finished_at: run.finished_at,
+              metrics: run.metrics,
+            });
           const history = await apiRequest<RunEvent[]>(
             `${apiBase}/runs/${selectedRunId}/events/history?after=${cursor}`,
             { headers: requestHeaders(), signal: controller.signal },
@@ -3681,8 +4290,6 @@ function ChatWorkspace({
     setSelectedAgentId(fallbackAgent?.id || "");
     setDraft("");
     setLocalError("");
-    setThinkingMode("auto");
-    setExecutionMode("execute");
     onResourceSelect(null);
   }
 
@@ -3697,6 +4304,7 @@ function ChatWorkspace({
 
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
+    if (composingRef.current || compositionEndedRef.current) return;
     const input = draft.trim();
     if (!input || busy || activeRun) return;
     if (!selectedAgent) {
@@ -3722,13 +4330,34 @@ function ChatWorkspace({
     }
   }
 
+  async function handleChoice(
+    run: RunRecord,
+    choice: ChoicePrompt,
+    action: "continue" | "skip",
+    selectedIds: string[],
+  ) {
+    await onResolveChoice(run.id, action, selectedIds);
+    if (action !== "continue") return;
+    const labels = choice.options
+      .filter((option) => selectedIds.includes(option.id))
+      .map((option) => option.label);
+    if (!labels.length) return;
+    await onSend(
+      run.agent_id,
+      `我选择了：${labels.join("、")}`,
+      run.session_id,
+      thinkingMode,
+      executionMode,
+    );
+  }
+
   return (
     <div className="chat-view-stack">
       <div className="view-heading chat-view-heading">
         <div>
           <span className="section-kicker">AGENT WORKSPACE</span>
           <h2>Agent 对话</h2>
-          <p>围绕同一个会话连续提问；过程区显示公开执行阶段与全链路 Trace，模型隐藏链式思维不展示。</p>
+          <p>轻量问题直接回答；复杂任务自动列出 Todos，Plan 由你确认后再执行。</p>
         </div>
         <div className="chat-heading-status" role="status" aria-live="polite">
           <span className={`status-dot ${mode}`} />
@@ -3736,7 +4365,7 @@ function ChatWorkspace({
         </div>
       </div>
 
-      <div className={`chat-workspace ${detailsOpen ? "details-visible" : "details-collapsed"}`}>
+      <div className={`chat-workspace ${detailsOpen ? "details-visible" : "details-collapsed"} ${taskRailVisible ? "task-rail-visible" : ""}`}>
         <aside className="chat-sidebar" aria-label="会话侧栏">
           <div className="chat-sidebar-head">
             <div><strong>对话</strong><span>{sessionGroups.length} 个会话</span></div>
@@ -3783,7 +4412,7 @@ function ChatWorkspace({
             </div>
             <button className="button button-secondary chat-details-toggle" onClick={() => setDetailsOpen((current) => !current)} aria-expanded={detailsOpen}>
               {detailsOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
-              {detailsOpen ? "收起详情" : "运行详情"}
+              {detailsOpen ? "收起 Trace" : selectedRun ? "查看 Trace" : "运行详情"}
             </button>
           </header>
 
@@ -3801,16 +4430,29 @@ function ChatWorkspace({
                   <div className={`chat-message assistant-message ${isSelected ? "selected" : ""}`}>
                     <span className="chat-agent-avatar"><Bot size={17} /></span>
                     <div className="chat-message-bubble">
-                      <div className="chat-message-meta"><strong>{agent?.name || run.agent_id}</strong><span className={`chat-message-status ${run.status}`}><span className="chat-message-status-dot" />{statusLabel(run.status)}</span><small>{formatTime(run.created_at)}</small></div>
-                      {run.status === "succeeded" && <ChatOutput value={run.output || (isSelected ? streamOutput : "") || "Agent 没有返回文本结果。"} />}
+                      <div className="chat-message-meta"><strong>{agent?.name || run.agent_id}</strong><span className={`chat-message-status ${run.status}`}><span className="chat-message-status-dot" />{statusLabel(run.status)}</span>{run.metrics?.execution_mode === "plan" && <span className="chat-message-mode plan">计划模式</span>}<small>{formatTime(run.created_at)}</small></div>
+                      {run.status === "succeeded" && (run.plan ? <div className="chat-plan-intro"><Workflow size={14} /><span>计划已生成，先审阅步骤；批准后才会开始执行。</span></div> : <ChatOutput value={run.output || (isSelected ? streamOutput : "") || "Agent 没有返回文本结果。"} />)}
                       {(run.status === "running" || run.status === "queued") && <>
                         {(isSelected && streamOutput) ? <ChatOutput value={streamOutput} streaming /> : null}
                         {(!isSelected || streamEvents.length === 0) && <div className="chat-running" role="status" aria-live="polite"><span className="status-dot running" />{isSelected && streamProgress ? streamProgress.message : "Agent 正在处理这条消息…"}{isSelected && streamProgress?.phase ? <small>{streamProgress.phase}</small> : null}</div>}
                       </>}
                       {run.status === "failed" && <div className="chat-error"><OctagonAlert size={16} /><span>{run.error || "运行失败，未返回详细原因。"}</span></div>}
                       {run.status === "cancelled" && <p className="chat-muted">这次运行已取消，可以保留原消息并重新尝试。</p>}
-                      {isSelected && streamEvents.length > 0 && <PublicReasoningPanel key={`chat-reasoning-${run.id}`} events={streamEvents} plugins={plugins} agents={agents} compact />}
-                      <div className="chat-message-foot"><code>{run.id}</code><button onClick={() => { onResourceSelect(run.id); setDetailsOpen(true); }}>查看运行详情 <ChevronRight size={13} /></button>{run.status === "failed" && <button onClick={() => void retrySelected()}><RotateCcw size={13} /> 重试</button>}</div>
+                      {run.plan && <PlanCard
+                        plan={run.plan}
+                        compact
+                        busy={planBusy}
+                        onSave={(payload) => onEditPlan(run.id, payload).then(() => undefined)}
+                        onApprove={async (plan) => {
+                          const execution = await onApprovePlan(plan);
+                          onResourceSelect(execution.id);
+                        }}
+                        onReject={onRejectPlan}
+                      />}
+                      {run.todo && <TaskMonitor run={run} agent={agent} plugins={plugins} progress={isSelected ? streamProgress : null} compact />}
+                      {run.choice && <ChoiceCard key={`${run.id}-${run.choice.prompt_id}-${run.choice.status}-${run.choice.selected_ids.join(",")}`} choice={run.choice} onResolve={(choice, action, selectedIds) => handleChoice(run, choice, action, selectedIds)} />}
+                      {isSelected && streamEvents.length > 0 && <PublicReasoningPanel key={`chat-reasoning-${run.id}-${run.status}`} events={streamEvents} plugins={plugins} agents={agents} compact />}
+                      <div className="chat-message-foot"><span>{formatTime(run.created_at)} · {statusLabel(run.status)}</span><button onClick={() => { onResourceSelect(run.id); setDetailsOpen(true); }}>查看执行详情 <ChevronRight size={13} /></button>{run.status === "failed" && <button onClick={() => void retrySelected()}><RotateCcw size={13} /> 重试</button>}</div>
                     </div>
                   </div>
                 </div>
@@ -3819,7 +4461,7 @@ function ChatWorkspace({
                 <div className="chat-welcome">
                   <span className="chat-welcome-icon"><Sparkles size={24} /></span>
                   <h3>开始和 Agent 对话</h3>
-                  <p>选择一个 Agent，描述目标或问题。每次发送都会生成真实 Run，并在右侧保留模型与工具事件。</p>
+                  <p>选择一个 Agent，描述目标或问题。简单问题直接回答，复杂任务会自动显示任务清单。</p>
                   {!selectedAgent && <button className="button button-secondary" onClick={() => setLocalError("请先在左侧选择可运行的 Agent")}>选择 Agent</button>}
                 </div>
               )}
@@ -3828,14 +4470,47 @@ function ChatWorkspace({
           </div>
 
           <form className="chat-composer" onSubmit={sendMessage}>
+            {(activeRun || busy) && <div className="chat-composer-status" role="status" aria-live="polite">
+              <span className="chat-composer-status-copy"><span className="status-dot running" />{streamProgress?.message || (busy ? "正在创建运行…" : "Agent 正在处理…")}</span>
+              {selectedRun && activeRun && <button type="button" className="chat-composer-stop" onClick={() => onCancel(selectedRun.id)}><Square size={12} fill="currentColor" />停止</button>}
+            </div>}
             <textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              onCompositionStart={() => {
+                composingRef.current = true;
+                compositionEndedRef.current = false;
+              }}
+              onCompositionEnd={() => {
+                composingRef.current = false;
+                compositionEndedRef.current = true;
+                window.setTimeout(() => {
+                  compositionEndedRef.current = false;
+                }, 0);
+              }}
               onKeyDown={(event) => {
-                if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
-                if (!event.metaKey && !event.ctrlKey) return;
+                if (event.key !== "Enter") return;
+                if (
+                  composingRef.current
+                  || compositionEndedRef.current
+                  || event.nativeEvent.isComposing
+                  || event.nativeEvent.keyCode === 229
+                ) return;
+                if (event.metaKey || event.ctrlKey) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                  return;
+                }
+
                 event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
+                const target = event.currentTarget;
+                const start = target.selectionStart ?? target.value.length;
+                const end = target.selectionEnd ?? start;
+                setDraft(`${target.value.slice(0, start)}\n${target.value.slice(end)}`);
+                window.requestAnimationFrame(() => {
+                  if (document.activeElement !== target) return;
+                  target.setSelectionRange(start + 1, start + 1);
+                });
               }}
               placeholder={selectedAgent ? `给 ${selectedAgent.name} 发送消息…` : "请先选择 Agent"}
               aria-label="输入消息"
@@ -3848,6 +4523,7 @@ function ChatWorkspace({
                 <span>思考模式</span>
                 <select
                   aria-label="思考模式"
+                  title={`${thinkingModeHint(thinkingMode)} · 不展示原始思考内容`}
                   value={thinkingMode}
                   onChange={(event) => setThinkingMode(event.target.value as ThinkingMode)}
                   disabled={busy || activeRun || mode !== "live" || !selectedAgent}
@@ -3856,13 +4532,13 @@ function ChatWorkspace({
                     <option value={option.value} key={option.value}>{option.label}</option>
                   ))}
                 </select>
-                <small>{thinkingModeHint(thinkingMode)} · 不展示原始思考内容</small>
               </label>
               <label className="execution-mode-picker">
                 <Workflow size={14} />
-                <span>运行方式</span>
+                <span title="运行方式（不是模型）">执行方式</span>
                 <select
                   aria-label="运行方式"
+                  title={executionModeHint(executionMode)}
                   value={executionMode}
                   onChange={(event) => setExecutionMode(event.target.value as ExecutionMode)}
                   disabled={busy || activeRun || mode !== "live" || !selectedAgent}
@@ -3871,14 +4547,25 @@ function ChatWorkspace({
                     <option value={option.value} key={option.value}>{option.label}</option>
                   ))}
                 </select>
-                <small>{executionModeHint(executionMode)}{executionMode === "plan" ? " · 不执行外部副作用" : ""}</small>
               </label>
-              <span className="thinking-mode-note">仅影响下一次 Run</span>
+              {executionMode === "plan" && <span className="composer-plan-badge"><Workflow size={12} />Plan · 先审阅</span>}
+              <span className="thinking-mode-note">仅影响下一次发送</span>
             </div>
-            <div className="chat-composer-foot"><span>Enter 换行 · ⌘/Ctrl + Enter 发送 · 会话 ID 仅用于 Run 聚合</span><button className="button button-primary" type="submit" disabled={busy || activeRun || !draft.trim() || mode !== "live" || !selectedAgent}><Send size={15} />{busy ? "发送中…" : activeRun ? "运行中…" : "发送"}</button></div>
+            {executionMode === "plan" && <div className="chat-mode-indicator" role="status"><Workflow size={14} /><span><strong>计划模式已选</strong><small>先生成可修改计划，批准后才会创建执行 Run。</small></span></div>}
+            <div className="chat-composer-foot"><span>Enter 换行 · ⌘/Ctrl + Enter 发送</span><button className="button button-primary" type="submit" disabled={busy || activeRun || !draft.trim() || mode !== "live" || !selectedAgent}><Send size={15} />{busy ? "发送中…" : activeRun ? "运行中…" : executionMode === "plan" ? "生成计划" : "发送"}</button></div>
             {(localError || stream.error) && <div className="form-error chat-form-error" role="alert"><OctagonAlert size={15} /><span>{localError || stream.error}</span></div>}
           </form>
         </section>
+
+        {taskRailVisible && selectedRun && <aside className="chat-task-rail" aria-label="任务监视器">
+          <TaskMonitor
+            run={selectedRun}
+            agent={selectedAgent}
+            plugins={plugins}
+            progress={streamProgress}
+            onOpenTrace={() => setDetailsOpen(true)}
+          />
+        </aside>}
 
         <aside className="chat-inspector panel" aria-label="运行详情">
           <div className="chat-inspector-head"><div><span className="section-kicker">RUN INSPECTOR</span><h3>运行详情</h3></div><button className="icon-button" onClick={() => setDetailsOpen(false)} aria-label="收起运行详情"><PanelRightClose size={17} /></button></div>
@@ -3891,7 +4578,19 @@ function ChatWorkspace({
               <div className="chat-run-code"><span>思考模式</span><code>{thinkingModeLabel(selectedRun.metrics?.thinking_mode || thinkingMode)}</code></div>
               <div className="chat-run-code"><span>运行方式</span><code>{executionModeLabel(selectedRun.metrics?.execution_mode || executionMode)}</code></div>
               {((selectedRun.metrics?.execution_mode || executionMode) === "plan") && <div className="chat-plan-notice"><Workflow size={15} /><span>计划模式只生成可审阅计划，不调用工具或子 Agent。</span></div>}
-              <PublicReasoningPanel events={streamEvents} plugins={plugins} agents={agents} />
+              {selectedRun.plan && <PlanCard
+                plan={selectedRun.plan}
+                busy={planBusy}
+                onSave={(payload) => onEditPlan(selectedRun.id, payload).then(() => undefined)}
+                onApprove={async (plan) => {
+                  const execution = await onApprovePlan(plan);
+                  onResourceSelect(execution.id);
+                }}
+                onReject={onRejectPlan}
+              />}
+              <TaskMonitor run={selectedRun} agent={selectedAgent} plugins={plugins} progress={streamProgress} />
+              {selectedRun.choice && <ChoiceCard key={`${selectedRun.id}-${selectedRun.choice.prompt_id}-${selectedRun.choice.status}-${selectedRun.choice.selected_ids.join(",")}`} choice={selectedRun.choice} onResolve={(choice, action, selectedIds) => handleChoice(selectedRun, choice, action, selectedIds)} />}
+              <PublicReasoningPanel key={`reasoning-${selectedRun.id}-${selectedRun.status}`} events={streamEvents} plugins={plugins} agents={agents} />
               {streamProgress && (selectedRun.status === "running" || selectedRun.status === "queued") && <div className="chat-progress-card"><span className="status-dot running" /><div><strong>{streamProgress.message}</strong><small>{streamProgress.phase} · Agent {streamProgress.agentId}</small></div></div>}
               <div className="chat-inspector-actions">{selectedRun.status === "running" && <button className="button button-danger" onClick={() => onCancel(selectedRun.id)}><Square size={13} fill="currentColor" /> 取消运行</button>}{selectedRun.status === "failed" && <button className="button button-secondary" onClick={() => void retrySelected()}><RotateCcw size={13} /> 重试</button>}</div>
               <div className="chat-event-list">
@@ -3946,6 +4645,7 @@ function TracePanel({
   const tokenEvent = [...events].reverse().find((event) => event.type === "budget.updated");
   const tokenPayload = tokenEvent?.payload || {};
   const tokenValue = Number(tokenPayload.tokens || run.metrics?.tokens || 0);
+  const cacheHitValue = totalReportedCacheHits(events);
   const traceId = String(run.metrics?.trace_id || events.find((event) => event.trace_id)?.trace_id || "历史事件未携带");
   const stages = traceStageSummaries(events, plugins, agents, nowMs);
   const maxStageDuration = Math.max(1, ...stages.map((stage) => stage.duration));
@@ -3971,6 +4671,7 @@ function TracePanel({
         <div className="trace-stat"><small>模型调用</small><strong>{modelCalls}</strong></div>
         <div className="trace-stat"><small>工具 / 委派</small><strong>{toolCalls} / {delegations}</strong></div>
         <div className="trace-stat"><small>Token</small><strong>{tokenValue || "—"}</strong></div>
+        <div className="trace-stat"><small>缓存命中</small><strong>{formatTokenCount(cacheHitValue)}</strong></div>
       </div>
       <div className="trace-waterfall" aria-label="阶段耗时分解">
         <div className="trace-waterfall-head"><strong>阶段耗时</strong><span>{activeStage ? `${activeStage.label} · ${durationLabel(activeStage.duration)}` : "已完成 · 可展开查看事件"}</span></div>
@@ -3983,7 +4684,7 @@ function TracePanel({
           </div>
         )) : <div className="trace-waterfall-empty">等待模型、工具或 Agent 阶段事件…</div>}
       </div>
-      <PublicReasoningPanel events={events} plugins={plugins} agents={agents} />
+      <PublicReasoningPanel key={`trace-reasoning-${run.id}-${run.status}`} events={events} plugins={plugins} agents={agents} />
       <div className="trace-filter-bar" role="toolbar" aria-label="Trace 事件筛选">
         <Filter size={14} color="var(--muted)" />
         {filterLabels.map((item) => <button type="button" key={item.id} className={filter === item.id ? "active" : ""} onClick={() => setFilter(item.id)}>{item.label}</button>)}
@@ -4047,6 +4748,10 @@ function RunsView({
   mode,
   requestHeaders,
   onRunProjection,
+  onEditPlan,
+  onApprovePlan,
+  onRejectPlan,
+  planBusy,
 }: {
   runs: RunRecord[];
   agents: AgentSpec[];
@@ -4059,6 +4764,10 @@ function RunsView({
   mode: ConnectionMode;
   requestHeaders: () => HeadersInit;
   onRunProjection: (id: string, patch: Partial<RunRecord>) => void;
+  onEditPlan: (runId: string, payload: PlanEditPayload) => Promise<ExecutionPlan>;
+  onApprovePlan: (plan: ExecutionPlan) => Promise<RunRecord>;
+  onRejectPlan: (plan: ExecutionPlan) => Promise<void>;
+  planBusy: boolean;
 }) {
   const [selectedId, setSelectedId] = useState<string>(resourceId || runs[0]?.id || "");
   const [runQuery, setRunQuery] = useState("");
@@ -4145,7 +4854,7 @@ function RunsView({
         });
         if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") {
           terminal = true;
-          onRunProjection(selectedRunId, { status: run.status, output: run.output, error: run.error, finished_at: run.finished_at, metrics: run.metrics });
+          onRunProjection(selectedRunId, { status: run.status, output: run.output, error: run.error, plan: run.plan, todo: run.todo, choice: run.choice, finished_at: run.finished_at, metrics: run.metrics });
           setEventHistory((current) => ({ ...current, status: "complete" }));
         }
       } catch (error) {
@@ -4168,13 +4877,16 @@ function RunsView({
             headers: requestHeaders(),
             signal: controller.signal,
           });
-          onRunProjection(selectedRunId, {
-            status: run.status,
-            output: run.output,
-            error: run.error,
-            finished_at: run.finished_at,
-            metrics: run.metrics,
-          });
+            onRunProjection(selectedRunId, {
+              status: run.status,
+              output: run.output,
+              error: run.error,
+              plan: run.plan,
+              todo: run.todo,
+              choice: run.choice,
+              finished_at: run.finished_at,
+              metrics: run.metrics,
+            });
           const history = await apiRequest<RunEvent[]>(
             `${apiBase}/runs/${selectedRunId}/events/history?after=${cursor}`,
             { headers: requestHeaders(), signal: controller.signal },
@@ -4321,6 +5033,18 @@ function RunsView({
                 <div><small>思考模式</small><strong>{thinkingModeLabel(selected.metrics?.thinking_mode)}</strong></div>
               </div>
               {selected.metrics?.execution_mode === "plan" && <div className="chat-plan-notice run-plan-notice"><Workflow size={15} /><span>计划模式：只生成可审阅计划，不调用工具或子 Agent。</span></div>}
+              {selected.plan && <PlanCard
+                plan={selected.plan}
+                busy={planBusy}
+                onSave={(payload) => onEditPlan(selected.id, payload).then(() => undefined)}
+                onApprove={async (plan) => {
+                  const execution = await onApprovePlan(plan);
+                  setSelectedId(execution.id);
+                  onResourceSelect(execution.id);
+                }}
+                onReject={onRejectPlan}
+              />}
+              <TaskMonitor run={selected} agent={agents.find((item) => item.id === selected.agent_id)} plugins={plugins} />
               <TracePanel
                 key={selected.id}
                 run={selected}
@@ -4979,6 +5703,62 @@ function MountToolScopeEditor({
   );
 }
 
+function MountRevisionField({
+  agentId,
+  revision,
+  apiBase,
+  requestHeaders,
+  onChange,
+}: {
+  agentId: string;
+  revision?: number;
+  apiBase: string;
+  requestHeaders: () => HeadersInit;
+  onChange: (revision: number | undefined) => void;
+}) {
+  const [items, setItems] = useState<AgentRevisionInfo[]>([]);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    void apiRequest<AgentRevisionInfo[]>(`${apiBase.replace(/\/$/, "")}/agents/${agentId}/revisions`, {
+      headers: requestHeaders(),
+      signal: AbortSignal.timeout(2500),
+    }).then((records) => {
+      if (active) setItems(records);
+    }).catch((caught: unknown) => {
+      if (active) setError(problemMessage(caught, "版本列表暂不可用"));
+    });
+    return () => {
+      active = false;
+    };
+  }, [agentId, apiBase, requestHeaders]);
+
+  const visibleItems = items.filter((item, index, all) => (
+    all.findIndex((candidate) => candidate.revision === item.revision) === index
+  ));
+  return (
+    <label className="form-field mount-revision-field">
+      <span>子 Agent 版本</span>
+      <select
+        aria-label={`${agentId} 子 Agent 版本`}
+        value={revision === undefined ? "latest" : String(revision)}
+        onChange={(event) => onChange(
+          event.target.value === "latest" ? undefined : Number(event.target.value),
+        )}
+      >
+        <option value="latest">latest（默认）</option>
+        {visibleItems.map((item) => (
+          <option value={String(item.revision)} key={item.revision}>
+            rev {item.revision} · {item.status === "draft" ? "草稿" : "已发布"}{item.is_latest ? " · latest" : ""}
+          </option>
+        ))}
+      </select>
+      <small>{error || "留空时在子调用开始时解析子 Agent 的 latest。"}</small>
+    </label>
+  );
+}
+
 function AgentDrawer({
   agent,
   agents,
@@ -5089,12 +5869,16 @@ function NewAgentModal({
   agents,
   plugins,
   modelConfigs,
+  apiBase,
+  requestHeaders,
   onClose,
   onCreate,
 }: {
   agents: AgentSpec[];
   plugins: PluginManifest[];
   modelConfigs: ModelConfig[];
+  apiBase: string;
+  requestHeaders: () => HeadersInit;
   onClose: () => void;
   onCreate: (form: NewAgentForm) => Promise<void>;
 }) {
@@ -5107,8 +5891,8 @@ function NewAgentModal({
   const [systemPrompt, setSystemPrompt] = useState("你是一个可靠、可审计的专业 Agent。");
   const [modelConfigId, setModelConfigId] = useState(availableModelConfigs[0]?.id || "");
   const [children, setChildren] = useState<ChildMount[]>([]);
-  const [tools, setTools] = useState<ToolBindingSpec[]>([]);
-  const [toolConfigTexts, setToolConfigTexts] = useState<string[]>([]);
+  const [tools, setTools] = useState<ToolBindingSpec[]>(() => defaultAgentToolBindings(plugins));
+  const [toolConfigTexts, setToolConfigTexts] = useState<string[]>(() => defaultAgentToolBindings(plugins).map(() => "{}"));
   const [memoryPluginId, setMemoryPluginId] = useState(
     memoryPlugins[0]?.id || "memory.in_process",
   );
@@ -5120,12 +5904,12 @@ function NewAgentModal({
   const [middlewareConfigTexts, setMiddlewareConfigTexts] = useState<string[]>([]);
   const [enabled, setEnabled] = useState(true);
   const [policy, setPolicy] = useState<AgentSpec["policy"]>({
-    max_steps: 12,
-    max_depth: 4,
-    max_tool_calls: 20,
-    max_parallel_children: 4,
-    timeout_seconds: 120,
-    token_budget: 24000,
+    max_steps: 20,
+    max_depth: 6,
+    max_tool_calls: 64,
+    max_parallel_children: 6,
+    timeout_seconds: 300,
+    token_budget: 64000,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -5224,8 +6008,8 @@ function NewAgentModal({
               <p>工具、记忆、中间件和子 Agent 都按插件 ID 与策略范围保存。</p>
             </div>
           <fieldset className="child-picker tool-picker">
-            <legend>工具绑定 <span>可选</span></legend>
-            <p>工具通过稳定插件 ID 绑定；可为每个绑定配置调用别名与权限策略。</p>
+            <legend>工具绑定 <span>默认已选只读基础工具</span></legend>
+            <p>新 Agent 默认挂载 Web 搜索、网页访问、公开 JSON、RSS / Atom、计算器和 UTC 时间；沙箱执行需要显式添加并配置，默认不挂载。</p>
             <div className="picker-grid">
               {toolPlugins.map((plugin) => {
                 const selected = tools.some((tool) => tool.plugin_id === plugin.id);
@@ -5430,7 +6214,7 @@ function NewAgentModal({
           </fieldset>
           <fieldset className="child-picker">
             <legend>挂载子 Agent <span>可选</span></legend>
-            <p>挂载会钉住修订，并以受治理的 delegate 工具暴露给父 Agent。</p>
+            <p>可选择子 Agent 的历史 revision；留空时调用会跟随子 Agent 的 latest。</p>
             <div className="picker-grid">
               {agents.map((agent) => {
                 const selected = children.some((mount) => mount.agent_id === agent.id);
@@ -5452,8 +6236,7 @@ function NewAgentModal({
                                   .slice(0, 31) || `child_${current.length + 1}`,
                               agent_id: agent.id,
                               description: agent.description || "已挂载子 Agent",
-                              revision: agent.revision,
-                              max_concurrency: 2,
+                              max_concurrency: 4,
                               input_template: "{input}",
                               allowed_tools: null,
                             },
@@ -5461,7 +6244,7 @@ function NewAgentModal({
                     ))}
                   >
                     <span className="node-avatar blue">{agentInitials(agent.name)}</span>
-                    <span><strong>{agent.name}</strong><small>rev {agent.revision}</small></span>
+                    <span><strong>{agent.name}</strong><small>latest · rev {agent.revision}</small></span>
                     <span className="checkbox-mark">{selected && <Check size={14} />}</span>
                   </button>
                 );
@@ -5493,24 +6276,15 @@ function NewAgentModal({
                           )))}
                         />
                       </label>
-                      <label className="form-field">
-                        <span>固定修订</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={mount.revision ?? ""}
-                          onChange={(event) => setChildren((current) => current.map((item, index) => (
-                            index === mountIndex
-                              ? {
-                                  ...item,
-                                  revision: event.target.value
-                                    ? Math.max(1, Number(event.target.value))
-                                    : undefined,
-                                }
-                              : item
-                          )))}
-                        />
-                      </label>
+                      <MountRevisionField
+                        agentId={mount.agent_id}
+                        revision={mount.revision}
+                        apiBase={apiBase}
+                        requestHeaders={requestHeaders}
+                        onChange={(revision) => setChildren((current) => current.map((item, index) => (
+                          index === mountIndex ? { ...item, revision } : item
+                        )))}
+                      />
                       <label className="form-field">
                         <span>最大并发</span>
                         <input
@@ -5613,7 +6387,7 @@ function NewAgentModal({
             </div>
             <div className="readiness-issue-list">
               <div><CheckCircle2 size={16} /><strong>模型配置已限定为已验证并启用的连接</strong><span>Agent 不会保存 Provider SDK 对象或明文凭证。</span></div>
-              <div><ShieldCheck size={16} /><strong>创建后生成 revision 1</strong><span>后续编辑会发布新修订，已有 Instance 可继续钉住旧修订。</span></div>
+              <div><ShieldCheck size={16} /><strong>创建后生成 revision 1</strong><span>后续编辑会发布新修订，调用时仍可选择历史修订。</span></div>
             </div>
           </section>}
           {error && <div className="form-error"><OctagonAlert size={16} /> {error}</div>}
@@ -5636,15 +6410,23 @@ function EditAgentModal({
   agents,
   plugins,
   modelConfigs,
+  apiBase,
+  requestHeaders,
   onClose,
-  onSave,
+  onSaveDraft,
+  onPublish,
+  onRollback,
 }: {
   agent: AgentSpec;
   agents: AgentSpec[];
   plugins: PluginManifest[];
   modelConfigs: ModelConfig[];
+  apiBase: string;
+  requestHeaders: () => HeadersInit;
   onClose: () => void;
-  onSave: (form: AgentConfigurationForm) => Promise<void>;
+  onSaveDraft: (form: AgentConfigurationForm) => Promise<void>;
+  onPublish: () => Promise<void>;
+  onRollback: (revision: number) => Promise<void>;
 }) {
   const toolPlugins = plugins.filter(
     (plugin) => plugin.kind === "tool" && plugin.available,
@@ -5685,7 +6467,78 @@ function EditAgentModal({
   const [policy, setPolicy] = useState<AgentSpec["policy"]>(agent.policy);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [revisions, setRevisions] = useState<AgentRevisionInfo[]>([]);
+  const [revisionLoading, setRevisionLoading] = useState(true);
+  const [revisionError, setRevisionError] = useState("");
+  const [selectedRevision, setSelectedRevision] = useState(agent.revision);
   const dialogRef = useDialogAccessibility(onClose);
+  const firstMemoryPluginId = memoryPlugins[0]?.id || "memory.in_process";
+
+  function applySnapshot(snapshot: AgentSpec) {
+    setName(snapshot.name);
+    setDescription(snapshot.description);
+    setSystemPrompt(snapshot.system_prompt);
+    setModelConfigId(snapshot.model.model_config_id);
+    setTools(snapshot.tools);
+    setToolConfigTexts(snapshot.tools.map((tool) => JSON.stringify(tool.config || {}, null, 2)));
+    setChildren(snapshot.children);
+    setMemoryPluginId(snapshot.memory?.plugin_id || firstMemoryPluginId);
+    setMemoryEnabled(snapshot.memory?.enabled !== false);
+    setMemoryConfigText(JSON.stringify(snapshot.memory?.config || {}, null, 2));
+    setMiddlewares(snapshot.middlewares || []);
+    setMiddlewareConfigTexts((snapshot.middlewares || []).map(
+      (middleware) => JSON.stringify(middleware.config || {}, null, 2),
+    ));
+    setEnabled(snapshot.enabled);
+    setPolicy(snapshot.policy);
+    setSelectedRevision(snapshot.revision);
+  }
+
+  useEffect(() => {
+    let active = true;
+    void apiRequest<AgentRevisionInfo[]>(`${apiBase.replace(/\/$/, "")}/agents/${agent.id}/revisions`, {
+      headers: requestHeaders(),
+      signal: AbortSignal.timeout(2500),
+    }).then((items) => {
+      if (active) {
+        setRevisions(items);
+        setRevisionError("");
+      }
+    }).catch((caught: unknown) => {
+      if (active) setRevisionError(problemMessage(caught, "版本历史加载失败"));
+    }).finally(() => {
+      if (active) setRevisionLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [agent, apiBase, requestHeaders]);
+
+  async function runVersionAction(action: () => Promise<void>, fallback: string) {
+    setError("");
+    setBusy(true);
+    try {
+      await action();
+    } catch (caught) {
+      setError(problemMessage(caught, fallback));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handlePublish() {
+    await runVersionAction(onPublish, "发布草稿失败");
+  }
+
+  async function handleRollback(revision: number) {
+    await runVersionAction(
+      () => onRollback(revision),
+      `回滚到 rev ${revision} 失败`,
+    );
+  }
+
+  const currentRevisionInfo = revisions.find((item) => item.revision === agent.revision);
+  const currentStatus = currentRevisionInfo?.status || "draft";
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -5706,7 +6559,7 @@ function EditAgentModal({
           `${middleware.plugin_id} 配置`,
         ),
       }));
-      await onSave({
+      await onSaveDraft({
         name,
         description,
         systemPrompt,
@@ -5723,7 +6576,7 @@ function EditAgentModal({
         policy,
       });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "发布修订失败");
+      setError(caught instanceof Error ? caught.message : "保存草稿失败");
     } finally {
       setBusy(false);
     }
@@ -5741,14 +6594,24 @@ function EditAgentModal({
       <form className="modal-card new-agent-modal" onSubmit={submit}>
         <div className="modal-head">
           <div>
-            <span className="section-kicker">PUBLISH REVISION · REV {agent.revision}</span>
+            <span className="section-kicker">AGENT VERSION WORKSPACE · REV {agent.revision}</span>
             <h2 id="edit-agent-title">编辑 Agent 配置</h2>
+            <div className="agent-editor-status-line">
+              <span className={`version-status-pill ${currentStatus}`}>
+                <span className="status-mini-dot" />
+                {currentStatus === "draft" ? "草稿" : "已发布"}
+              </span>
+              {currentRevisionInfo?.is_latest && <span className="latest-tag"><GitBranch size={12} /> latest</span>}
+              <span className="agent-editor-status-copy">保存会生成新的草稿 revision，发布不会覆盖历史版本</span>
+            </div>
           </div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="关闭">
             <X size={19} />
           </button>
         </div>
         <div className="modal-body">
+          <div className="agent-editor-layout">
+            <div className="agent-editor-main">
           <div className="form-row">
             <label className="form-field">
               <span>名称</span>
@@ -5980,7 +6843,7 @@ function EditAgentModal({
           </fieldset>
           <fieldset className="child-picker">
             <legend>挂载子 Agent</legend>
-            <p>修改挂载会随本次发布创建新修订；已固定旧修订的实例不受影响。</p>
+            <p>可选择子 Agent 的历史 revision；留空时跟随子 Agent 的 latest。本次修改会创建新修订，已提交的 Run 不受影响。</p>
             <div className="picker-grid">
               {agents.filter((item) => item.id !== agent.id).map((candidate) => {
                 const selected = children.some((mount) => mount.agent_id === candidate.id);
@@ -6002,8 +6865,7 @@ function EditAgentModal({
                                   .slice(0, 31) || `child_${current.length + 1}`,
                               agent_id: candidate.id,
                               description: candidate.description || "已挂载子 Agent",
-                              revision: candidate.revision,
-                              max_concurrency: 2,
+                              max_concurrency: 4,
                               input_template: "{input}",
                               allowed_tools: null,
                             },
@@ -6011,7 +6873,7 @@ function EditAgentModal({
                     ))}
                   >
                     <span className="node-avatar blue">{agentInitials(candidate.name)}</span>
-                    <span><strong>{candidate.name}</strong><small>rev {candidate.revision}</small></span>
+                    <span><strong>{candidate.name}</strong><small>latest · rev {candidate.revision}</small></span>
                     <span className="checkbox-mark">{selected && <Check size={14} />}</span>
                   </button>
                 );
@@ -6043,24 +6905,15 @@ function EditAgentModal({
                           )))}
                         />
                       </label>
-                      <label className="form-field">
-                        <span>固定修订</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={mount.revision ?? ""}
-                          onChange={(event) => setChildren((current) => current.map((item, index) => (
-                            index === mountIndex
-                              ? {
-                                  ...item,
-                                  revision: event.target.value
-                                    ? Math.max(1, Number(event.target.value))
-                                    : undefined,
-                                }
-                              : item
-                          )))}
-                        />
-                      </label>
+                      <MountRevisionField
+                        agentId={mount.agent_id}
+                        revision={mount.revision}
+                        apiBase={apiBase}
+                        requestHeaders={requestHeaders}
+                        onChange={(revision) => setChildren((current) => current.map((item, index) => (
+                          index === mountIndex ? { ...item, revision } : item
+                        )))}
+                      />
                       <label className="form-field">
                         <span>最大并发</span>
                         <input
@@ -6119,142 +6972,67 @@ function EditAgentModal({
             </div>
           </fieldset>
           {error && <div className="form-error"><OctagonAlert size={16} /> {error}</div>}
-        </div>
-        <div className="modal-actions">
-          <button type="button" className="button button-ghost" onClick={onClose}>取消</button>
-          <button className="button button-primary" disabled={busy || !name.trim()}>
-            {busy ? <LoaderCircle size={16} className="spinning" /> : <GitBranch size={16} />}
-            发布 rev {agent.revision + 1}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-function NewInstanceModal({
-  agents,
-  onClose,
-  onCreate,
-}: {
-  agents: AgentSpec[];
-  onClose: () => void;
-  onCreate: (form: {
-    name: string;
-    agentId: string;
-    environment: string;
-    maxConcurrency: number;
-  }) => Promise<void>;
-}) {
-  const [name, setName] = useState("");
-  const [agentId, setAgentId] = useState(agents[0]?.id || "");
-  const [environment, setEnvironment] = useState("local");
-  const [maxConcurrency, setMaxConcurrency] = useState(4);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const dialogRef = useDialogAccessibility(onClose);
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setError("");
-    setBusy(true);
-    try {
-      await onCreate({ name, agentId, environment, maxConcurrency });
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "实例创建失败");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div
-      ref={dialogRef}
-      className="modal-layer"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="new-instance-title"
-    >
-      <button className="modal-scrim" onClick={onClose} aria-label="关闭新建实例" />
-      <form className="modal-card run-modal" onSubmit={submit}>
-        <div className="modal-head">
-          <div>
-            <span className="section-kicker">NEW INSTANCE</span>
-            <h2 id="new-instance-title">创建运行实例</h2>
-          </div>
-          <button type="button" className="icon-button" onClick={onClose} aria-label="关闭">
-            <X size={19} />
-          </button>
-        </div>
-        <div className="modal-body">
-          <label className="form-field">
-            <span>实例名称</span>
-            <input
-              required
-              minLength={2}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="例如：研究团队 · 本地"
-            />
-          </label>
-          <label className="form-field">
-            <span>Agent 与修订</span>
-            <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
-              {agents.map((agent) => (
-                <option value={agent.id} key={agent.id}>
-                  {agent.name} · rev {agent.revision}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="form-row">
-            <label className="form-field">
-              <span>环境标签（不负责部署）</span>
-              <select
-                value={environment}
-                onChange={(event) => setEnvironment(event.target.value)}
-              >
-                <option value="local">local 标签</option>
-                <option value="container">container 标签</option>
-                <option value="cloud">cloud 标签</option>
-              </select>
-              <small>仅进入运行上下文；0.1.x 不会据此创建容器或云资源。</small>
-            </label>
-            <label className="form-field">
-              <span>最大并发</span>
-              <input
-                type="number"
-                min={1}
-                max={256}
-                value={maxConcurrency}
-                onChange={(event) =>
-                  setMaxConcurrency(
-                    Math.max(1, Math.min(256, Number(event.target.value) || 1)),
-                  )
-                }
-              />
-            </label>
-          </div>
-          <div className="run-policy-preview">
-            <div>
-              <ShieldCheck size={16} />
-              <span>
-                <strong>修订在实例上固定</strong>
-                <small>后续 Agent 发布新修订不会改变该实例的运行目标</small>
-              </span>
             </div>
-            <span>REV PINNED</span>
+            <aside className="agent-version-rail" aria-label="Agent 版本历史">
+              <div className="agent-version-rail-head">
+                <div>
+                  <span className="section-kicker">VERSION HISTORY</span>
+                  <h3>版本历史</h3>
+                </div>
+                <span className="version-count">{revisions.length}</span>
+              </div>
+              <p className="agent-version-rail-note">latest 是可移动标签；回滚只移动标签，不删除历史。</p>
+              {revisionLoading && <div className="version-history-state"><LoaderCircle size={15} className="spinning" /> 正在读取版本…</div>}
+              {revisionError && <div className="version-history-error"><OctagonAlert size={14} /> {revisionError}</div>}
+              <div className="agent-version-list">
+                {revisions.map((item) => (
+                  <div className={`agent-version-item ${item.revision === selectedRevision ? "selected" : ""}`} key={item.revision}>
+                    <button
+                      type="button"
+                      className="agent-version-select"
+                      onClick={() => applySnapshot(item.spec)}
+                    >
+                      <span className="agent-version-marker">{item.revision}</span>
+                      <span className="agent-version-copy">
+                        <strong>rev {item.revision}</strong>
+                        <small>{item.status === "draft" ? "草稿" : "已发布"} · {formatTime(item.updated_at)}</small>
+                      </span>
+                      {item.is_latest && <span className="latest-tag">latest</span>}
+                    </button>
+                    <div className="agent-version-actions">
+                      {item.revision !== agent.revision && (
+                        <button type="button" className="version-action-link" onClick={() => applySnapshot(item.spec)}>
+                          从此版本继续编辑
+                        </button>
+                      )}
+                      {!item.is_latest && (
+                        <button
+                          type="button"
+                          className="version-action-link danger"
+                          disabled={busy}
+                          onClick={() => void handleRollback(item.revision)}
+                        >
+                          回滚到此版本
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {!revisionLoading && !revisions.length && <div className="version-history-state">暂无版本历史</div>}
+              </div>
+            </aside>
           </div>
-          {error && <div className="form-error"><OctagonAlert size={16} /> {error}</div>}
         </div>
         <div className="modal-actions">
           <button type="button" className="button button-ghost" onClick={onClose}>取消</button>
-          <button
-            className="button button-primary"
-            disabled={busy || !name.trim() || !agentId}
-          >
-            {busy ? <LoaderCircle size={16} className="spinning" /> : <Plus size={16} />}
-            创建实例
+          <span className="modal-action-hint">当前编辑内容将保存为新的草稿 revision</span>
+          <button type="submit" className="button button-secondary" disabled={busy || !name.trim()}>
+            {busy ? <LoaderCircle size={16} className="spinning" /> : <GitBranch size={16} />}
+            保存草稿
+          </button>
+          <button type="button" className="button button-primary" disabled={busy || currentStatus !== "draft"} onClick={() => void handlePublish()}>
+            {busy ? <LoaderCircle size={16} className="spinning" /> : <Check size={16} />}
+            {currentStatus === "draft" ? "发布草稿" : "已发布"}
           </button>
         </div>
       </form>
@@ -6264,7 +7042,8 @@ function NewInstanceModal({
 
 function RunModal({
   agents,
-  instances,
+  apiBase,
+  requestHeaders,
   readinessIssues,
   busy,
   onClose,
@@ -6272,23 +7051,55 @@ function RunModal({
   onLaunch,
 }: {
   agents: AgentSpec[];
-  instances: AgentInstance[];
+  apiBase: string;
+  requestHeaders: () => HeadersInit;
   readinessIssues: ReadinessIssue[];
   busy: boolean;
   onClose: () => void;
   onRepair: () => void;
-  onLaunch: (id: string, kind: "agent" | "instance", input: string, thinkingMode: ThinkingMode, executionMode: ExecutionMode) => Promise<void>;
+  onLaunch: (id: string, revision: number | undefined, input: string, thinkingMode: ThinkingMode, executionMode: ExecutionMode) => Promise<void>;
 }) {
-  const options = [
-    ...instances.map((item) => ({ id: item.id, kind: "instance" as const, label: item.name, note: `${item.environment} · ×${item.max_concurrency}` })),
-    ...agents.map((item) => ({ id: item.id, kind: "agent" as const, label: item.name, note: `definition · rev ${item.revision}` })),
-  ];
-  const [target, setTarget] = useState(options[0]?.id || "");
+  const [agentId, setAgentId] = useState(agents[0]?.id || "");
+  const [revisionChoice, setRevisionChoice] = useState("latest");
+  const [revisions, setRevisions] = useState<AgentRevisionInfo[]>([]);
+  const [revisionAgentId, setRevisionAgentId] = useState("");
+  const [revisionLoading, setRevisionLoading] = useState(false);
+  const [revisionError, setRevisionError] = useState("");
   const [input, setInput] = useState("请评估当前 Agent 框架的扩展边界与主要风险");
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("auto");
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("execute");
-  const selected = options.find((item) => item.id === target);
+  const selectedAgent = agents.find((item) => item.id === agentId) || agents[0];
   const dialogRef = useDialogAccessibility(onClose);
+
+  useEffect(() => {
+    if (!selectedAgent) return undefined;
+    let active = true;
+    void apiRequest<AgentRevisionInfo[]>(`${apiBase.replace(/\/$/, "")}/agents/${selectedAgent.id}/revisions`, {
+      headers: requestHeaders(),
+      signal: AbortSignal.timeout(2500),
+    }).then((items) => {
+      if (!active) return;
+      setRevisions(items);
+      setRevisionAgentId(selectedAgent.id);
+    }).catch((error: unknown) => {
+      if (!active) return;
+      setRevisions([]);
+      setRevisionAgentId(selectedAgent.id);
+      setRevisionError(`版本列表加载失败：${problemMessage(error, "请检查控制面连接")}`);
+    }).finally(() => {
+      if (active) setRevisionLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [apiBase, requestHeaders, selectedAgent]);
+
+  const availableRevisions = revisions.filter((item, index, items) => (
+    revisionAgentId === selectedAgent?.id
+      && items.findIndex((candidate) => candidate.revision === item.revision) === index
+  ));
+  const selectedRevision = revisionAgentId === selectedAgent?.id ? revisionChoice : "latest";
+  const canRun = Boolean(selectedAgent && input.trim() && !busy);
   return (
     <div ref={dialogRef} className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="run-modal-title">
       <button className="modal-scrim" onClick={onClose} aria-label="关闭运行面板" />
@@ -6296,7 +7107,15 @@ function RunModal({
         className="modal-card run-modal"
         onSubmit={(event) => {
           event.preventDefault();
-              if (selected) void onLaunch(selected.id, selected.kind, input, thinkingMode, executionMode);
+          if (selectedAgent) {
+            void onLaunch(
+              selectedAgent.id,
+              selectedRevision === "latest" ? undefined : Number(selectedRevision),
+              input,
+              thinkingMode,
+              executionMode,
+            );
+          }
         }}
       >
         <div className="modal-head">
@@ -6304,45 +7123,71 @@ function RunModal({
           <button type="button" className="icon-button" onClick={onClose} aria-label="关闭"><X size={19} /></button>
         </div>
         <div className="modal-body">
-          {options.length ? <>
+          {agents.length ? <>
             <label className="form-field">
-              <span>运行目标</span>
-              <select value={target} onChange={(event) => setTarget(event.target.value)}>
-                {options.map((item) => <option value={item.id} key={`${item.kind}:${item.id}`}>{item.label} · {item.note}</option>)}
+              <span>Agent</span>
+              <select
+                value={selectedAgent?.id || ""}
+                onChange={(event) => {
+                  setAgentId(event.target.value);
+                  setRevisionChoice("latest");
+                  setRevisionAgentId("");
+                  setRevisions([]);
+                  setRevisionLoading(true);
+                  setRevisionError("");
+                }}
+              >
+                {agents.map((item) => <option value={item.id} key={item.id}>{item.name} · latest rev {item.revision}</option>)}
               </select>
             </label>
-                <label className="form-field">
-                  <span>任务输入</span>
-                  <textarea value={input} onChange={(event) => setInput(event.target.value)} rows={6} required />
-                </label>
-                <label className="form-field">
-                  <span>思考模式</span>
-                  <select aria-label="发起运行思考模式" value={thinkingMode} onChange={(event) => setThinkingMode(event.target.value as ThinkingMode)}>
-                    {THINKING_MODE_OPTIONS.map((option) => <option value={option.value} key={option.value}>{option.label} · {option.hint}</option>)}
-                  </select>
-                  <small>开启只请求 Provider 的思考参数；不会展示隐藏链式思维。</small>
-                </label>
-                <label className="form-field">
-                  <span>运行方式</span>
-                  <select aria-label="发起运行方式" value={executionMode} onChange={(event) => setExecutionMode(event.target.value as ExecutionMode)}>
-                    {EXECUTION_MODE_OPTIONS.map((option) => <option value={option.value} key={option.value}>{option.label} · {option.hint}</option>)}
-                  </select>
-                  <small>{executionMode === "plan" ? "计划模式只生成可审阅计划，不调用工具、子 Agent 或外部副作用。" : "执行模式允许按 Agent 权限调用工具与子 Agent。"}</small>
-                </label>
-                <div className="run-policy-preview">
+            <label className="form-field">
+              <span>版本</span>
+              <select aria-label="发起运行 Agent 版本" value={selectedRevision} onChange={(event) => setRevisionChoice(event.target.value)}>
+                <option value="latest">最新版本（默认） · rev {selectedAgent?.revision || "—"}</option>
+                {availableRevisions.map((item) => (
+                  <option value={String(item.revision)} key={item.revision}>
+                    rev {item.revision} · {item.status === "draft" ? "草稿" : "已发布"}{item.is_latest ? " · latest 标签" : " · 历史版本"}
+                  </option>
+                ))}
+              </select>
+              <small>
+                {revisionLoading
+                  ? "正在加载历史版本…"
+                  : revisionError || "latest 是 Agent 当前指向的版本；回滚后会随指针移动。"}
+              </small>
+            </label>
+            <label className="form-field">
+              <span>任务输入</span>
+              <textarea value={input} onChange={(event) => setInput(event.target.value)} rows={6} required />
+            </label>
+            <label className="form-field">
+              <span>思考模式</span>
+              <select aria-label="发起运行思考模式" value={thinkingMode} onChange={(event) => setThinkingMode(event.target.value as ThinkingMode)}>
+                {THINKING_MODE_OPTIONS.map((option) => <option value={option.value} key={option.value}>{option.label} · {option.hint}</option>)}
+              </select>
+              <small>开启只请求 Provider 的思考参数；不会展示隐藏链式思维。</small>
+            </label>
+            <label className="form-field">
+              <span>运行方式</span>
+              <select aria-label="发起运行方式" value={executionMode} onChange={(event) => setExecutionMode(event.target.value as ExecutionMode)}>
+                {EXECUTION_MODE_OPTIONS.map((option) => <option value={option.value} key={option.value}>{option.label} · {option.hint}</option>)}
+              </select>
+              <small>{executionMode === "plan" ? "计划模式只生成可审阅计划，不调用工具、子 Agent 或外部副作用。" : "执行模式允许按 Agent 权限调用工具与子 Agent。"}</small>
+            </label>
+            <div className="run-policy-preview">
               <div><ShieldCheck size={16} /><span><strong>{executionMode === "plan" ? "计划保护生效" : "保护策略生效"}</strong><small>{executionMode === "plan" ? "只生成计划，不执行工具或子 Agent" : "深度、调用、并发、超时与 token 共享预算"}</small></span></div>
               <span>{executionMode === "plan" ? "PLAN ONLY" : "FAIL CLOSED"}</span>
             </div>
           </> : <PrerequisiteGate
             title="先修复 Readiness，再发起 Run"
-            description="控制面没有返回可运行的 Agent 或 ready Instance；页面不会创建空目标或本地演示数据。"
+            description="控制面没有返回可运行的 Agent；页面不会创建空目标或本地演示数据。"
             issues={readinessIssues}
             onRepair={onRepair}
           />}
         </div>
         <div className="modal-actions">
           <button type="button" className="button button-ghost" onClick={onClose}>取消</button>
-          <button className="button button-primary" disabled={busy || !options.length || !target || !input.trim()}>
+          <button className="button button-primary" disabled={!canRun}>
             {busy ? <LoaderCircle size={16} className="spinning" /> : <Play size={16} fill="currentColor" />}
             {busy ? "运行中" : "开始运行"}
           </button>

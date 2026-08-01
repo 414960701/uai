@@ -25,6 +25,7 @@ last_reviewed: 2026-08-01
 | Model/Schema | Pydantic、JSON Schema、状态转换 | Agent/Binding 校验 | JSON Schema 实例、向后兼容测试 |
 | Unit | budget、图、工具、registry | `backend/tests/test_*.py` | Policy、checkpoint reducer、peer message |
 | Adapter contract | 所有实现遵守自有 Protocol | 部分 built-in 测试 | Storage/Bus/Provider/Workspace TCK |
+| Sandbox adapter | argv、资源、取消和清理不越界 | Docker command contract/unit test | rootless Docker、runsc/Kata/Firecracker/Wasm 与 escape/DoS 故障矩阵 |
 | Integration | API + SQLite + runtime + event | FastAPI TestClient、真实 SQLite | Postgres、queue、outbox、migration |
 | Frontend | SSR、类型、lint、真实连接状态 | Node SSR test、lint、typecheck；本轮隔离 fixture 手工旅程 | 浏览器交互与无障碍 E2E |
 | Deployment | 生产镜像、健康、无伪造数据的启动证据 | 隔离 Compose smoke、容器 doctor、空数据库与 provider 注册表 | 配置真实 provider 后的 API smoke、TLS/OIDC、备份恢复、多 worker chaos |
@@ -69,7 +70,7 @@ production-only npm high/critical audit 是发布硬门禁；完整开发工具�
 
 - 更新需要 `expected_revision`，陈旧 revision 返回冲突。
 - 历史 revision 不因最新定义更新而改变。
-- Instance 和 mount 钉住不存在的 revision 时拒绝运行。
+- Agent 和 mount 钉住不存在的 revision 时拒绝运行；未钉住的 mount 解析子 Agent 的 latest。
 
 ### Bounded nested call
 
@@ -132,8 +133,8 @@ CHG-0010 的额外合同/兼容回归集中在：
 
 - `backend/tests/test_chg0010_operability.py`：SetupStatus、Readiness、ModelConfig CAS/Secret
   生命周期、Problem Details 和空库首用前置条件；
-- `backend/tests/test_compatibility_and_endpoints.py`：endpoint policy、schema version、未知
-  高版本和 legacy profile fail-closed；
+- `backend/tests/test_compatibility_and_endpoints.py`：endpoint policy、当前 schema version、
+  未知/旧版本、旧 Agent runtime 结构和 legacy profile fail-closed；
 - `specs/current/foundation/contracts/model-config-v2.schema.json`、`setup-status.schema.json`
   和 `problem-details-v1.schema.json`：公开 DTO 形状。
 
@@ -165,7 +166,7 @@ Sites 发布成功只证明前端制品可访问；仍需单独验证部署页�
 
 - 命令与退出码；
 - core、协议、schema、插件版本；
-- migration dry-run/rollback；
+- schema compatibility、backup/rebuild remediation；
 - security 和 recovery 场景；
 - 已知未覆盖项。
 

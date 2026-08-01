@@ -1,6 +1,6 @@
 schema_version: "uai-forge.traceability/1.0"
 spec_id: "SPEC-FOUNDATION"
-reviewed_at: "2026-08-01"
+reviewed_at: "2026-08-02"
 status_definitions:
   implemented: "Current implementation and repeatable automated evidence exist."
   partial: "Some implementation exists, but one or more acceptance conditions are missing."
@@ -20,27 +20,49 @@ requirements:
     target: "0.1"
     implementation:
       - "backend/src/uai_forge/storage.py"
+      - "backend/src/uai_forge/storage.py::SQLiteRepository.rollback_agent"
     verification:
       - "backend/tests/test_storage_and_graph.py::test_agent_updates_are_versioned_and_optimistic"
+      - "backend/tests/test_storage_and_graph.py::test_latest_pointer_can_roll_back_without_reusing_revision"
   - id: "CORE-003"
-    status: "partial"
-    target: "0.2"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "docs/architecture/adr/ADR-0008-agent-revision-run-targets.md"
+      - "specs/changes/CHG-0029-agent-revision-run-targets/requirements.md"
+      - "specs/changes/CHG-0029-agent-revision-run-targets/design.md"
     implementation:
-      - "backend/src/uai_forge/models.py::AgentInstance"
-      - "backend/src/uai_forge/models.py::InstanceConfigOverrides"
-      - "backend/src/uai_forge/models.py::build_effective_agent_spec"
-      - "backend/src/uai_forge/api.py"
-      - "backend/src/uai_forge/run_manager.py"
-      - "backend/src/uai_forge/runtime.py"
+      - "backend/src/uai_forge/models.py::RunRequest"
+      - "backend/src/uai_forge/models.py::RunRecord"
+      - "backend/src/uai_forge/run_manager.py::RunManager._resolve_target"
+      - "backend/src/uai_forge/storage.py::SQLiteRepository.get_agent"
+      - "backend/src/uai_forge/storage.py::SQLiteRepository.rollback_agent"
     verification:
-      - "backend/tests/test_api.py::test_run_lifecycle_from_instance"
-      - "backend/tests/test_api.py::test_instance_override_contract_is_explicit_and_fail_closed"
-      - "backend/tests/test_runtime.py::test_instance_override_builds_restricted_effective_spec_and_runtime_context"
-      - "backend/tests/test_runtime.py::test_instance_step_override_actually_tightens_shared_run_budget"
-      - "backend/tests/test_runtime.py::test_direct_agent_run_keeps_empty_instance_context"
-    gaps:
-      - "Environment is a runtime context label, not a reconciled deployment profile"
-      - "Changing max_concurrency on an existing instance does not resize its process-local semaphore"
+      - "backend/tests/test_api.py::test_run_lifecycle_from_agent_revision"
+      - "backend/tests/test_runtime.py::test_run_can_pin_agent_revision"
+      - "backend/tests/test_runtime.py::test_run_uses_latest_agent_revision_by_default"
+      - "backend/tests/test_api.py::test_latest_pointer_rolls_back_and_next_publish_keeps_revision_sequence"
+  - id: "CORE-009"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "docs/architecture/adr/ADR-0009-agent-draft-publish-lifecycle.md"
+      - "specs/changes/CHG-0031-agent-draft-publish-editor/requirements.md"
+      - "specs/changes/CHG-0031-agent-draft-publish-editor/design.md"
+    implementation:
+      - "backend/src/uai_forge/models.py::AgentRevisionInfo"
+      - "backend/src/uai_forge/storage.py::SQLiteRepository.save_agent"
+      - "backend/src/uai_forge/storage.py::SQLiteRepository.publish_agent"
+      - "backend/src/uai_forge/storage.py::SQLiteRepository.rollback_agent"
+      - "backend/src/uai_forge/storage.py::SQLiteRepository._inspect_compatibility"
+      - "backend/src/uai_forge/api.py::create_agent_draft"
+      - "backend/src/uai_forge/api.py::publish_agent"
+      - "backend/src/uai_forge/api.py::rollback_agent"
+    verification:
+      - "backend/tests/test_api.py::test_agent_draft_publish_lifecycle_and_version_history"
+      - "backend/tests/test_api.py::test_latest_pointer_rolls_back_and_next_publish_keeps_revision_sequence"
+      - "backend/tests/test_compatibility_and_endpoints.py::test_previous_schema_version_requires_explicit_backup_and_rebuild"
+      - "backend/tests/test_compatibility_and_endpoints.py::test_unsupported_agent_lifecycle_schema_is_rejected_without_writes"
   - id: "CORE-004"
     status: "specified"
     target: "0.2"
@@ -58,8 +80,6 @@ requirements:
   - id: "CORE-006"
     status: "specified"
     target: "0.3"
-    implementation:
-      - "backend/src/uai_forge/models.py::AgentInstance"
     gaps:
       - "Desired state, observed state, generation, and controller reconciliation are not separated"
   - id: "RUN-001"
@@ -68,7 +88,7 @@ requirements:
     implementation:
       - "backend/src/uai_forge/run_manager.py"
     verification:
-      - "backend/tests/test_api.py::test_run_lifecycle_from_instance"
+      - "backend/tests/test_api.py::test_run_lifecycle_from_agent_revision"
     gaps:
       - "No waiting_input, waiting_approval, paused, CAS reducer, or persisted transition reason"
   - id: "RUN-002"
@@ -79,7 +99,7 @@ requirements:
       - "backend/src/uai_forge/storage.py"
       - "backend/src/uai_forge/api.py"
     verification:
-      - "backend/tests/test_api.py::test_run_lifecycle_from_instance"
+      - "backend/tests/test_api.py::test_run_lifecycle_from_agent_revision"
       - "backend/tests/test_runtime.py::test_subscriber_closes_replay_live_registration_window_without_loss"
       - "backend/tests/test_runtime.py::test_slow_subscriber_is_disconnected_without_failing_publish"
   - id: "RUN-003"
@@ -125,6 +145,20 @@ requirements:
       - "backend/src/uai_forge/events.py"
     verification:
       - "backend/tests/test_runtime.py::test_slow_subscriber_is_disconnected_without_failing_publish"
+  - id: "RUN-010"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0029-agent-revision-run-targets/requirements.md"
+      - "specs/changes/CHG-0029-agent-revision-run-targets/design.md"
+    implementation:
+      - "backend/src/uai_forge/models.py::RunRequest"
+      - "backend/src/uai_forge/run_manager.py::RunManager._resolve_target"
+      - "backend/src/uai_forge/storage.py::SQLiteRepository.get_agent"
+    verification:
+      - "backend/tests/test_api.py::test_run_lifecycle_from_agent_revision"
+      - "backend/tests/test_runtime.py::test_run_can_pin_agent_revision"
+      - "backend/tests/test_runtime.py::test_run_uses_latest_agent_revision_by_default"
   - id: "PROTO-001"
     status: "implemented"
     target: "0.1"
@@ -149,9 +183,10 @@ requirements:
     verification:
       - "backend/tests/test_storage_and_graph.py::test_mount_cycles_are_rejected"
       - "backend/tests/test_storage_and_graph.py::test_graph_traverses_the_pinned_revision_instead_of_latest"
+      - "backend/tests/test_storage_and_graph.py::test_graph_unpinned_mount_follows_latest_pointer"
       - "backend/tests/test_storage_and_graph.py::test_graph_detects_a_cycle_present_only_in_the_pinned_revision"
-      - "backend/tests/test_runtime.py::test_instance_validates_its_pinned_root_revision_not_invalid_latest"
-      - "backend/tests/test_runtime.py::test_instance_rejects_invalid_pinned_root_even_when_latest_is_valid"
+      - "backend/tests/test_runtime.py::test_run_can_pin_agent_revision_not_invalid_latest"
+      - "backend/tests/test_runtime.py::test_run_rejects_invalid_pinned_revision_even_when_latest_is_valid"
   - id: "MAG-002"
     status: "implemented"
     target: "0.1"
@@ -245,16 +280,6 @@ requirements:
       - "backend/src/uai_forge/storage.py"
     verification:
       - "backend/tests/test_database_configuration.py::test_runtime_config_is_versioned_and_rejects_secrets"
-  - id: "SEC-008"
-    status: "implemented"
-    target: "0.1"
-    implementation:
-      - "backend/src/uai_forge/secrets.py"
-      - "backend/src/uai_forge/providers.py"
-      - "backend/src/uai_forge/runtime.py"
-    verification:
-      - "backend/tests/test_database_configuration.py::test_model_configs_are_encrypted_and_tenant_scoped"
-      - "backend/tests/test_database_configuration.py::test_openai_model_configs_require_database_credentials"
   - id: "CFG-003"
     status: "implemented"
     target: "0.1"
@@ -342,9 +367,13 @@ requirements:
       - "backend/src/uai_forge/models.py::reject_inline_secrets"
       - "backend/src/uai_forge/api.py"
       - "backend/src/uai_forge/providers.py"
+      - "backend/src/uai_forge/secrets.py"
+      - "backend/src/uai_forge/storage.py::SQLiteRepository"
     verification:
       - "backend/tests/test_registry.py::test_binding_configs_reject_plaintext_credentials_and_unknown_provider_keys"
       - "backend/tests/test_api.py::test_patch_and_run_metadata_reject_inline_secrets_without_persisting"
+      - "backend/tests/test_database_configuration.py::test_model_configs_are_encrypted_and_tenant_scoped"
+      - "backend/tests/test_database_configuration.py::test_openai_model_configs_require_database_credentials"
     gaps:
       - "No generic SecretRef or CredentialResolver"
       - "Plugin-defined sensitive fields and logs, exceptions, events, and HTML lack an exhaustive leak test"
@@ -429,7 +458,23 @@ requirements:
       - "specs/changes/CHG-0002-control-center-editors/acceptance.md"
     gaps:
       - "Plugin config uses generic JSON objects instead of manifest-driven JSON Schema widgets"
-      - "No Instance policy override editor, revision diff, or peer session editor"
+      - "No revision diff or peer session editor"
+  - id: "UI-009"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0031-agent-draft-publish-editor/requirements.md"
+      - "specs/changes/CHG-0031-agent-draft-publish-editor/design.md"
+    implementation:
+      - "app/control-center.tsx::EditAgentModal"
+      - "app/control-center.tsx::RunModal"
+      - "app/control-center.tsx::MountRevisionField"
+      - "app/globals.css::CHG-0031 Agent draft/publish workspace"
+    verification:
+      - "tests/rendered-html.test.mjs::removes instance navigation and keeps revision run selectors"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
   - id: "UI-002"
     status: "implemented"
     target: "0.1"
@@ -437,6 +482,18 @@ requirements:
       - "app/control-center.tsx"
     verification:
       - "tests/rendered-html.test.mjs::removes starter-only infrastructure and wires the product client"
+  - id: "UI-006"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0029-agent-revision-run-targets/requirements.md"
+      - "specs/changes/CHG-0029-agent-revision-run-targets/design.md"
+    implementation:
+      - "app/control-center.tsx::RunModal"
+      - "app/control-center.tsx::launchRun"
+      - "app/control-center.tsx::EditAgentModal"
+    verification:
+      - "tests/rendered-html.test.mjs::removes instance navigation and keeps revision run selector"
   - id: "OBS-001"
     status: "partial"
     target: "0.3"
@@ -606,7 +663,7 @@ requirements:
       - "backend/tests/test_compatibility_and_endpoints.py::test_legacy_model_profile_database_is_not_silently_migrated"
       - "docker compose config --quiet"
     gaps:
-      - "没有失败 migration、dry-run、备份恢复和回滚演练证据"
+      - "没有备份恢复演练证据；当前 schema 不执行 migration，旧版本只返回 backup/rebuild"
   - id: "PROTO-003"
     status: "partial"
     target: "0.2"
@@ -681,7 +738,7 @@ requirements:
       - "app/control-center.tsx::submitRun"
       - "backend/src/uai_forge/models.py::RunRequest"
     verification:
-      - "backend/tests/test_api.py::test_run_lifecycle_from_instance"
+      - "backend/tests/test_api.py::test_run_lifecycle_from_agent_revision"
       - "tests/rendered-html.test.mjs"
       - "backend: run_3c40135b389c4431 succeeded; run_daaed288efd84181 cancelled; run_9b665ee56772478a failed; run_79842e3af93941a5 retry"
   - id: "CHAT-004"
@@ -1100,3 +1157,480 @@ requirements:
       - "npm run typecheck"
       - "npm test"
       - "manual-browser-2026-08-01: desktop 1280x800 and narrow 382x799 both kept document scrollHeight equal to viewport height; chat-thread remained the scroll container with overscroll containment and browser error logs empty"
+  - id: "PLAN-004"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0021-agent-plan-review/requirements.md"
+      - "specs/changes/CHG-0021-agent-plan-review/design.md"
+    implementation:
+      - "backend/src/uai_forge/models.py::ExecutionPlan"
+      - "backend/src/uai_forge/models.py::PlanStep"
+      - "backend/src/uai_forge/plans.py::build_execution_plan"
+      - "backend/src/uai_forge/run_manager.py::RunManager._drive"
+    verification:
+      - "backend/tests/test_runtime.py::test_plan_mode_creates_reviewable_plan_and_approval_starts_pinned_execution"
+      - "backend/tests/test_api.py::test_plan_review_api_edits_and_approves_a_new_execution_run"
+  - id: "PLAN-005"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0021-agent-plan-review/requirements.md"
+      - "specs/changes/CHG-0021-agent-plan-review/design.md"
+    implementation:
+      - "backend/src/uai_forge/run_manager.py::RunManager.edit_plan"
+      - "backend/src/uai_forge/run_manager.py::RunManager.reject_plan"
+      - "backend/src/uai_forge/api.py::edit_plan"
+      - "backend/src/uai_forge/api.py::reject_plan"
+      - "app/control-center.tsx::PlanCard"
+    verification:
+      - "backend/tests/test_runtime.py::test_plan_mode_creates_reviewable_plan_and_approval_starts_pinned_execution"
+      - "backend/tests/test_api.py::test_plan_review_api_edits_and_approves_a_new_execution_run"
+      - "tests/rendered-html.test.mjs"
+  - id: "PLAN-006"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0021-agent-plan-review/requirements.md"
+      - "specs/changes/CHG-0021-agent-plan-review/design.md"
+    implementation:
+      - "backend/src/uai_forge/run_manager.py::RunManager.approve_plan"
+      - "backend/src/uai_forge/models.py::RunRequest.agent_revision"
+      - "backend/src/uai_forge/api.py::approve_plan"
+      - "app/control-center.tsx::approvePlan"
+    verification:
+      - "backend/tests/test_runtime.py::test_plan_mode_creates_reviewable_plan_and_approval_starts_pinned_execution"
+      - "backend/tests/test_api.py::test_plan_review_api_edits_and_approves_a_new_execution_run"
+  - id: "PLAN-007"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0021-agent-plan-review/requirements.md"
+      - "specs/changes/CHG-0021-agent-plan-review/design.md"
+    implementation:
+      - "backend/src/uai_forge/models.py::EventType"
+      - "backend/src/uai_forge/run_manager.py::RunManager._publish_plan_event"
+      - "app/control-center.tsx::eventTitle"
+      - "app/control-center.tsx::eventDetail"
+      - "app/control-center.tsx::TracePanel"
+    verification:
+      - "backend/tests/test_runtime.py::test_plan_mode_creates_reviewable_plan_and_approval_starts_pinned_execution"
+      - "backend/tests/test_api.py::test_plan_review_api_edits_and_approves_a_new_execution_run"
+      - "tests/rendered-html.test.mjs"
+  - id: "PLAN-008"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0021-agent-plan-review/requirements.md"
+      - "specs/changes/CHG-0021-agent-plan-review/design.md"
+    implementation:
+      - "backend/src/uai_forge/runtime.py::_execute_agent"
+      - "app/control-center.tsx::PlanCard"
+      - "app/globals.css::plan-card"
+    verification:
+      - "backend/tests/test_runtime.py::test_plan_mode_blocks_tools_and_child_delegation"
+      - "tests/rendered-html.test.mjs"
+  - id: "TASK-001"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0022-agent-task-monitor/requirements.md"
+      - "specs/changes/CHG-0022-agent-task-monitor/design.md"
+    implementation:
+      - "backend/src/uai_forge/models.py::TaskTodoList"
+      - "backend/src/uai_forge/models.py::TodoItem"
+      - "backend/src/uai_forge/tasks.py::is_complex_task"
+      - "backend/src/uai_forge/run_manager.py::RunManager.start"
+    verification:
+      - "backend/tests/test_task_monitor.py::test_complexity_heuristic_only_adds_todo_for_multi_step_requests"
+      - "backend/tests/test_api.py::test_complex_execute_run_persists_todo_and_todo_events"
+  - id: "TASK-002"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0022-agent-task-monitor/requirements.md"
+      - "specs/changes/CHG-0022-agent-task-monitor/design.md"
+    implementation:
+      - "backend/src/uai_forge/models.py::EventType"
+      - "backend/src/uai_forge/run_manager.py::RunManager._publish_todo_event"
+      - "app/control-center.tsx::TaskMonitor"
+      - "app/control-center.tsx::TracePanel"
+    verification:
+      - "backend/tests/test_api.py::test_complex_execute_run_persists_todo_and_todo_events"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+  - id: "TASK-003"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0022-agent-task-monitor/requirements.md"
+      - "specs/changes/CHG-0022-agent-task-monitor/design.md"
+    implementation:
+      - "backend/src/uai_forge/models.py::ChoicePrompt"
+      - "backend/src/uai_forge/interactions.py::extract_choice_prompt"
+      - "backend/src/uai_forge/run_manager.py::RunManager.resolve_choice"
+      - "backend/src/uai_forge/api.py::resolve_choice"
+      - "app/control-center.tsx::ChoiceCard"
+    verification:
+      - "backend/tests/test_task_monitor.py::test_choice_marker_is_public_and_safe_to_render"
+      - "backend/tests/test_task_monitor.py::test_choice_marker_rejects_inline_credentials"
+      - "npm run typecheck"
+  - id: "TASK-004"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0022-agent-task-monitor/requirements.md"
+      - "specs/changes/CHG-0022-agent-task-monitor/design.md"
+    implementation:
+      - "app/control-center.tsx::PublicReasoningPanel"
+      - "app/globals.css::public-reasoning"
+      - "app/globals.css::CHG-0023 light palette"
+    verification:
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+      - "manual-browser-2026-08-01: rebuilt in-app Browser screenshot and design-qa.md"
+  - id: "CHAT-020"
+    status: "partial"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0024-agent-chat-experience/requirements.md"
+      - "specs/changes/CHG-0024-agent-chat-experience/design.md"
+    implementation:
+      - "app/control-center.tsx::ChatWorkspace"
+      - "app/globals.css::CHG-0024 chat-first Agent workspace"
+      - "app/globals.css::CHG-0027 reference-aligned conversation surface"
+    verification:
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+      - "manual-browser-2026-08-01: desktop chat smoke, contained scroll, visible composer"
+  - id: "CHAT-021"
+    status: "partial"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0024-agent-chat-experience/requirements.md"
+    implementation:
+      - "app/control-center.tsx::PublicReasoningPanel"
+      - "app/globals.css::CHG-0027 reference-aligned conversation surface"
+    verification:
+      - "npm run typecheck"
+      - "manual-browser-2026-08-01: terminal public thought collapsed in rebuilt screenshot"
+  - id: "CHAT-022"
+    status: "partial"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0024-agent-chat-experience/requirements.md"
+    implementation:
+      - "backend/src/uai_forge/tasks.py::_inferred_items"
+      - "app/control-center.tsx::TaskMonitor"
+      - "app/globals.css::CHG-0027 reference-aligned conversation surface"
+    verification:
+      - "backend/tests/test_task_monitor.py::test_complexity_heuristic_only_adds_todo_for_multi_step_requests"
+      - "manual-browser-2026-08-01: pending complex-task monitor smoke"
+  - id: "CHAT-023"
+    status: "partial"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0024-agent-chat-experience/requirements.md"
+    implementation:
+      - "app/control-center.tsx::ChoiceCard"
+      - "app/globals.css::choice-card"
+      - "app/globals.css::CHG-0027 reference-aligned conversation surface"
+    verification:
+      - "backend/tests/test_task_monitor.py::test_choice_marker_is_public_and_safe_to_render"
+      - "npm run typecheck"
+      - "manual-browser-2026-08-01: pending choice-card smoke"
+  - id: "CHAT-024"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0024-agent-chat-experience/requirements.md"
+      - "specs/changes/CHG-0016-public-thinking-summary/requirements.md"
+    implementation:
+      - "app/control-center.tsx::TracePanel"
+      - "app/control-center.tsx::PublicReasoningPanel"
+      - "app/globals.css::CHG-0027 reference-aligned conversation surface"
+    verification:
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+  - id: "CHAT-027"
+    status: "partial"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0027-agent-reference-surface/requirements.md"
+      - "specs/changes/CHG-0027-agent-reference-surface/design.md"
+    implementation:
+      - "app/control-center.tsx::ChatWorkspace"
+      - "app/control-center.tsx::ChatOutput"
+      - "app/globals.css::CHG-0027 reference-aligned conversation surface"
+      - "app/globals.css::CHG-0028 pre-green conversation palette"
+    verification:
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+      - "design-qa.md::full comparison and focused composer comparison"
+      - "manual-browser-2026-08-01: transcript/composer desktop smoke"
+  - id: "CHAT-028"
+    status: "partial"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0027-agent-reference-surface/requirements.md"
+    implementation:
+      - "app/control-center.tsx::PublicReasoningPanel"
+      - "app/globals.css::public-reasoning"
+    verification:
+      - "npm run typecheck"
+      - "npm test"
+      - "manual-browser-2026-08-01: terminal summary collapsed and console logs empty"
+  - id: "CHAT-029"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0027-agent-reference-surface/requirements.md"
+      - "specs/changes/CHG-0021-agent-plan-review/requirements.md"
+    implementation:
+      - "app/control-center.tsx::EXECUTION_MODE_OPTIONS"
+      - "app/control-center.tsx::ChatComposer"
+      - "backend/src/uai_forge/run_manager.py"
+    verification:
+      - "backend/tests/test_runtime.py::test_plan_mode_creates_reviewable_plan_and_approval_starts_pinned_execution"
+      - "backend/tests/test_api.py::test_plan_review_api_edits_and_approves_a_new_execution_run"
+      - "npm test"
+  - id: "CHAT-030"
+    status: "partial"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0027-agent-reference-surface/requirements.md"
+    implementation:
+      - "backend/src/uai_forge/tasks.py::is_complex_task"
+      - "app/control-center.tsx::TaskMonitor"
+      - "app/globals.css::CHG-0027 reference-aligned conversation surface"
+    verification:
+      - "backend/tests/test_task_monitor.py::test_complexity_heuristic_only_adds_todo_for_multi_step_requests"
+      - "backend/tests/test_api.py::test_complex_execute_run_persists_todo_and_todo_events"
+      - "manual-browser-2026-08-01: pending complex-task monitor smoke"
+  - id: "CHAT-031"
+    status: "partial"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0027-agent-reference-surface/requirements.md"
+    implementation:
+      - "backend/src/uai_forge/interactions.py::extract_choice_prompt"
+      - "app/control-center.tsx::ChoiceCard"
+      - "app/globals.css::choice-card"
+    verification:
+      - "backend/tests/test_task_monitor.py::test_choice_marker_is_public_and_safe_to_render"
+      - "backend/tests/test_task_monitor.py::test_choice_marker_rejects_inline_credentials"
+      - "npm run typecheck"
+      - "manual-browser-2026-08-01: pending choice-card smoke"
+  - id: "VISUAL-001"
+    status: "partial"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0025-light-console-palette/requirements.md"
+      - "specs/changes/CHG-0025-light-console-palette/design.md"
+    implementation:
+      - "app/globals.css::CHG-0025 calm light console palette"
+      - "app/globals.css::CHG-0025.1 calm blue-neutral finish"
+      - "app/globals.css::CHG-0028 pre-green conversation palette"
+    verification:
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+      - "manual-browser-2026-08-01: rebuilt in-app Browser screenshot at /?view=chat; body and primary surfaces are light"
+  - id: "VISUAL-002"
+    status: "partial"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0025-light-console-palette/requirements.md"
+    implementation:
+      - "app/globals.css::CHG-0025 role-based palette"
+      - "app/globals.css::CHG-0025.1 calm blue-neutral finish"
+      - "app/globals.css::CHG-0028 pre-green conversation palette"
+    verification:
+      - "npm test"
+      - "manual-browser-2026-08-01: chat, overview, runs and topology computed-color smoke passed; primary action is blue and state colors remain semantic"
+  - id: "VISUAL-003"
+    status: "partial"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0025-light-console-palette/requirements.md"
+    implementation:
+      - "app/globals.css::CHG-0025 quiet hierarchy"
+      - "app/globals.css::CHG-0025.1 calm blue-neutral finish"
+      - "app/globals.css::CHG-0028 pre-green conversation palette"
+    verification:
+      - "npm test"
+      - "manual-browser-2026-08-01: overview, runs and topology visible-surface smoke found no dark background surfaces"
+  - id: "VISUAL-004"
+    status: "partial"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0025-light-console-palette/requirements.md"
+    implementation:
+      - "app/globals.css::CHG-0025 chat readability"
+      - "app/globals.css::CHG-0025.1 calm blue-neutral finish"
+      - "app/globals.css::CHG-0028 pre-green conversation palette"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "manual-browser-2026-08-01: rebuilt chat screenshot verified readable transcript, neutral user bubble, white composer and visible send action"
+  - id: "VISUAL-005"
+    status: "partial"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0025-light-console-palette/requirements.md"
+    implementation:
+      - "app/globals.css::CHG-0025 presentation-only overrides"
+      - "app/globals.css::CHG-0025.1 calm blue-neutral finish"
+      - "app/globals.css::CHG-0028 pre-green conversation palette"
+      - "app/control-center.tsx::cleanPlanCopy and navigation labels"
+    verification:
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+      - "git diff --check"
+  - id: "VISUAL-006"
+    status: "partial"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0028-pre-green-blue-palette/requirements.md"
+      - "specs/changes/CHG-0028-pre-green-blue-palette/design.md"
+    implementation:
+      - "app/globals.css::CHG-0028 pre-green conversation palette"
+      - "app/control-center.tsx::ChatWorkspace"
+    verification:
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+      - ".venv/bin/python -m pytest backend/tests -q"
+      - "design-qa.md::computed colors, desktop screenshot, focused composer comparison"
+      - "manual-browser-2026-08-01: --lime #5667d8, --blue #4c82c9, --success #2f966c, contained chat scroll"
+  - id: "EXT-008"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0030-remote-agent-default-tools/requirements.md"
+      - "specs/changes/CHG-0030-remote-agent-default-tools/design.md"
+    implementation:
+      - "backend/src/uai_forge/web_tools.py::WebSearchTool"
+      - "backend/src/uai_forge/web_tools.py::WebFetchTool"
+      - "backend/src/uai_forge/web_tools.py::WebJsonTool"
+      - "backend/src/uai_forge/web_tools.py::WebRssTool"
+      - "backend/src/uai_forge/builtins.py::register_builtins"
+    verification:
+      - "backend/tests/test_web_tools.py"
+      - "backend/tests/test_registry.py::test_builtin_tool_catalog_contains_remote_read_only_baseline"
+      - "docs/testing/manual-browser-2026-08-02.md"
+    limits:
+      - "只读 HTTPS 文本检索/抓取；不执行 JavaScript、不提交表单、不下载任意二进制"
+      - "DNS rebinding 与真实部署 egress ACL 仍属于部署边界"
+  - id: "UI-007"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0030-remote-agent-default-tools/requirements.md"
+      - "specs/changes/CHG-0030-remote-agent-default-tools/design.md"
+    implementation:
+      - "backend/src/uai_forge/api.py::create_agent"
+      - "backend/src/uai_forge/models.py::default_tool_bindings"
+      - "app/control-center.tsx::defaultAgentToolBindings"
+    verification:
+      - "backend/tests/test_api.py::test_new_agent_defaults_mount_read_only_tools"
+      - "backend/tests/test_api.py::test_new_agent_explicit_empty_tools_stays_empty"
+      - "tests/rendered-html.test.mjs::new Agent defaults mount remote read-only tools"
+      - "docs/testing/manual-browser-2026-08-02.md"
+  - id: "CFG-008"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0030-remote-agent-default-tools/requirements.md"
+      - "specs/changes/CHG-0030-remote-agent-default-tools/design.md"
+    implementation:
+      - "backend/src/uai_forge/models.py::ExecutionPolicy"
+      - "backend/src/uai_forge/models.py::ChildMount"
+      - "app/control-center.tsx::NewAgentModal"
+    verification:
+      - "backend/tests/test_defaults.py"
+      - "tests/rendered-html.test.mjs::new Agent defaults use usable execution budgets"
+      - "npm run typecheck"
+      - "docs/testing/manual-browser-2026-08-02.md"
+  - id: "EXT-009"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0031-extensible-sandbox-runtimes/requirements.md"
+      - "specs/changes/CHG-0031-extensible-sandbox-runtimes/design.md"
+    implementation:
+      - "backend/src/uai_forge/models.py::PluginKind.SANDBOX"
+      - "backend/src/uai_forge/models.py::SandboxBinding"
+      - "backend/src/uai_forge/ports.py::SandboxProvider"
+      - "backend/src/uai_forge/registry.py::register_sandbox"
+      - "backend/src/uai_forge/sandbox.py::DockerSandbox"
+      - "backend/src/uai_forge/sandbox_tools.py::SandboxExecTool"
+    verification:
+      - "backend/tests/test_sandbox.py"
+      - "backend/tests/test_registry.py::test_builtin_tool_catalog_contains_remote_read_only_baseline"
+    limits:
+      - "单进程 adapter 边界已实现；rootless/dedicated executor、VM/Wasm/remote adapter 和生产 TCK 未完成"
+  - id: "SEC-008"
+    status: "partial"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0031-extensible-sandbox-runtimes/requirements.md"
+      - "specs/changes/CHG-0031-extensible-sandbox-runtimes/design.md"
+    implementation:
+      - "backend/src/uai_forge/sandbox.py::DockerSandbox.command_for"
+      - "backend/src/uai_forge/sandbox.py::DockerSandbox.execute"
+    verification:
+      - "backend/tests/test_sandbox.py::test_docker_sandbox_command_is_hardened_and_argv_only"
+      - "backend/tests/test_sandbox.py::test_sandbox_request_rejects_empty_or_nul_command_parts"
+      - "manual-docker-smoke-2026-08-02: alpine:3.20 argv success + 1s timeout + no uai-sbx-* orphan"
+    limits:
+      - "Docker daemon、镜像供应链、kernel escape、egress、租户配额和真实 cancel/cleanup 仍需部署故障测试"
+  - id: "DEP-005"
+    status: "specified"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0031-extensible-sandbox-runtimes/requirements.md"
+      - "docs/architecture/adr/ADR-0010-extensible-sandbox-runtimes.md"
+    implementation:
+      - "docs/research/sandbox-runtime-baseline-2026-08.md"
+      - "docs/architecture/deployment.md"
+    verification:
+      - "specs/changes/CHG-0031-extensible-sandbox-runtimes/acceptance.md"
+  - id: "OBS-011"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0032-model-token-cache-visibility/requirements.md"
+      - "specs/changes/CHG-0032-model-token-cache-visibility/design.md"
+    implementation:
+      - "backend/src/uai_forge/ports.py::TokenUsage"
+      - "backend/src/uai_forge/providers.py::_openai_token_usage"
+      - "backend/src/uai_forge/providers.py::_anthropic_token_usage"
+      - "backend/src/uai_forge/runtime.py::AgentRuntime._merge_usage"
+    verification:
+      - "backend/tests/test_providers.py::test_openai_compatible_provider_maps_core_request"
+      - "backend/tests/test_providers.py::test_anthropic_messages_provider_maps_tools_and_usage"
+      - "backend/tests/test_providers.py::test_openai_compatible_provider_streams_text_and_usage"
+      - "backend/tests/test_providers.py::test_anthropic_messages_provider_streams_text_and_usage"
+      - "backend/tests/test_runtime.py::test_stream_usage_merge_preserves_partial_cache_dimensions"
+  - id: "UI-011"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0032-model-token-cache-visibility/requirements.md"
+      - "specs/changes/CHG-0032-model-token-cache-visibility/design.md"
+    implementation:
+      - "app/control-center.tsx::tokenUsageDetail"
+      - "app/control-center.tsx::eventDetail"
+      - "app/control-center.tsx::publicOperationTerminalDetail"
+      - "app/control-center.tsx::TracePanel"
+    verification:
+      - "tests/rendered-html.test.mjs::keeps advanced Agent configuration and real event history wired"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"

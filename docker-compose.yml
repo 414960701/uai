@@ -66,6 +66,6 @@ services:
 
 volumes:
   uai-forge-data:
-    # The v2 suffix keeps the current ADR-0007 ModelConfig schema separate
-    # from pre-ADR-0007 volumes, which the compatibility gate must reject.
-    name: ${UAI_FORGE_DATA_VOLUME:-uai-forge-data-v2}
+    # The v3 suffix identifies the current Agent draft/publish schema.
+    # Older volumes are retained but rejected by the compatibility gate.
+    name: ${UAI_FORGE_DATA_VOLUME:-uai-forge-data-v3}

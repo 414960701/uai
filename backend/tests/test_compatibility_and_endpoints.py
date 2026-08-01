@@ -72,6 +72,28 @@ def test_unknown_schema_version_fails_closed_and_doctor_path_is_read_only(tmp_pa
     assert error.value.code == "schema.version_too_new"
 
 
+def test_previous_schema_version_requires_explicit_backup_and_rebuild(tmp_path: Path):
+    path = tmp_path / "previous-schema.db"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE schema_meta (component TEXT PRIMARY KEY, version INTEGER NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO schema_meta VALUES ('sqlite', ?, '2026-08-01T00:00:00+00:00')",
+        (CURRENT_SCHEMA_VERSION - 1,),
+    )
+    connection.commit()
+    connection.close()
+
+    repository = SQLiteRepository(str(path))
+    status = run(repository.compatibility_status())
+    assert status["status"] == "incompatible"
+    assert status["code"] == "schema.version_unsupported"
+    with pytest.raises(SchemaCompatibilityError) as error:
+        run(repository.initialize())
+    assert error.value.code == "schema.version_unsupported"
+
+
 def test_legacy_model_profile_database_is_not_silently_migrated(tmp_path: Path):
     path = tmp_path / "legacy.db"
     connection = sqlite3.connect(path)
@@ -109,8 +131,8 @@ def test_doctor_is_read_only_for_a_new_database(tmp_path: Path, capsys):
     assert not path.exists()
 
 
-def test_failed_migration_rolls_back_all_schema_writes(tmp_path: Path, monkeypatch):
-    path = tmp_path / "migration-failure.db"
+def test_unsupported_agent_lifecycle_schema_is_rejected_without_writes(tmp_path: Path):
+    path = tmp_path / "unsupported-lifecycle.db"
     connection = sqlite3.connect(path)
     connection.executescript(
         """
@@ -148,30 +170,17 @@ def test_failed_migration_rolls_back_all_schema_writes(tmp_path: Path, monkeypat
     connection.commit()
     connection.close()
 
-    original = SQLiteRepository._migrate_v1_to_v2
-
-    def fail_after_migration(connection):
-        original(connection)
-        raise RuntimeError("simulated migration failure")
-
-    monkeypatch.setattr(
-        SQLiteRepository,
-        "_migrate_v1_to_v2",
-        staticmethod(fail_after_migration),
-    )
-    repository = SQLiteRepository(str(path), credential_master_key="migration-test-key")
-    with pytest.raises(RuntimeError, match="simulated migration failure"):
+    repository = SQLiteRepository(str(path), credential_master_key="lifecycle-test-key")
+    status = run(repository.compatibility_status())
+    assert status["status"] == "incompatible"
+    assert status["code"] == "schema.legacy_agent_runtime"
+    with pytest.raises(SchemaCompatibilityError) as error:
         run(repository.initialize())
+    assert error.value.code == "schema.legacy_agent_runtime"
 
     connection = sqlite3.connect(path)
-    columns = {
-        row[1]
-        for row in connection.execute("PRAGMA table_info('model_configs')").fetchall()
-    }
     version = connection.execute(
         "SELECT version FROM schema_meta WHERE component = 'sqlite'"
     ).fetchone()[0]
     connection.close()
     assert version == 1
-    assert {"version", "lifecycle", "verification_json"}.isdisjoint(columns)
-    assert run(repository.compatibility_status())["status"] == "migratable"

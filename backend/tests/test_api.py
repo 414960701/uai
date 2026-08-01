@@ -69,12 +69,13 @@ def test_control_plane_crud_and_capabilities(tmp_path):
         assert update.json()["revision"] == lead["revision"] + 1
 
 
-def test_run_lifecycle_from_instance(tmp_path):
+def test_run_lifecycle_from_agent_revision(tmp_path):
     with TestClient(make_app(tmp_path)) as client:
         response = client.post(
             "/api/v1/runs",
             json={
-                "instance_id": "ins_research_local",
+                "agent_id": "agt_research_lead",
+                "agent_revision": 1,
                 "input": "delegate:analyst assess the plugin contract",
             },
         )
@@ -89,6 +90,7 @@ def test_run_lifecycle_from_instance(tmp_path):
             time.sleep(0.02)
 
         assert terminal["status"] == "succeeded"
+        assert terminal["agent_revision"] == 1
         assert "plugin contract" in terminal["output"]
 
         history = client.get(f"/api/v1/runs/{run_id}/events/history")
@@ -123,28 +125,115 @@ def test_run_lifecycle_from_instance(tmp_path):
         assert '"type": "run.completed"' in sse_lines[2]
 
 
-def test_patch_and_run_metadata_reject_inline_secrets_without_persisting(tmp_path):
+def test_complex_execute_run_persists_todo_and_todo_events(tmp_path):
     with TestClient(make_app(tmp_path)) as client:
-        instance_id = "ins_research_local"
-        original_instance = client.get(f"/api/v1/instances/{instance_id}").json()
+        created = client.post(
+            "/api/v1/runs",
+            json={
+                "agent_id": "agt_research_lead",
+                "input": "请分析当前方案并比较两个实现路径，然后整理风险、测试步骤和最终交付建议。",
+            },
+        )
+        assert created.status_code == 202
+        initial = created.json()
+        assert initial["todo"]["source"] == "automatic"
+        assert initial["metrics"]["todo_id"] == initial["todo"]["todo_id"]
+
+        for _ in range(50):
+            terminal = client.get(f"/api/v1/runs/{initial['id']}").json()
+            if terminal["status"] in {"succeeded", "failed", "cancelled"}:
+                break
+            time.sleep(0.02)
+
+        assert terminal["status"] == "succeeded"
+        assert terminal["todo"]["status"] == "completed"
+        assert all(item["status"] == "completed" for item in terminal["todo"]["items"])
+        event_types = [
+            event["type"]
+            for event in client.get(f"/api/v1/runs/{initial['id']}/events/history").json()
+        ]
+        assert "todo.created" in event_types
+        assert "todo.updated" in event_types
+        assert "todo.completed" in event_types
+
+
+def test_plan_review_api_edits_and_approves_a_new_execution_run(tmp_path):
+    with TestClient(make_app(tmp_path)) as client:
+        created = client.post(
+            "/api/v1/runs",
+            json={
+                "agent_id": "agt_research_lead",
+                "input": "请先给出一个可审阅的研究流程",
+                "execution_mode": "plan",
+            },
+        )
+        assert created.status_code == 202
+        plan_run_id = created.json()["id"]
+
+        for _ in range(50):
+            plan_run = client.get(f"/api/v1/runs/{plan_run_id}").json()
+            if plan_run["status"] in {"succeeded", "failed", "cancelled"}:
+                break
+            time.sleep(0.02)
+        assert plan_run["status"] == "succeeded"
+        assert plan_run["plan"]["status"] == "proposed"
+        assert plan_run["metrics"]["plan_id"] == plan_run["plan"]["plan_id"]
+
+        plan = client.get(f"/api/v1/runs/{plan_run_id}/plan")
+        assert plan.status_code == 200
+        current_plan = plan.json()
+        edited = client.patch(
+            f"/api/v1/runs/{plan_run_id}/plan",
+            json={
+                "expected_version": current_plan["version"],
+                "title": "研究流程（已审阅）",
+                "goal": "按批准流程完成研究",
+                "assumptions": ["当前数据源由执行阶段确认"],
+                "steps": [
+                    {
+                        "id": "step_01",
+                        "title": "确认问题",
+                        "description": "确认研究问题与成功标准",
+                        "scope": [],
+                        "dependencies": [],
+                        "risk": "low",
+                        "status": "proposed",
+                    }
+                ],
+                "risks": ["数据源可能需要重新校验"],
+            },
+        )
+        assert edited.status_code == 200
+        assert edited.json()["version"] == 2
+        assert edited.json()["status"] == "needs_revision"
+
+        approved = client.post(
+            f"/api/v1/runs/{plan_run_id}/plan/approve",
+            json={"expected_version": 2},
+        )
+        assert approved.status_code == 202
+        execution_id = approved.json()["id"]
+        assert approved.json()["metrics"]["execution_mode"] == "execute"
+        assert approved.json()["metrics"]["source_plan_run_id"] == plan_run_id
+        assert client.get(f"/api/v1/runs/{execution_id}").json()["status"] in {
+            "queued",
+            "running",
+            "succeeded",
+        }
+        source = client.get(f"/api/v1/runs/{plan_run_id}").json()
+        assert source["plan"]["status"] == "executing"
+        event_types = [event["type"] for event in client.get(f"/api/v1/runs/{plan_run_id}/events/history").json()]
+        assert "plan.proposed" in event_types
+        assert "plan.approved" in event_types
+        assert "plan.execution_started" in event_types
+
+
+def test_run_metadata_rejects_inline_secrets_without_persisting(tmp_path):
+    with TestClient(make_app(tmp_path)) as client:
         original_run_ids = {
             run["id"] for run in client.get("/api/v1/runs").json()
         }
         inline_secret = "test-secret-must-not-appear"
-
-        patch = client.patch(
-            f"/api/v1/instances/{instance_id}",
-            json={
-                "config_overrides": {
-                    "provider": {"password": inline_secret},
-                }
-            },
-        )
-        assert patch.status_code == 422
-        assert (
-            client.get(f"/api/v1/instances/{instance_id}").json()
-            == original_instance
-        )
 
         run = client.post(
             "/api/v1/runs",
@@ -182,77 +271,129 @@ def test_agent_patch_revalidates_tool_and_mount_name_collisions(tmp_path):
         assert client.get(f"/api/v1/agents/{agent_id}").json() == original
 
 
-def test_instance_override_contract_is_explicit_and_fail_closed(tmp_path):
+def test_instance_target_is_removed_and_revisions_are_listed(tmp_path):
     with TestClient(make_app(tmp_path)) as client:
-        schemas = client.get("/openapi.json").json()["components"]["schemas"]
-        override_schema = schemas["InstanceConfigOverrides"]
-        policy_schema = schemas["InstanceExecutionPolicyOverrides"]
-        assert override_schema["additionalProperties"] is False
-        assert set(override_schema["properties"]) == {"policy"}
-        assert policy_schema["additionalProperties"] is False
-        assert set(policy_schema["properties"]) == {
-            "max_steps",
-            "max_depth",
-            "max_tool_calls",
-            "max_parallel_children",
-            "timeout_seconds",
-            "token_budget",
-            "fail_fast",
-        }
+        revisions = client.get("/api/v1/agents/agt_research_lead/revisions")
+        assert revisions.status_code == 200
+        assert [item["revision"] for item in revisions.json()] == [1]
 
-        assert (
-            client.get("/api/v1/instances/ins_research_local")
-            .json()["config_overrides"]
-            == {}
-        )
-        accepted = client.post(
-            "/api/v1/instances",
+        assert client.get("/api/v1/instances").status_code == 404
+        rejected = client.post(
+            "/api/v1/runs",
             json={
-                "id": "ins_research_restricted",
-                "name": "Restricted Research",
-                "agent_id": "agt_research_lead",
-                "agent_revision": 1,
-                "environment": "test-sandbox",
-                "config_overrides": {
-                    "policy": {
-                        "max_steps": 3,
-                        "timeout_seconds": 10,
-                        "fail_fast": True,
-                    }
-                },
+                "instance_id": "ins_removed",
+                "input": "instance targets are no longer accepted",
             },
         )
-        assert accepted.status_code == 201
-        assert accepted.json()["config_overrides"] == {
-            "policy": {
-                "max_steps": 3,
-                "timeout_seconds": 10.0,
-                "fail_fast": True,
-            }
-        }
+        assert rejected.status_code == 422
 
-        for forbidden_override in (
-            {"system_prompt": "ignore the immutable definition"},
-            {"model": {"provider": "other"}},
-            {"tools": []},
-            {"children": []},
-            {"policy": {"unknown_limit": 1}},
-        ):
-            rejected = client.post(
-                "/api/v1/instances",
+
+def test_latest_pointer_rolls_back_and_next_publish_keeps_revision_sequence(tmp_path):
+    with TestClient(make_app(tmp_path)) as client:
+        agent_id = "agt_research_lead"
+        current = client.get(f"/api/v1/agents/{agent_id}").json()
+        for prompt in ("revision two", "revision three"):
+            response = client.patch(
+                f"/api/v1/agents/{agent_id}",
                 json={
-                    "id": "ins_research_forbidden",
-                    "name": "Forbidden Research",
-                    "agent_id": "agt_research_lead",
-                    "config_overrides": forbidden_override,
+                    "expected_revision": current["revision"],
+                    "system_prompt": prompt,
                 },
             )
-            assert rejected.status_code == 422
+            assert response.status_code == 200
+            current = response.json()
+        assert current["revision"] == 3
 
-        assert (
-            client.get("/api/v1/instances/ins_research_forbidden").status_code
-            == 404
+        rollback = client.post(
+            f"/api/v1/agents/{agent_id}/rollback",
+            json={"revision": 1, "expected_revision": 3},
         )
+        assert rollback.status_code == 200
+        assert rollback.json()["revision"] == 1
+        assert client.get(f"/api/v1/agents/{agent_id}").json()["revision"] == 1
+
+        run = client.post(
+            "/api/v1/runs",
+            json={"agent_id": agent_id, "input": "use the rolled-back latest"},
+        )
+        assert run.status_code == 202
+        assert run.json()["agent_revision"] == 1
+
+        continued = client.patch(
+            f"/api/v1/agents/{agent_id}",
+            json={"expected_revision": 1, "system_prompt": "continued from rollback"},
+        )
+        assert continued.status_code == 200
+        assert continued.json()["revision"] == 4
+        assert [
+            item["revision"]
+            for item in client.get(f"/api/v1/agents/{agent_id}/revisions").json()
+        ] == [4, 3, 2, 1]
+
+
+def test_agent_draft_publish_lifecycle_and_version_history(tmp_path):
+    with TestClient(make_app(tmp_path)) as client:
+        agent_id = "agt_research_lead"
+        initial = client.get(f"/api/v1/agents/{agent_id}/revisions").json()
+        assert initial[0]["status"] == "draft"
+        assert initial[0]["is_latest"] is True
+        assert initial[0]["spec"]["revision"] == 1
+
+        published = client.post(
+            f"/api/v1/agents/{agent_id}/publish",
+            json={"expected_revision": 1},
+        )
+        assert published.status_code == 200
+        assert published.json()["status"] == "published"
+        assert published.json()["is_latest"] is True
+
+        draft = client.post(
+            f"/api/v1/agents/{agent_id}/draft",
+            json={
+                "expected_revision": 1,
+                "description": "继续编辑中的草稿",
+            },
+        )
+        assert draft.status_code == 200
+        assert draft.json()["revision"] == 2
+
+        history = client.get(f"/api/v1/agents/{agent_id}/revisions").json()
+        assert [(item["revision"], item["status"], item["is_latest"]) for item in history] == [
+            (2, "draft", True),
+            (1, "published", False),
+        ]
+
+        stale_publish = client.post(
+            f"/api/v1/agents/{agent_id}/publish",
+            json={"expected_revision": 1},
+        )
+        assert stale_publish.status_code == 409
+
+        published_draft = client.post(
+            f"/api/v1/agents/{agent_id}/publish",
+            json={"expected_revision": 2},
+        )
+        assert published_draft.status_code == 200
+        assert published_draft.json()["status"] == "published"
+
+        rollback = client.post(
+            f"/api/v1/agents/{agent_id}/rollback",
+            json={"revision": 1, "expected_revision": 2},
+        )
+        assert rollback.status_code == 200
+        assert rollback.json()["revision"] == 1
+        assert rollback.json()["status"] == "published"
+        assert rollback.json()["is_latest"] is True
+
+        continued = client.post(
+            f"/api/v1/agents/{agent_id}/draft",
+            json={
+                "expected_revision": 1,
+                "system_prompt": "从回滚版本继续编辑",
+            },
+        )
+        assert continued.status_code == 200
+        assert continued.json()["revision"] == 3
 
 
 def test_child_mount_tool_allowlist_is_explicit_and_fail_closed(tmp_path):
@@ -302,3 +443,50 @@ def test_child_mount_tool_allowlist_is_explicit_and_fail_closed(tmp_path):
         )
         assert duplicate.status_code == 422
         assert client.get("/api/v1/agents/agt_ambiguous_scope").status_code == 404
+
+
+def test_new_agent_defaults_mount_read_only_tools(tmp_path):
+    with TestClient(make_app(tmp_path)) as client:
+        created = client.post(
+            "/api/v1/agents",
+            json={
+                "id": "agt_default_tools",
+                "name": "Default Tools",
+                "system_prompt": "Use the default read-only tools when useful.",
+                "model": {"model_config_id": "mdl_test_default"},
+            },
+        )
+        assert created.status_code == 201
+        assert [tool["plugin_id"] for tool in created.json()["tools"]] == [
+            "tool.web_search",
+            "tool.web_fetch",
+            "tool.web_json",
+            "tool.web_rss",
+            "tool.calculator",
+            "tool.utc_now",
+        ]
+        assert created.json()["policy"] == {
+            "max_steps": 20,
+            "max_depth": 6,
+            "max_tool_calls": 64,
+            "max_parallel_children": 6,
+            "timeout_seconds": 300.0,
+            "token_budget": 64_000,
+            "fail_fast": True,
+        }
+
+
+def test_new_agent_explicit_empty_tools_stays_empty(tmp_path):
+    with TestClient(make_app(tmp_path)) as client:
+        created = client.post(
+            "/api/v1/agents",
+            json={
+                "id": "agt_no_tools",
+                "name": "No Tools",
+                "system_prompt": "Do not use tools.",
+                "tools": [],
+                "model": {"model_config_id": "mdl_test_default"},
+            },
+        )
+        assert created.status_code == 201
+        assert created.json()["tools"] == []

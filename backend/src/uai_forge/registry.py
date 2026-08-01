@@ -12,9 +12,10 @@ from .models import (
     ModelBinding,
     PluginKind,
     PluginManifest,
+    SandboxBinding,
     ToolBinding,
 )
-from .ports import MemoryStore, Middleware, ModelProvider, ToolPlugin
+from .ports import MemoryStore, Middleware, ModelProvider, SandboxProvider, ToolPlugin
 from .schema_validation import (
     InvalidJsonSchema,
     compile_json_schema,
@@ -27,6 +28,7 @@ ProviderFactory = Callable[[ModelBinding], ModelProvider]
 ToolFactory = Callable[[ToolBinding], ToolPlugin]
 MemoryFactory = Callable[[MemoryBinding], MemoryStore]
 MiddlewareFactory = Callable[[MiddlewareBinding], Middleware]
+SandboxFactory = Callable[[SandboxBinding], SandboxProvider]
 
 
 class PluginCompatibilityError(ValueError):
@@ -93,6 +95,7 @@ class PluginRegistry:
         self._tools: Dict[str, ToolFactory] = {}
         self._memories: Dict[str, MemoryFactory] = {}
         self._middlewares: Dict[str, MiddlewareFactory] = {}
+        self._sandboxes: Dict[str, SandboxFactory] = {}
         self.discovery_errors: List[str] = []
 
     @staticmethod
@@ -175,6 +178,17 @@ class PluginRegistry:
         self._register_manifest(manifest)
         self._middlewares[manifest.id] = factory
 
+    def register_sandbox(self, manifest: PluginManifest, factory: SandboxFactory) -> None:
+        if manifest.kind != PluginKind.SANDBOX:
+            raise PluginBindingError(
+                "plugin.kind_mismatch",
+                manifest.id,
+                PluginKind.SANDBOX,
+                registered_kinds=[manifest.kind.value],
+            )
+        self._register_manifest(manifest)
+        self._sandboxes[manifest.id] = factory
+
     def register_manifest(self, manifest: PluginManifest) -> None:
         """Advertise a non-runtime plugin such as storage, bus, scheduler or UI."""
         self._register_manifest(manifest)
@@ -216,6 +230,7 @@ class PluginRegistry:
         factories = {
             PluginKind.PROVIDER: self._providers,
             PluginKind.TOOL: self._tools,
+            PluginKind.SANDBOX: self._sandboxes,
             PluginKind.MEMORY: self._memories,
             PluginKind.MIDDLEWARE: self._middlewares,
         }[expected_kind]
@@ -298,6 +313,18 @@ class PluginRegistry:
             self._tools,
             binding.plugin_id,
             PluginKind.TOOL,
+        )(binding)
+
+    def create_sandbox(self, binding: SandboxBinding) -> SandboxProvider:
+        self.validate_binding(
+            binding.plugin_id,
+            PluginKind.SANDBOX,
+            binding.config,
+        )
+        return self._factory(
+            self._sandboxes,
+            binding.plugin_id,
+            PluginKind.SANDBOX,
         )(binding)
 
     def create_memory(self, binding: MemoryBinding) -> MemoryStore:

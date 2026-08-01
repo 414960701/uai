@@ -67,10 +67,10 @@ test("removes starter-only infrastructure and wires the product client", async (
 });
 
 test("keeps advanced Agent configuration and real event history wired", async () => {
-  const controlCenter = await readFile(
-    new URL("../app/control-center.tsx", import.meta.url),
-    "utf8",
-  );
+  const [controlCenter, globalsCss] = await Promise.all([
+    readFile(new URL("../app/control-center.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
 
   assert.match(controlCenter, /模型配置 JSON/);
   assert.match(controlCenter, /常用模型已列出/);
@@ -91,7 +91,8 @@ test("keeps advanced Agent configuration and real event history wired", async ()
   assert.match(controlCenter, /MODEL_TIMEOUT_OPTIONS/);
   assert.match(controlCenter, /Provider 扩展参数 JSON/);
   assert.match(controlCenter, /记忆与中间件/);
-  assert.match(controlCenter, /固定修订/);
+  assert.match(controlCenter, /function MountRevisionField/);
+  assert.match(controlCenter, /子 Agent 版本/);
   assert.match(controlCenter, /输入模板/);
   assert.match(controlCenter, /allowed_tools/);
   assert.match(controlCenter, /下游工具范围/);
@@ -122,6 +123,9 @@ test("keeps advanced Agent configuration and real event history wired", async ()
   assert.match(controlCenter, /不展示原始思考内容/);
   assert.match(controlCenter, /function PublicReasoningPanel/);
   assert.match(controlCenter, /publicReasoningSteps/);
+  assert.match(controlCenter, /function tokenUsageDetail/);
+  assert.match(controlCenter, /cached_input_tokens/);
+  assert.match(controlCenter, /缓存命中/);
   assert.match(controlCenter, /function ChatOutput/);
   assert.match(controlCenter, /chat-output-list/);
   assert.match(controlCenter, /public-reasoning-chevron/);
@@ -134,6 +138,21 @@ test("keeps advanced Agent configuration and real event history wired", async ()
   assert.match(controlCenter, /type ExecutionMode = "execute" \| "plan"/);
   assert.match(controlCenter, /EXECUTION_MODE_OPTIONS/);
   assert.match(controlCenter, /计划模式/);
+  assert.match(controlCenter, /运行方式（不是模型）/);
+  assert.match(controlCenter, /控制面未确认所选/);
+  assert.match(controlCenter, /chat-mode-indicator/);
+  assert.match(controlCenter, /choice-card-recommendation/);
+  assert.match(controlCenter, /choice-option-control/);
+  assert.match(controlCenter, /继续规划/);
+  assert.match(globalsCss, /CHG-0027: reference-aligned conversation surface/);
+  assert.match(globalsCss, /The task rail is an activity tray/);
+  assert.match(controlCenter, /type ExecutionPlan/);
+  assert.match(controlCenter, /function PlanCard/);
+  assert.match(controlCenter, /批准并执行/);
+  assert.match(controlCenter, /修改计划/);
+  assert.match(controlCenter, /暂不执行/);
+  assert.match(controlCenter, /\/plan\/approve/);
+  assert.match(controlCenter, /plan_status/);
   assert.match(controlCenter, /execution_mode/);
   assert.match(controlCenter, /不调用工具或子 Agent/);
   assert.match(controlCenter, /发起运行方式/);
@@ -148,6 +167,9 @@ test("keeps advanced Agent configuration and real event history wired", async ()
   assert.match(controlCenter, /会话侧栏/);
   assert.match(controlCenter, /运行详情/);
   assert.match(controlCenter, /event\.nativeEvent\.isComposing/);
+  assert.match(controlCenter, /event\.nativeEvent\.keyCode === 229/);
+  assert.match(controlCenter, /compositionEndedRef/);
+  assert.match(controlCenter, /setDraft\(`\$\{target\.value\.slice\(0, start\)\}\\n/);
   assert.match(controlCenter, /event\.metaKey.*event\.ctrlKey/);
   assert.match(controlCenter, /Enter 换行.*Enter 发送/);
   assert.match(controlCenter, /chat-scroll-bottom/);
@@ -169,7 +191,6 @@ test("keeps advanced Agent configuration and real event history wired", async ()
   assert.match(controlCenter, /capabilities\.map\(\(capability\)/);
   assert.doesNotMatch(controlCenter, /CapabilityStatus title=/);
   assert.doesNotMatch(controlCenter, /state="enforced"/);
-  assert.match(controlCenter, /环境标签（不负责部署）/);
   assert.match(controlCenter, /capability\.limits\.join/);
   assert.match(controlCenter, /单节点容器/);
   assert.match(controlCenter, /events\/history/);
@@ -179,6 +200,30 @@ test("keeps advanced Agent configuration and real event history wired", async ()
   assert.doesNotMatch(controlCenter, /尚未真实启动验收/);
   assert.doesNotMatch(controlCenter, /function SettingToggle/);
   assert.doesNotMatch(controlCenter, /mock|demoEvents|delegate:analyst/i);
+});
+
+test("removes instance navigation and keeps revision run selectors", async () => {
+  const controlCenter = await readFile(
+    new URL("../app/control-center.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(controlCenter, /InstancesView|NewInstanceModal|创建运行实例|ready Instance|\/instances/);
+  assert.match(controlCenter, /function RunModal/);
+  assert.match(controlCenter, /最新版本（默认）/);
+  assert.match(controlCenter, /agents\/\$\{selectedAgent\.id\}\/revisions/);
+  assert.match(controlCenter, /selectedRevision === "latest" \? undefined/);
+  assert.match(controlCenter, /子 Agent 版本/);
+  assert.match(controlCenter, /保存草稿/);
+  assert.match(controlCenter, /发布草稿/);
+  assert.match(controlCenter, /版本历史/);
+  assert.match(controlCenter, /回滚到此版本/);
+  assert.match(controlCenter, /agents\/\$\{agent\.id\}\/publish/);
+  assert.match(controlCenter, /agents\/\$\{agent\.id\}\/draft/);
+  assert.match(controlCenter, /setRevisionLoading\(true\)/);
+  assert.match(controlCenter, /problemMessage\(caught, fallback\)/);
+  assert.doesNotMatch(controlCenter, /revision: candidate\.revision/);
+  assert.doesNotMatch(controlCenter, /\brevision: agent\.revision/);
 });
 
 test("model configuration selection auto-fills model from provider or known endpoint", async () => {
@@ -194,6 +239,38 @@ test("model configuration selection auto-fills model from provider or known endp
   assert.match(controlCenter, /选择厂商地址会自动带出推荐模型/);
   assert.match(controlCenter, /providerChanged/);
   assert.match(controlCenter, /onChange=\{selectEndpoint\}/);
+});
+
+test("new Agent defaults mount remote read-only tools", async () => {
+  const controlCenter = await readFile(
+    new URL("../app/control-center.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(controlCenter, /DEFAULT_AGENT_TOOL_PLUGIN_IDS/);
+  assert.match(controlCenter, /tool\.web_search/);
+  assert.match(controlCenter, /tool\.web_fetch/);
+  assert.match(controlCenter, /tool\.web_json/);
+  assert.match(controlCenter, /tool\.web_rss/);
+  assert.match(controlCenter, /tool\.sandbox_exec/);
+  assert.match(controlCenter, /沙箱执行需要显式添加并配置/);
+  assert.match(controlCenter, /默认已选只读基础工具/);
+  assert.match(controlCenter, /defaultAgentToolBindings\(plugins\)/);
+});
+
+test("new Agent defaults use usable execution budgets", async () => {
+  const controlCenter = await readFile(
+    new URL("../app/control-center.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(controlCenter, /max_steps: 20/);
+  assert.match(controlCenter, /max_depth: 6/);
+  assert.match(controlCenter, /max_tool_calls: 64/);
+  assert.match(controlCenter, /max_parallel_children: 6/);
+  assert.match(controlCenter, /timeout_seconds: 300/);
+  assert.match(controlCenter, /token_budget: 64000/);
+  assert.match(controlCenter, /max_concurrency: 4/);
 });
 
 test("keeps account-specific hosting metadata out of portable source", async () => {

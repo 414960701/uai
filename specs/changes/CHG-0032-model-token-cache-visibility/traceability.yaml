@@ -1,0 +1,33 @@
+change_id: CHG-0032
+status: complete
+implementation_status: implemented
+requirements:
+  OBS-011:
+    contracts:
+      - requirements.md
+      - design.md
+    implementation:
+      - backend/src/uai_forge/ports.py::TokenUsage
+      - backend/src/uai_forge/providers.py::_openai_token_usage
+      - backend/src/uai_forge/providers.py::_anthropic_token_usage
+      - backend/src/uai_forge/runtime.py::AgentRuntime._merge_usage
+    verification:
+      - backend/tests/test_providers.py::test_openai_compatible_provider_maps_core_request
+      - backend/tests/test_providers.py::test_anthropic_messages_provider_maps_tools_and_usage
+      - backend/tests/test_providers.py::test_openai_compatible_provider_streams_text_and_usage
+      - backend/tests/test_providers.py::test_anthropic_messages_provider_streams_text_and_usage
+      - backend/tests/test_runtime.py::test_stream_usage_merge_preserves_partial_cache_dimensions
+  UI-011:
+    contracts:
+      - requirements.md
+      - design.md
+    implementation:
+      - app/control-center.tsx::tokenUsageDetail
+      - app/control-center.tsx::eventDetail
+      - app/control-center.tsx::publicOperationTerminalDetail
+      - app/control-center.tsx::TracePanel
+    verification:
+      - tests/rendered-html.test.mjs::keeps advanced Agent configuration and real event history wired
+      - npm run lint
+      - npm run typecheck
+      - npm test

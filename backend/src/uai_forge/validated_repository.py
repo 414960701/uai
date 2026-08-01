@@ -28,10 +28,13 @@ class ValidatedAgentRepository:
         tenant_id: str,
         spec: AgentSpec,
         expected_revision: Optional[int] = None,
+        *,
+        status: str = "draft",
     ) -> AgentSpec:
         self._registry.validate_agent_spec(spec)
         return await self._delegate.save_agent(
             tenant_id,
             spec,
             expected_revision=expected_revision,
+            status=status,
         )

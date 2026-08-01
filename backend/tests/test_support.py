@@ -13,7 +13,6 @@ import uuid
 from typing import AsyncIterator, List
 
 from uai_forge.models import (
-    AgentInstance,
     AgentSpec,
     ChildMount,
     ExecutionPolicy,
@@ -238,16 +237,4 @@ async def seed_test_topology(repository: SQLiteRepository, tenant_id: str = "def
         ),
         labels={"team": "research", "tier": "leader"},
     )
-    saved_lead = await repository.save_agent(tenant_id, lead)
-    await repository.save_instance(
-        tenant_id,
-        AgentInstance(
-            id="ins_research_local",
-            tenant_id=tenant_id,
-            name="研究团队 · 本地",
-            agent_id=saved_lead.id,
-            agent_revision=saved_lead.revision,
-            environment="local",
-            max_concurrency=4,
-        ),
-    )
+    await repository.save_agent(tenant_id, lead)

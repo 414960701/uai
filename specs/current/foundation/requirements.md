@@ -32,23 +32,34 @@ Agent 框架领域类型。
 状态：`Implemented`，目标版本：`0.1`
 
 WHEN Agent 定义被更新
-THE SYSTEM SHALL 使用乐观并发创建递增 revision，并保留可按 revision 读取的旧快照。
+THE SYSTEM SHALL 使用乐观并发创建单调递增且不可变的 revision 快照，并保留可按 revision
+读取的旧快照。Agent 的 `latest` 是指向某个快照的可移动标签；回滚只移动标签，不能删除
+或复用历史 revision。
 
-### CORE-003 — 定义与实例分离
+### CORE-003 — Run 直接固定 Agent 修订
 
-状态：`Partial`，目标版本：`0.2`
+状态：`Implemented`，目标版本：`0.1`
 
-WHEN 同一 Agent 定义部署为多个 Instance
-THE SYSTEM SHALL 让每个 Instance 独立声明 revision、environment、capacity 和经过
-Schema 限制的 override，且运行实际使用这些值。
+WHEN Run 被提交
+THE SYSTEM SHALL 使用稳定的 `agent_id` 和可选的 `agent_revision` 解析根 Agent。
 
-`0.1.x` 已用显式、默认拒绝的 Schema 将 `config_overrides` 限制为 execution policy，
-运行时对数值上限取 definition/Instance 的较小值、对 `fail_fast` 取更严格值，并构造
-完整复验且不写回 revision 的 effective spec。Instance ID 与 environment 标识会进入
-Run metrics、`run.started` 和插件上下文。
+WHEN `agent_revision` 缺失
+THE SYSTEM SHALL 在提交时解析 `latest` 标签指向的 revision，而不是取最大 revision；无论是否显式选择，Run 都 SHALL 固定并
+记录实际执行的 Agent revision，后续 Agent 发布不得改变该 Run。
 
-当前缺口：environment 仍只是单进程适配器可见标识，不是正式 deployment profile；
-已有 Instance 的 `max_concurrency` 更新也不会调整已创建的进程内 semaphore。
+当前 `0.1.x` 不把未接入真实部署调度的 Instance、environment、capacity 或 override
+作为运行目标；未来正式部署资源需要独立的 deployment profile 和 controller 合同。
+
+### CORE-009 — Agent 草稿/发布生命周期
+
+状态：`Implemented`，目标版本：`0.1`
+
+Agent 保存 SHALL 创建不可变 `draft` revision 并移动 `latest`；显式发布 SHALL 将当前
+revision 标记为 `published`，不覆盖历史。回滚 SHALL 只移动 `latest`，从回滚版本继续
+编辑 SHALL 分配新的递增 revision；保存、发布和回滚 SHALL 使用 latest revision CAS。
+
+当前 SQLite v3 不兼容旧 Instance、旧 Run `instance_id` 或缺失 lifecycle 字段的数据库；
+doctor 和启动检查返回 backup/rebuild remediation，不执行静默迁移。
 
 ### CORE-004 — 一等 Session
 
@@ -62,17 +73,17 @@ THE SYSTEM SHALL 持久保存 Session 状态、权限上下文、版本和并发
 
 状态：`Specified`，目标版本：`0.2`
 
-WHEN Agent Definition 已有 Revision、Instance 或历史 Run 引用
+WHEN Agent Definition 已有 Revision 或历史 Run 引用
 THE SYSTEM SHALL 使用 archive/tombstone 而不是破坏历史的硬删除；同 ID 重建必须返回
 确定性冲突或显式恢复流程，不能产生数据库唯一键异常。
 
 当前删除 latest row 会保留 revision row，同 ID 重建 revision 1 可触发底层唯一键错误。
 
-### CORE-006 — Instance desired/observed state
+### CORE-006 — Deployment desired/observed state
 
 状态：`Specified`，目标版本：`0.3`
 
-WHEN Instance 被启动、停止或云端 controller 协调
+WHEN 正式 deployment 被启动、停止或云端 controller 协调
 THE SYSTEM SHALL 分离 desired state、observed state、generation 和 deployment profile；
 普通客户端不能直接自报 observed `ready`。
 
@@ -80,7 +91,7 @@ THE SYSTEM SHALL 分离 desired state、observed state、generation 和 deployme
 
 ### RUN-001 — 显式生命周期
 
-状态：`Partial`，目标版本：`0.2`
+状态：`Partial`，目标版本：`0.1`
 
 WHEN Run 被提交、暂停、等待输入/审批、恢复、完成、失败或取消
 THE SYSTEM SHALL 只允许规范状态机中的 compare-and-swap 转换，并记录转换原因。
@@ -145,6 +156,17 @@ THE SYSTEM SHALL 断开或降级该订阅者并让其从持久 sequence 追赶�
 当前实现清空该订阅者的有界 live queue、投递断开信号并保留 SQLite 事件；客户端可按
 最后收到的 sequence 重连补播。
 
+### RUN-010 — Agent revision 直接运行
+
+状态：`Implemented`，目标版本：`0.1`
+
+WHEN 操作者发起一个 Run
+THE SYSTEM SHALL 要求一个 Agent，并允许选择该 Agent 的历史 revision；不选择时使用
+提交时 Agent 的 `latest` 标签所指向的 revision，而不是历史表中的最大 revision。
+
+THE SYSTEM SHALL 在持久化 Run 前拒绝不存在、禁用或拓扑无效的 revision，并在 Run、
+`run.started` 和终态 metrics 中保留实际 revision。
+
 ### PROTO-001 — HTTP API 版本
 
 状态：`Implemented`，目标版本：`0.1`
@@ -173,7 +195,7 @@ THE SYSTEM SHALL 拒绝缺失节点、禁用节点、缺失钉住 revision 和�
 
 validator 沿 mount 的实际 pinned revision 递归，以 `(Agent ID, revision)` 记录访问状态；
 RunManager 校验本次实际执行的 root revision，而不是同 ID 的 latest。“旧 revision
-无环、latest 有环”及相反方向在 child mount 和 pinned root instance 上均有回归测试。
+无环、latest 有环”及相反方向均有回归测试。
 
 ### MAG-002 — Bounded nested call
 
@@ -217,7 +239,7 @@ THE SYSTEM SHALL 显式选择 `none`、`read_only`、`copy_on_write` 或受审�
 
 WHEN bounded child 在根并发限制为 1 时继续调用下一层 child
 THE SYSTEM SHALL 以顺序执行或可重入安全的容量模型完成，不得在持有根 permit 时再次等待
-同一个 permit；任意时刻并发峰值不得超过 root、Instance 和 mount 的有效最小值。
+同一个 permit；任意时刻并发峰值不得超过 root 和 mount 的有效最小值。
 
 bounded child 使用所有权可检查的根并发 lease；等待下一层调用时让出 permit，取消或
 异常展开时只释放实际持有的 permit。三层、根并发为 1 的短超时回归测试已通过。
@@ -314,6 +336,64 @@ WHEN UAI Forge 以产品运行时启动
 THE SYSTEM SHALL 只在 registry 中暴露真实可调用的 provider 适配器；测试 provider、示例
 拓扑和伪造模型只能位于 `backend/tests` 测试边界，不得进入产品包、控制 API 或默认数据库。
 
+### EXT-008 — 受限远程只读工具
+
+状态：`Implemented`，目标版本：`0.1`
+
+WHEN Agent 调用内置 `tool.web_search`
+THE SYSTEM SHALL 使用有界 query/max-results 参数，通过可配置的 HTTPS 搜索端点返回标题、
+公开链接和摘要，并把结果标记为外部不可信参考资料。
+
+WHEN Agent 调用内置 `tool.web_fetch`
+THE SYSTEM SHALL 只访问公开 HTTPS URL，在每个重定向跳转重新执行公网地址校验，并限制
+超时、响应字节数和输出字符数；工具不得执行 JavaScript、提交表单或返回原始 HTML。
+
+WHEN Agent 调用内置 `tool.web_json` 或 `tool.web_rss`
+THE SYSTEM SHALL 只读取公开 HTTPS JSON、RSS 或 Atom 端点，限制超时、响应字节数和返回
+条目/结构化输出大小；结果必须标记为外部不可信参考资料，且工具不得接受自定义凭据或请求头。
+
+WHEN Web 工具遇到私网/本机地址、userinfo、敏感 query 参数、非 HTTPS 协议、超限响应或
+上游错误
+THE SYSTEM SHALL 以稳定的非敏感错误失败，不发起越界请求，也不回显 URL 中的敏感值。
+
+默认工具仍只是单进程适配器边界；DNS rebinding、真实 egress ACL 和供应商条款由部署边界
+负责，浏览器自动化和二进制下载不在本要求内。
+
+### EXT-009 — 可插拔沙箱端口
+
+状态：`Implemented`（单进程适配器边界），目标版本：`0.1`
+
+WHEN 扩展注册 sandbox provider
+THE SYSTEM SHALL 通过 UAI Forge 自有 `SandboxProvider`、`SandboxRequest`、`SandboxResult`
+和 `PluginManifest(kind=sandbox)` 合同发现、校验和创建 provider；核心不得暴露 Docker、
+gVisor、Kata、Firecracker 或 Wasm 对象。
+
+WHEN `tool.sandbox_exec` 被显式绑定并调用
+THE SYSTEM SHALL 只接受有界 argv、stdin、timeout 和 output 参数，把执行委托给已注册的
+sandbox provider，并返回有界、结构化、可审计结果；不得拼接 shell 或传入宿主环境变量。
+
+### SEC-008 — 默认硬化与 fail closed
+
+状态：`Partial`，目标版本：`0.1`
+
+WHEN 使用内置 `sandbox.docker`
+THE SYSTEM SHALL 在子容器中使用无网络、只读 rootfs、临时工作区、非 root UID、删除全部
+Linux capabilities、`no-new-privileges` 和 CPU/内存/pids/超时/输出限制；镜像必须由绑定
+显式指定，并默认不在线拉取。
+
+WHEN sandbox 配置、命令、超时、输出或 provider 不符合边界
+THE SYSTEM SHALL 在启动子进程前以稳定的非敏感错误失败；超时/取消必须终止执行并尝试
+清理容器，不把 Docker socket、宿主挂载、凭据或原始进程句柄交给 Agent。
+
+### DEP-005 — 沙箱部署边界
+
+状态：`Specified`，目标版本：`0.1`
+
+WHEN 部署者启用 Docker sandbox
+THE SYSTEM SHALL 要求 dedicated/rootless Docker 或受认证保护的远程 sandbox executor；
+部署不得把 rootful Docker socket 暴露给不可信 Agent 路径，并必须由部署 profile 负责镜像
+allowlist/digest、宿主 egress、runtime profile、kernel 更新和 escape/故障演练。
+
 ## 安全、身份与隐私
 
 ### SEC-001 — Secret 只存引用
@@ -325,9 +405,8 @@ THE SYSTEM SHALL 持久化 tenant-scoped ModelConfig，在受信任边界解析�
 不进入配置响应、事件、日志、prompt、trace 或 HTML。
 
 当前 provider 仅通过数据库 ModelConfig 解引用并在运行时短暂解析；缺少数据库配置或凭据时
-fail closed。Model、Tool、Memory、Middleware、Instance
-override、Run metadata 和 RuntimeConfig 已递归拒绝常见明文 credential key；Agent/Instance
-PATCH 会重建完整模型以避免跳过校验。生产级 Secret Manager 轮换、插件自定义敏感字段和
+fail closed。Model、Tool、Memory、Middleware、Run metadata 和 RuntimeConfig 已递归拒绝
+常见明文 credential key；Agent PATCH 会重建完整模型以避免跳过校验。生产级 Secret Manager 轮换、插件自定义敏感字段和
 完整日志/异常/HTML 全输出泄露覆盖仍待后续版本。
 
 ### SEC-002 — 可信租户隔离
@@ -398,21 +477,22 @@ lint、typecheck、production build/test 和容器构建不得依赖维护者个
 
 ## 控制后台与观测
 
-### UI-001 — 管理多个 Agent 与 Instance
+### UI-001 — 管理 Agent 修订与运行
 
 状态：`Partial`，目标版本：`0.2`
 
 WHEN Agent 构建者使用 Web 后台
-THE SYSTEM SHALL 可创建、查看、修订 Agent，管理多个 Instance、mount 模式和策略，并以
+THE SYSTEM SHALL 可创建、查看、修订 Agent，选择 Run 的根 revision、管理 mount 模式和策略，并以
 插件 JSON Schema 在服务端驱动验证。
 
-`0.1.x` 已支持创建和发布不可变 Agent 修订，选择 ModelConfig、工具别名/权限/JSON、
-memory、middleware、mount alias/固定 revision/并发/输入模板/下游工具插件范围和执行
-策略；也支持创建多个固定 revision 的 Instance、启停、真实 Run history 与连接状态明示。
+`0.1.x` 已支持创建 draft、发布不可变 Agent 修订，查看版本历史、latest 标签、回滚和
+从历史继续编辑；同时支持选择 ModelConfig、工具别名/权限/JSON、
+memory、middleware、mount alias/可选固定 revision/并发/输入模板/下游工具插件范围和执行
+策略；运行时支持选择 Agent 历史 revision 或默认使用 latest 标签，并提供真实 Run history
+与连接状态明示。
 
 当前仍为 `Partial`：第三方插件配置使用通用 JSON 对象而不是由 manifest JSON Schema
-自动生成控件；尚无 Instance policy override 编辑、revision diff、peer session 或
-desired/observed deployment controller。
+自动生成控件；尚无 revision diff、peer session 或 desired/observed deployment controller。
 
 ### UI-002 — 真实连接状态
 
