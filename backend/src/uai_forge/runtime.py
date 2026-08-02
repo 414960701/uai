@@ -177,6 +177,18 @@ class RootConcurrencyLease:
 
 class AgentRuntime:
     _FAST_PATH_LABEL = "weather_missing_location"
+    # Tool output is untrusted context. Keep one large result from crowding
+    # out the task, and compact old tool rounds before the next model call.
+    # These are character budgets (not token budgets) so the guard works even
+    # when a provider does not report usage until after completion.
+    _MAX_TOOL_RESULT_CONTEXT_CHARS = 16_000
+    _MAX_MODEL_HISTORY_CHARS = 160_000
+    _MAX_MODEL_HISTORY_MESSAGES = 24
+    _CONTEXT_COMPACTION_MESSAGE = (
+        "[UAI runtime] Earlier tool rounds were compacted to keep the context bounded. "
+        "Reuse durable workspace documents/checkpoints and recent results; do not repeat "
+        "an identical read without a new question."
+    )
     # A tool plugin is an extension boundary. An omitted timeout must never
     # leave a Run waiting forever on an unresponsive adapter.
     _DEFAULT_TOOL_TIMEOUT_SECONDS = 30.0
@@ -499,6 +511,119 @@ class AgentRuntime:
         return cleaned
 
     @classmethod
+    def _serialize_tool_result_for_model(cls, value: Any) -> str:
+        """Serialize a tool result without allowing context to grow unbounded.
+
+        Tool adapters may legitimately return large files or API responses.
+        The workspace contract already supports offset/limit reads, so a
+        truncated result is actionable: the model can request the missing
+        range instead of carrying every previous byte into every later call.
+        """
+
+        encoded = json.dumps(value, ensure_ascii=False, default=str)
+        if len(encoded) <= cls._MAX_TOOL_RESULT_CONTEXT_CHARS:
+            return encoded
+        return (
+            encoded[: cls._MAX_TOOL_RESULT_CONTEXT_CHARS]
+            + "\n[UAI tool result truncated; request a narrower offset/limit range if needed]"
+        )
+
+    @staticmethod
+    def _message_context_chars(message: ModelMessage) -> int:
+        return len(json.dumps(message.model_dump(), ensure_ascii=False, default=str))
+
+    @classmethod
+    def _compact_model_history(
+        cls,
+        base_history: List[ModelMessage],
+        history: List[ModelMessage],
+        pinned_messages: Optional[List[ModelMessage]] = None,
+    ) -> Tuple[List[ModelMessage], Optional[Dict[str, int]]]:
+        """Keep the initial contract and recent complete tool rounds only.
+
+        A long-running tool loop otherwise resends every prior file/API result
+        on every model request. Preserve the initial system contract and the
+        current task message, while allowing old memory and tool rounds to be
+        dropped. Whole assistant/tool rounds are dropped together so an
+        assistant tool call is never separated from its tool result.
+
+        ``base_history`` is a prefix of ``history``. ``pinned_messages`` may be
+        interleaved with droppable history (the current user task is normally
+        after session memory), so it is removed from the candidate tail and
+        reinserted next to the contract when compaction is needed.
+        """
+
+        base_ids = {id(item) for item in base_history}
+        # The initial task history places session memory before the current
+        # user message and between system contract messages. Identify the
+        # fixed contract by identity instead of assuming it is a contiguous
+        # prefix; after the first compaction it becomes a real prefix.
+        tail = [item for item in history if id(item) not in base_ids]
+        pinned = pinned_messages or []
+        pinned_ids = {id(item) for item in pinned}
+        total_chars = sum(cls._message_context_chars(item) for item in history)
+        if (
+            len(tail) <= cls._MAX_MODEL_HISTORY_MESSAGES
+            and total_chars <= cls._MAX_MODEL_HISTORY_CHARS
+        ):
+            return history, None
+
+        droppable_tail = [item for item in tail if id(item) not in pinned_ids]
+        chunks: List[List[ModelMessage]] = []
+        current: List[ModelMessage] = []
+        for message in droppable_tail:
+            if message.role == "assistant" and message.tool_calls and current:
+                chunks.append(current)
+                current = []
+            current.append(message)
+        if current:
+            chunks.append(current)
+
+        base_chars = sum(cls._message_context_chars(item) for item in base_history)
+        available_chars = max(1, cls._MAX_MODEL_HISTORY_CHARS - base_chars)
+        retained_reversed: List[List[ModelMessage]] = []
+        retained_chars = 0
+        retained_messages = 0
+        for chunk in reversed(chunks):
+            chunk_chars = sum(cls._message_context_chars(item) for item in chunk)
+            chunk_messages = len(chunk)
+            if retained_reversed and (
+                retained_chars + chunk_chars > available_chars
+                or retained_messages + chunk_messages > cls._MAX_MODEL_HISTORY_MESSAGES
+            ):
+                break
+            retained_reversed.append(chunk)
+            retained_chars += chunk_chars
+            retained_messages += chunk_messages
+
+        retained = [item for chunk in reversed(retained_reversed) for item in chunk]
+        dropped_messages = len(droppable_tail) - len(retained)
+        compacted = list(base_history)
+        pinned_to_reinsert = [item for item in pinned if id(item) not in base_ids]
+        has_compaction_marker = any(
+            item.role == "system"
+            and item.content == cls._CONTEXT_COMPACTION_MESSAGE
+            for item in base_history
+        )
+        if (dropped_messages or pinned_to_reinsert) and not has_compaction_marker:
+            compacted.append(
+                ModelMessage(
+                    role="system",
+                    content=cls._CONTEXT_COMPACTION_MESSAGE,
+                )
+            )
+        compacted.extend(pinned_to_reinsert)
+        compacted.extend(retained)
+        return compacted, {
+            "dropped_messages": dropped_messages,
+            "retained_messages": len(retained),
+            "original_history_chars": total_chars,
+            "history_chars": sum(
+                cls._message_context_chars(item) for item in compacted
+            ),
+        }
+
+    @classmethod
     def _tool_timeout_seconds(
         cls,
         spec: AgentSpec,
@@ -700,6 +825,7 @@ class AgentRuntime:
                 if spec.memory.enabled
                 else None
             )
+            task_message = ModelMessage(role="user", content=input_text)
             history = [
                 ModelMessage(role="system", content=spec.system_prompt),
                 *(
@@ -707,7 +833,7 @@ class AgentRuntime:
                     if memory is not None
                     else []
                 ),
-                ModelMessage(role="user", content=input_text),
+                task_message,
             ]
             if execution_mode is ExecutionMode.PLAN:
                 history.insert(
@@ -739,6 +865,11 @@ class AgentRuntime:
                         ),
                     ),
                 )
+            # Session memory is useful context, but it is not part of the
+            # immutable task contract and may be compacted when a run grows.
+            # Keep only system contract messages in the fixed prefix; the
+            # current task is pinned separately even though memory precedes it.
+            base_history = [item for item in history if item.role == "system"]
             model_binding = await self._resolve_model_binding(run.tenant_id, spec.model)
             provider = self.registry.create_provider(model_binding)
             middlewares = self.registry.create_middlewares(spec.middlewares)
@@ -790,6 +921,41 @@ class AgentRuntime:
 
             for local_step in range(spec.policy.max_steps):
                 await budget.consume_step()
+                history, compaction = self._compact_model_history(
+                    base_history,
+                    history,
+                    pinned_messages=[task_message],
+                )
+                if compaction is not None:
+                    task_index = next(
+                        (
+                            index
+                            for index, item in enumerate(history)
+                            if item is task_message
+                        ),
+                        None,
+                    )
+                    if task_index is not None:
+                        # Make the compacted contract the next call's prefix;
+                        # this prevents the same task/marker from being
+                        # reinserted on every later compaction.
+                        base_history = history[: task_index + 1]
+                    await self._emit(
+                        run,
+                        EventType.AGENT_PROGRESS,
+                        spec.id,
+                        depth,
+                        {
+                            "phase": "context_compacted",
+                            "status": "complete",
+                            "message": "已压缩历史工具上下文",
+                            **compaction,
+                            "public": True,
+                        },
+                        parent_agent_id,
+                        span_id,
+                        parent_span_id,
+                    )
                 request = ModelRequest(
                     model=model_binding.model,
                     messages=history,
@@ -1324,7 +1490,7 @@ class AgentRuntime:
                 span_id,
                 parent_span_id,
             )
-            return json.dumps(result, ensure_ascii=False, default=str)
+            return self._serialize_tool_result_for_model(result)
         except Exception as exc:
             await self._emit(
                 run,
@@ -1470,7 +1636,7 @@ class AgentRuntime:
                 span_id=child_span_id,
                 parent_span_id=parent_agent_span_id,
             )
-            return result
+            return self._serialize_tool_result_for_model(result)
         except Exception as exc:
             await self._emit(
                 run,

@@ -25,7 +25,7 @@ from uai_forge.registry import PluginRegistry
 from uai_forge.run_manager import InvalidTopologyError, RunManager
 from uai_forge.runtime import AgentRuntime
 from uai_forge.storage import SQLiteRepository
-from uai_forge.ports import TokenUsage
+from uai_forge.ports import ModelMessage, TokenUsage, ToolCall
 from test_support import register_test_provider
 
 
@@ -85,6 +85,83 @@ def test_stream_usage_merge_preserves_partial_cache_dimensions():
     assert merged.cached_input_tokens == 8
     assert merged.cache_creation_input_tokens == 1
     assert merged.total_tokens == 16
+
+
+def test_large_tool_results_are_bounded_before_the_next_model_call():
+    result = AgentRuntime._serialize_tool_result_for_model("x" * 50_000)
+
+    assert len(result) < 17_000
+    assert "tool result truncated" in result
+
+
+def test_model_history_compaction_keeps_base_and_recent_tool_rounds():
+    base = [
+        ModelMessage(role="system", content="system contract"),
+        ModelMessage(role="user", content="evolve the framework"),
+    ]
+    history = list(base)
+    for index in range(20):
+        history.extend(
+            [
+                ModelMessage(
+                    role="assistant",
+                    content="inspect",
+                    tool_calls=[ToolCall(id=f"call-{index}", name="workspace")],
+                ),
+                ModelMessage(
+                    role="tool",
+                    tool_call_id=f"call-{index}",
+                    name="workspace",
+                    content="result-" + ("x" * 12_000),
+                ),
+            ]
+        )
+
+    compacted, metrics = AgentRuntime._compact_model_history(base, history)
+
+    assert metrics is not None
+    assert metrics["dropped_messages"] > 0
+    assert compacted[:2] == base
+    assert len(compacted) <= len(base) + AgentRuntime._MAX_MODEL_HISTORY_MESSAGES + 1
+    assert "result-" + ("x" * 12_000) in compacted[-1].content
+
+
+def test_model_history_compaction_preserves_current_task_over_old_memory():
+    system = ModelMessage(role="system", content="system contract")
+    task = ModelMessage(role="user", content="current task must remain")
+    history = [system]
+    history.extend(
+        ModelMessage(role="assistant", content=f"old memory {index}")
+        for index in range(40)
+    )
+    history.append(task)
+    for index in range(12):
+        history.extend(
+            [
+                ModelMessage(
+                    role="assistant",
+                    content="inspect",
+                    tool_calls=[ToolCall(id=f"pinned-call-{index}", name="workspace")],
+                ),
+                ModelMessage(
+                    role="tool",
+                    tool_call_id=f"pinned-call-{index}",
+                    name="workspace",
+                    content="result-" + ("y" * 12_000),
+                ),
+            ]
+        )
+
+    compacted, metrics = AgentRuntime._compact_model_history(
+        [system],
+        history,
+        pinned_messages=[task],
+    )
+
+    assert metrics is not None
+    assert any(item is task for item in compacted)
+    assert compacted.index(task) > compacted.index(system)
+    assert all("old memory" not in (item.content or "") for item in compacted)
 
 
 @pytest.mark.asyncio
