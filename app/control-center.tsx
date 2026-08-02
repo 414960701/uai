@@ -7343,7 +7343,7 @@ function EditAgentModal({
             <legend>运行策略</legend>
             <p>发布会创建不可变的新修订；运行中的旧修订不受影响。</p>
             <div className="policy-editor-grid">
-              <label className="form-field"><span>最大步数</span><input type="number" min={1} max={128} value={policy.max_steps} onChange={(event) => setPolicy((current) => ({ ...current, max_steps: Math.max(1, Number(event.target.value) || 1) }))} /></label>
+              <label className="form-field"><span>最大步数</span><input type="number" min={1} max={512} value={policy.max_steps} onChange={(event) => setPolicy((current) => ({ ...current, max_steps: Math.min(512, Math.max(1, Number(event.target.value) || 1)) }))} /></label>
               <label className="form-field"><span>最大深度</span><input type="number" min={0} max={16} value={policy.max_depth} onChange={(event) => setPolicy((current) => ({ ...current, max_depth: Math.max(0, Number(event.target.value) || 0) }))} /></label>
               <label className="form-field"><span>工具调用</span><input type="number" min={0} max={1024} value={policy.max_tool_calls} onChange={(event) => setPolicy((current) => ({ ...current, max_tool_calls: Math.max(0, Number(event.target.value) || 0) }))} /></label>
               <label className="form-field"><span>子 Agent 并发</span><input type="number" min={1} max={128} value={policy.max_parallel_children} onChange={(event) => setPolicy((current) => ({ ...current, max_parallel_children: Math.max(1, Number(event.target.value) || 1) }))} /></label>

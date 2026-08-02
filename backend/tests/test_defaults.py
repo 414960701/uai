@@ -4,6 +4,7 @@ from uai_forge.models import (
     DEFAULT_AGENT_TOOL_PLUGIN_IDS,
     default_tool_bindings,
 )
+from pydantic import ValidationError
 
 
 def test_new_agent_defaults_are_usable_for_remote_multistep_work():
@@ -23,3 +24,13 @@ def test_new_agent_defaults_are_usable_for_remote_multistep_work():
         alias="researcher",
         agent_id="agt_researcher",
     ).max_concurrency == 4
+
+
+def test_execution_policy_allows_long_running_evolution_but_remains_bounded():
+    assert ExecutionPolicy(max_steps=512).max_steps == 512
+    try:
+        ExecutionPolicy(max_steps=513)
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError("max_steps must remain bounded at 512")

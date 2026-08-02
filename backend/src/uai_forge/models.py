@@ -600,7 +600,11 @@ class ChildMount(StrictModel):
 
 
 class ExecutionPolicy(StrictModel):
-    max_steps: int = Field(default=20, ge=1, le=128)
+    # Long-running research/evolution agents need more than the interactive
+    # baseline's 128-step ceiling. Keep the bound finite so a bad revision
+    # cannot create an unbounded run, while allowing multi-phase work to
+    # finish within one audited invocation.
+    max_steps: int = Field(default=20, ge=1, le=512)
     max_depth: int = Field(default=6, ge=0, le=16)
     max_tool_calls: int = Field(default=64, ge=0, le=1024)
     max_parallel_children: int = Field(default=6, ge=1, le=128)
