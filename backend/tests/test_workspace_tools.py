@@ -78,6 +78,25 @@ async def test_workspace_lists_and_reads_bounded_non_sensitive_files(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_workspace_reads_a_segment_from_a_large_text_file(tmp_path):
+    root, tool = _make_repo(tmp_path)
+    (root / "large.py").write_text(
+        "".join(f"line_{index:04d}\n" for index in range(6_000)),
+        encoding="utf-8",
+    )
+
+    result = await tool.invoke(
+        {"action": "read", "path": "large.py", "offset": 4_500, "limit": 2},
+        {},
+    )
+
+    assert result["content"] == "line_4500\nline_4501\n"
+    assert result["start_line"] == 4_501
+    assert result["end_line"] == 4_502
+    assert result["truncated"] is True
+
+
+@pytest.mark.asyncio
 async def test_workspace_rejects_escape_and_git_internal_paths(tmp_path):
     root, tool = _make_repo(tmp_path)
     (tmp_path / "outside.txt").write_text("outside\n", encoding="utf-8")

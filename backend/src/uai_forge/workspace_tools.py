@@ -267,30 +267,47 @@ class WorkspaceTool(ToolPlugin):
         if not file_path.is_file():
             raise ValueError("workspace.file_required")
         max_bytes = _bounded_int(self.config.get("max_output_bytes"), 120_000, 1_024, 200_000)
-        try:
-            with file_path.open("rb") as handle:
-                raw = handle.read(max_bytes + 1)
-        except OSError as exc:
-            raise ValueError("workspace.read_failed") from exc
-        if len(raw) > max_bytes:
-            raise ValueError("workspace.file_too_large")
-        if b"\x00" in raw:
-            raise ValueError("workspace.binary_file_denied")
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise ValueError("workspace.text_file_required") from exc
-        lines = text.splitlines(keepends=True)
         offset = _bounded_int(arguments.get("offset"), 0, 0, 1_000_000)
         limit = _bounded_int(arguments.get("limit"), 200, 1, 400)
-        selected = lines[offset : offset + limit]
+        selected: List[str] = []
+        selected_bytes = 0
+        truncated = False
+        try:
+            with file_path.open("rb") as handle:
+                for line_number, raw_line in enumerate(handle):
+                    if b"\x00" in raw_line:
+                        raise ValueError("workspace.binary_file_denied")
+                    if line_number < offset:
+                        continue
+                    if len(selected) >= limit:
+                        truncated = True
+                        break
+                    try:
+                        line = raw_line.decode("utf-8")
+                    except UnicodeDecodeError as exc:
+                        raise ValueError("workspace.text_file_required") from exc
+                    remaining = max_bytes - selected_bytes
+                    if remaining <= 0:
+                        truncated = True
+                        break
+                    encoded_size = len(raw_line)
+                    if encoded_size > remaining:
+                        selected.append(raw_line[:remaining].decode("utf-8", errors="ignore"))
+                        truncated = True
+                        break
+                    selected.append(line)
+                    selected_bytes += encoded_size
+        except ValueError:
+            raise
+        except OSError as exc:
+            raise ValueError("workspace.read_failed") from exc
         return {
             "action": "read",
             "path": relative,
             "start_line": offset + 1,
             "end_line": offset + len(selected),
             "content": _redact_text("".join(selected)),
-            "truncated": offset + limit < len(lines),
+            "truncated": truncated,
         }
 
     async def _collect(
