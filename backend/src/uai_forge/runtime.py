@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import time
@@ -184,6 +185,7 @@ class AgentRuntime:
     _MAX_TOOL_RESULT_CONTEXT_CHARS = 16_000
     _MAX_MODEL_HISTORY_CHARS = 160_000
     _MAX_MODEL_HISTORY_MESSAGES = 24
+    _REPEATED_TOOL_CALL_WARNING_THRESHOLD = 2
     _CONTEXT_COMPACTION_MESSAGE = (
         "[UAI runtime] Earlier tool rounds were compacted to keep the context bounded. "
         "Reuse durable workspace documents/checkpoints and recent results; do not repeat "
@@ -527,6 +529,18 @@ class AgentRuntime:
             encoded[: cls._MAX_TOOL_RESULT_CONTEXT_CHARS]
             + "\n[UAI tool result truncated; request a narrower offset/limit range if needed]"
         )
+
+    @staticmethod
+    def _tool_call_signature(call: ToolCall) -> str:
+        """Return a non-sensitive identity for one exact tool request."""
+
+        encoded = json.dumps(
+            {"name": call.name, "arguments": call.arguments},
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _message_context_chars(message: ModelMessage) -> int:
@@ -918,6 +932,8 @@ class AgentRuntime:
                     tool_name,
                     definition["function"]["parameters"],
                 )
+            repeated_tool_calls: Dict[str, int] = {}
+            repeated_tool_warnings: Dict[str, int] = {}
 
             for local_step in range(spec.policy.max_steps):
                 await budget.consume_step()
@@ -1228,6 +1244,19 @@ class AgentRuntime:
                         tool_calls=output.tool_calls,
                     )
                 )
+                repeated_calls = 0
+                for call in output.tool_calls:
+                    signature = self._tool_call_signature(call)
+                    count = repeated_tool_calls.get(signature, 0) + 1
+                    repeated_tool_calls[signature] = count
+                    last_warning = repeated_tool_warnings.get(signature, 0)
+                    if (
+                        count >= self._REPEATED_TOOL_CALL_WARNING_THRESHOLD
+                        and count - last_warning
+                        >= self._REPEATED_TOOL_CALL_WARNING_THRESHOLD
+                    ):
+                        repeated_tool_warnings[signature] = count
+                        repeated_calls = max(repeated_calls, count)
                 executions = [
                     self._execute_tool_call(
                         run=run,
@@ -1297,6 +1326,37 @@ class AgentRuntime:
                             name=call.name,
                             tool_call_id=call.id,
                             content=result,
+                        )
+                    )
+                if repeated_calls:
+                    await self._emit(
+                        run,
+                        EventType.AGENT_PROGRESS,
+                        spec.id,
+                        depth,
+                        {
+                            "phase": "repeated_tool_call",
+                            "status": "degraded",
+                            "message": (
+                                "检测到相同工具请求重复执行；请复用已有结果，换一个具体问题，"
+                                "或进入实施/测试阶段"
+                            ),
+                            "repeat_count": repeated_calls,
+                            "public": True,
+                        },
+                        parent_agent_id,
+                        span_id,
+                        parent_span_id,
+                    )
+                    history.append(
+                        ModelMessage(
+                            role="system",
+                            content=(
+                                "[UAI runtime] The exact same tool request has been repeated. "
+                                "Reuse the result already in context; choose a new question, "
+                                "implement the selected change, or run its validation instead "
+                                "of issuing the identical request again."
+                            ),
                         )
                     )
             raise BudgetExceededError(

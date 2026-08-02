@@ -36,6 +36,18 @@ requirements:
       - ../../../../backend/src/uai_forge/runtime.py::AgentRuntime._merge_usage
     verification:
       - ../../../../backend/tests/test_runtime.py::test_stream_usage_merge_preserves_partial_cache_dimensions
+  CTX-004:
+    contracts:
+      - requirements.md
+      - design.md
+      - ../../../../docs/architecture/adr/ADR-0016-bounded-context-and-evidence-led-evolution.md
+    implementation:
+      - ../../../../backend/src/uai_forge/runtime.py::AgentRuntime._tool_call_signature
+      - ../../../../backend/src/uai_forge/runtime.py::AgentRuntime._execute_agent
+    verification:
+      - ../../../../backend/tests/test_runtime.py::test_tool_call_signature_is_stable_without_retaining_arguments
+      - ../../../../backend/tests/test_runtime.py::test_repeated_tool_call_emits_non_blocking_feedback
+      - backend-pytest
   RES-001:
     contracts:
       - requirements.md

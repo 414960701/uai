@@ -1658,13 +1658,18 @@ requirements:
       - "backend/src/uai_forge/runtime.py::AgentRuntime._serialize_tool_result_for_model"
       - "backend/src/uai_forge/runtime.py::AgentRuntime._compact_model_history"
       - "backend/src/uai_forge/runtime.py::AgentRuntime._delegate"
+      - "backend/src/uai_forge/runtime.py::AgentRuntime._tool_call_signature"
+      - "backend/src/uai_forge/runtime.py::AgentRuntime._execute_agent"
     verification:
       - "backend/tests/test_runtime.py::test_large_tool_results_are_bounded_before_the_next_model_call"
       - "backend/tests/test_runtime.py::test_model_history_compaction_keeps_base_and_recent_tool_rounds"
       - "backend/tests/test_runtime.py::test_model_history_compaction_preserves_current_task_over_old_memory"
+      - "backend/tests/test_runtime.py::test_tool_call_signature_is_stable_without_retaining_arguments"
+      - "backend/tests/test_runtime.py::test_repeated_tool_call_emits_non_blocking_feedback"
       - "python -m pytest backend/tests -q"
     limits:
       - "默认字符防线不是跨 Provider 的精确 tokenizer；超大单轮仍会保留一个完整轮次以避免拆开工具合同"
+      - "重复工具告警是非阻断反馈，不替代全局预算、超时、取消和 Provider 侧幂等治理"
 
   - id: "RES-001"
     status: "partial"

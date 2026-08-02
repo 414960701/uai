@@ -25,7 +25,7 @@ from uai_forge.registry import PluginRegistry
 from uai_forge.run_manager import InvalidTopologyError, RunManager
 from uai_forge.runtime import AgentRuntime
 from uai_forge.storage import SQLiteRepository
-from uai_forge.ports import ModelMessage, TokenUsage, ToolCall
+from uai_forge.ports import ModelMessage, ModelOutput, TokenUsage, ToolCall
 from test_support import register_test_provider
 
 
@@ -92,6 +92,97 @@ def test_large_tool_results_are_bounded_before_the_next_model_call():
 
     assert len(result) < 17_000
     assert "tool result truncated" in result
+
+
+def test_tool_call_signature_is_stable_without_retaining_arguments():
+    first = AgentRuntime._tool_call_signature(
+        ToolCall(id="one", name="workspace", arguments={"action": "list"})
+    )
+    same_request = AgentRuntime._tool_call_signature(
+        ToolCall(id="two", name="workspace", arguments={"action": "list"})
+    )
+    different_request = AgentRuntime._tool_call_signature(
+        ToolCall(
+            id="three",
+            name="workspace",
+            arguments={"action": "read", "path": "docs/research/README.md"},
+        )
+    )
+
+    assert first == same_request
+    assert first != different_request
+    assert len(first) == 64
+
+
+@pytest.mark.asyncio
+async def test_repeated_tool_call_emits_non_blocking_feedback(tmp_path, monkeypatch):
+    repository, manager = await make_runtime(tmp_path)
+    agent = await repository.save_agent(
+        "default",
+        AgentSpec(
+            id="agt_repeated_tool_feedback",
+            name="Repeated Tool Feedback",
+            system_prompt="Use the echo tool, then finish the task.",
+            tools=[ToolBinding(plugin_id="tool.echo", alias="echo")],
+            policy=ExecutionPolicy(max_steps=6, max_tool_calls=10),
+        ),
+    )
+
+    class RepeatingProvider:
+        def __init__(self):
+            self.calls = 0
+            self.requests = []
+
+        async def complete(self, request):
+            self.calls += 1
+            self.requests.append(request)
+            if self.calls <= 4:
+                return ModelOutput(
+                    tool_calls=[
+                        ToolCall(
+                            id=f"repeated_{self.calls}",
+                            name="echo",
+                            arguments={"input": "same request"},
+                        )
+                    ],
+                    usage=TokenUsage(input_tokens=1, output_tokens=1),
+                )
+            return ModelOutput(
+                content="implemented after feedback",
+                usage=TokenUsage(input_tokens=1, output_tokens=1),
+            )
+
+    provider = RepeatingProvider()
+    monkeypatch.setattr(
+        manager.runtime.registry,
+        "create_provider",
+        lambda binding: provider,
+    )
+
+    run = await manager.start(
+        "default",
+        RunRequest(agent_id=agent.id, input="complete the task"),
+    )
+    finished = await manager.wait("default", run.id)
+    events = await repository.list_events("default", run.id)
+
+    repeated = [
+        event
+        for event in events
+        if event.type == EventType.AGENT_PROGRESS
+        and event.payload.get("phase") == "repeated_tool_call"
+    ]
+    assert finished.status == RunStatus.SUCCEEDED
+    assert finished.output == "implemented after feedback"
+    assert [event.payload["repeat_count"] for event in repeated] == [2, 4]
+    assert all(event.payload["status"] == "degraded" for event in repeated)
+    assert all(event.payload["public"] is True for event in repeated)
+    assert any(
+        message.role == "system"
+        and "exact same tool request" in (message.content or "")
+        for request in provider.requests
+        for message in request.messages
+    )
 
 
 def test_model_history_compaction_keeps_base_and_recent_tool_rounds():
