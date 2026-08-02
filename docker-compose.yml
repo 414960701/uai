@@ -8,11 +8,13 @@ services:
       dockerfile: Dockerfile
       args:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.11}
+        UAI_FORGE_WORKSPACE_TOOLS: ${UAI_FORGE_WORKSPACE_TOOLS:-1}
     environment:
       UAI_FORGE_ALLOWED_ORIGINS: ${UAI_FORGE_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       UAI_FORGE_CONTROL_API_KEY: ${UAI_FORGE_CONTROL_API_KEY:-}
       UAI_FORGE_CREDENTIAL_MASTER_KEY: ${UAI_FORGE_CREDENTIAL_MASTER_KEY:-}
       UAI_FORGE_DATABASE_PATH: /data/forge.db
+      UAI_FORGE_WORKSPACE_ROOT: /workspace
       UAI_FORGE_HOST: 0.0.0.0
       UAI_FORGE_PORT: "8000"
     # Some Colima/Docker Desktop setups do not expose host DNS servers to
@@ -27,6 +29,10 @@ services:
     stop_grace_period: 30s
     volumes:
       - uai-forge-data:/data
+      # Local development only: tool.workspace is still explicit opt-in and
+      # the API container remains the non-root `uai` user. Production deploys
+      # must remove this bind mount and the workspace tool binding.
+      - ${UAI_FORGE_WORKSPACE_HOST_PATH:-.}:/workspace:rw
     healthcheck:
       test:
         - CMD
@@ -66,6 +72,6 @@ services:
 
 volumes:
   uai-forge-data:
-    # The v3 suffix identifies the current Agent draft/publish schema.
-    # Older volumes are retained but rejected by the compatibility gate.
+    # Keep the existing v3 volume name so the additive v3 -> v4 migration
+    # preserves local Agent/Run data; older unsupported volumes remain gated.
     name: ${UAI_FORGE_DATA_VOLUME:-uai-forge-data-v3}

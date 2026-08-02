@@ -33,10 +33,10 @@ flowchart LR
 - Web 通过可配置的 API base URL 访问 FastAPI。
 - 未连接时页面明确显示未连接状态；页面不生成 Agent、模型、凭据或运行事件数据。
 - SQLite 保存定义、草稿/发布修订、Run 和 Run Event；运行实例不是独立资源。
-- 启动先执行 schema compatibility gate：当前 SQLite schema version 为 `3`，必须包含 Agent
+- 启动先执行 schema compatibility gate：当前 SQLite schema version 为 `4`，必须包含 Agent
   lifecycle 的 `status`/`published_at` 字段；旧 schema、旧 Instance 表、旧 `instance_id`
   运行目标列和 `CredentialProfile`/`ModelProfile` legacy 表会在业务读写前 fail closed。
-  `uai-forge doctor` 输出只读兼容状态以及 backup/rebuild remediation，不执行迁移。
+  完整 SQLite v3 只执行 `tool_credentials` 的无损增量迁移；`uai-forge doctor` 只读报告待迁移状态，不执行迁移。
 - Memory、Task、并发锁和 live fan-out 仍在 Python 进程内。
 - API key 为空时控制 API 无认证；设置后也只是单一共享控制密钥。
 
@@ -80,6 +80,13 @@ flowchart LR
 工具的 API 容器。应使用 rootless/dedicated Docker daemon 或独立 sandbox executor，按
 镜像 allowlist/digest、宿主 egress、runtime profile 和租户配额部署；控制面只提交自有
 `SandboxRequest`，不接收 Docker flags、宿主挂载或环境变量。
+
+本地自进化开发可显式启用 `tool.workspace` 和 `tool.git`。当前 Compose 会把项目目录以非 root 用户
+挂载到 API 容器的 `/workspace`；workspace 只提供有界读取、Git 状态/差异、固定后端 pytest
+和受校验 patch，`tool.git` 还可在 binding 仓库内执行常规 pull、commit 和 push。两者都不是
+生产级共享工作区、冲突解决器或任意 Git shell。
+远程/生产部署必须移除该 bind mount 和 Agent 的 workspace/Git binding，且不得用它替代
+dedicated/rootless sandbox executor。
 
 `scripts/container-smoke.sh` 是可重复门禁：它以唯一 Compose project、动态 loopback
 端口和 volume 构建并启动两个生产镜像，等待 Web/API 健康，运行容器内 doctor，再通过
@@ -153,9 +160,9 @@ desired/observed controller 属于后续版本。
 
 ## 数据与 schema 边界
 
-- 当前 SQLite 使用 `schema_meta(component="sqlite", version=3, updated_at)` 作为兼容门。
-  只有新建数据库和完整当前 schema 会启动；旧 schema、旧 Instance/`instance_id` 结构和
-  缺失 Agent lifecycle 字段必须先备份再重建，不做静默迁移或旧语义猜测。
+- 当前 SQLite 使用 `schema_meta(component="sqlite", version=4, updated_at)` 作为兼容门。
+  完整 v3 仅增加工具凭证表后升级到 v4；更旧 schema、旧 Instance/`instance_id` 结构和
+  缺失 Agent lifecycle 字段必须先备份再重建，不做旧语义猜测。
 - 后续破坏性 schema 变化仍需增加新的显式 change package、备份提示和恢复验证；本基线不
   提供向前兼容窗口，也不原地重写 Agent Revision 和 Event 审计记录。
 - 插件状态使用 `plugin_id / state_schema_version` 命名空间，迁移失败时插件 fail closed。

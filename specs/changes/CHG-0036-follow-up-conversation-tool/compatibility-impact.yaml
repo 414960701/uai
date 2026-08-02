@@ -1,0 +1,14 @@
+change_id: CHG-0036
+status: additive
+breaking: false
+api:
+  additions:
+    - "builtin plugin manifest tool.conversation"
+    - "RunSubmissionPort private runtime boundary"
+storage:
+  schema_change: false
+  migration: none
+limits:
+  - no_durable_session
+  - no_global_loop_controller
+  - no_outbox_or_idempotency

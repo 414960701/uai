@@ -1,0 +1,19 @@
+change_id: CHG-0035
+status: additive
+breaking: false
+api:
+  additions:
+    - "builtin plugin manifest tool.git"
+    - "private runtime ToolCredentialPort context"
+storage:
+  schema_change: false
+  migration: none
+security:
+  credential_input: credential_ref_only
+  remote_scope: binding_repository_and_remote_name
+  force_push: forbidden
+  default_mount: disabled
+limits:
+  - no_conflict_automerge
+  - no_outbox_or_idempotency
+  - no_rbac_or_secret_manager_api

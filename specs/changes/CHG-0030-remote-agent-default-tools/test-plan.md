@@ -13,4 +13,5 @@ status: complete
 | 后端与新建表单预算/默认并发一致 | `backend/tests/test_defaults.py`、`tests/rendered-html.test.mjs` |
 | 控制台每个主要导航、Agent 创建向导、工具选择/取消、策略控件和关闭按钮可点击 | `manual-browser-2026-08-02`：独立临时 CDP；含模型配置、Agent revision、Run/Plan/Trace smoke |
 | 保存的真实模型连接、真实 Provider Run、calculator、web_fetch 和 web_search 页面调用 | `docs/testing/manual-browser-2026-08-02.md`：同一页面完成连接、创建/发布 Agent 和 4 条成功消息 |
+| 扩展工具不响应、fail-fast 取消和工具边界 | `backend/tests/test_runtime.py::test_tool_adapter_timeout_reaches_a_terminal_run` |
 | 回归门禁 | `python -m pytest backend/tests -q`、`npm run lint`、`npm run typecheck`、`npm test`、`make verify`、`git diff --check` |

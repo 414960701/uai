@@ -1,0 +1,47 @@
+change_id: CHG-0035
+status: in_progress
+implementation_status: implemented
+requirements:
+  GIT-001:
+    contracts:
+      - proposal.md
+      - requirements.md
+      - design.md
+      - ../../../../docs/architecture/adr/ADR-0015-git-workflow-tool.md
+    implementation:
+      - ../../../../backend/src/uai_forge/git_tools.py::GitTool._scope
+      - ../../../../backend/src/uai_forge/builtins.py::register_builtins
+      - ../../../../app/control-center.tsx::defaultToolConfig
+    verification:
+      - ../../../../backend/tests/test_git_tools.py
+      - backend-pytest
+  GIT-002:
+    contracts:
+      - requirements.md
+      - design.md
+    implementation:
+      - ../../../../backend/src/uai_forge/git_tools.py::GitTool._pull_or_push
+    verification:
+      - ../../../../backend/tests/test_git_tools.py::test_git_pull_uses_the_normal_repository_workflow
+      - ../../../../backend/tests/test_git_tools.py::test_git_push_resolves_credential_ref_without_returning_secret
+  GIT-003:
+    contracts:
+      - requirements.md
+      - design.md
+    implementation:
+      - ../../../../backend/src/uai_forge/git_tools.py::GitTool._commit_and_push
+    verification:
+      - ../../../../backend/tests/test_git_tools.py::test_git_commit_and_push_uses_the_normal_repository_workflow
+      - ../../../../backend/tests/test_git_tools.py::test_git_commit_accepts_normal_repository_paths_without_audit_gate
+  GIT-004:
+    contracts:
+      - requirements.md
+      - design.md
+      - ../../../../docs/architecture/adr/ADR-0015-git-workflow-tool.md
+    implementation:
+      - ../../../../backend/src/uai_forge/runtime.py::_tool_credential_port
+      - ../../../../backend/src/uai_forge/git_tools.py::GitTool._resolve_secret
+    verification:
+      - ../../../../backend/tests/test_git_tools.py::test_git_push_resolves_credential_ref_without_returning_secret
+      - ../../../../backend/tests/test_git_tools.py::test_git_push_fails_closed_without_private_credential_port
+      - backend-pytest

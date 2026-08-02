@@ -13,9 +13,11 @@ from .models import (
     ModelConnectionCheckRequest,
     ModelConnectionCheckResult,
     RuntimeConfigEntry,
+    ToolCredential,
     PluginManifest,
     RunEvent,
     RunRecord,
+    RunRequest,
     ExecutionMode,
     ThinkingMode,
     ThinkingResolution,
@@ -72,6 +74,33 @@ class ConfigurationPort(Protocol):
     async def get_runtime_config(
         self, tenant_id: str, key: str
     ) -> Optional[RuntimeConfigEntry]:
+        ...
+
+
+@runtime_checkable
+class ToolCredentialPort(Protocol):
+    """Internal runtime boundary for deployment-managed tool credentials."""
+
+    async def get_tool_credential(
+        self, tenant_id: str, credential_id: str
+    ) -> Optional[ToolCredential]:
+        ...
+
+    async def resolve_tool_credential_secret(
+        self,
+        tenant_id: str,
+        credential_id: str,
+        *,
+        include_disabled: bool = False,
+    ) -> Optional[str]:
+        ...
+
+
+@runtime_checkable
+class RunSubmissionPort(Protocol):
+    """Application boundary for a tool that starts a follow-up conversation."""
+
+    async def start(self, tenant_id: str, request: RunRequest) -> RunRecord:
         ...
 
 

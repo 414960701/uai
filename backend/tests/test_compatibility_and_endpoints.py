@@ -80,7 +80,9 @@ def test_previous_schema_version_requires_explicit_backup_and_rebuild(tmp_path: 
     )
     connection.execute(
         "INSERT INTO schema_meta VALUES ('sqlite', ?, '2026-08-01T00:00:00+00:00')",
-        (CURRENT_SCHEMA_VERSION - 1,),
+        # v3 is the additive-migration source; an older incomplete schema
+        # still requires the explicit backup/rebuild path.
+        (CURRENT_SCHEMA_VERSION - 2,),
     )
     connection.commit()
     connection.close()

@@ -618,8 +618,10 @@ requirements:
       - "backend/tests/test_api.py::test_control_plane_crud_and_capabilities"
       - "backend/tests/test_runtime.py::test_subscriber_closes_replay_live_registration_window_without_loss"
       - "tests/rendered-html.test.mjs::keeps advanced Agent configuration and real event history wired"
+      - "tests/rendered-html.test.mjs::projects active Run status from the live event reducer"
     evidence:
       - "manual-browser-2026-08-01: fixture-backed Run reached terminal success with seven ordered events and URL-restored history; reconnect/duplicate/degraded-polling E2E remains absent"
+      - "manual-browser-2026-08-02: run_a37beeadd49c4ade showed backend running while the initial UI status remained queued; refresh corrected it, confirming the missing active-status projection"
     gaps:
       - "缺少真实浏览器断线、重复事件、终态和降级轮询 E2E"
   - id: "CFG-005"
@@ -1523,6 +1525,7 @@ requirements:
     verification:
       - "backend/tests/test_web_tools.py"
       - "backend/tests/test_registry.py::test_builtin_tool_catalog_contains_remote_read_only_baseline"
+      - "backend/tests/test_runtime.py::test_tool_adapter_timeout_reaches_a_terminal_run"
       - "docs/testing/manual-browser-2026-08-02.md"
     limits:
       - "只读 HTTPS 文本检索/抓取；不执行 JavaScript、不提交表单、不下载任意二进制"
@@ -1592,6 +1595,7 @@ requirements:
     verification:
       - "backend/tests/test_sandbox.py::test_docker_sandbox_command_is_hardened_and_argv_only"
       - "backend/tests/test_sandbox.py::test_sandbox_request_rejects_empty_or_nul_command_parts"
+      - "backend/tests/test_sandbox.py::test_docker_sandbox_maps_missing_cli_to_stable_error"
       - "manual-docker-smoke-2026-08-02: alpine:3.20 argv success + 1s timeout + no uai-sbx-* orphan"
     limits:
       - "Docker daemon、镜像供应链、kernel escape、egress、租户配额和真实 cancel/cleanup 仍需部署故障测试"
@@ -1642,3 +1646,168 @@ requirements:
       - "npm run lint"
       - "npm run typecheck"
       - "npm test"
+
+  - id: "WORKSPACE-001"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0033-local-workspace-tools/proposal.md"
+      - "specs/changes/CHG-0033-local-workspace-tools/requirements.md"
+      - "specs/changes/CHG-0033-local-workspace-tools/design.md"
+      - "docs/architecture/adr/ADR-0011-local-workspace-tool.md"
+    implementation:
+      - "backend/src/uai_forge/workspace_tools.py::WorkspaceTool"
+      - "backend/src/uai_forge/builtins.py::register_builtins"
+      - "docker-compose.yml"
+      - "backend/Dockerfile"
+      - "app/control-center.tsx::defaultToolConfig"
+    verification:
+      - "backend/tests/test_workspace_tools.py"
+      - "backend/tests/test_workspace_tools.py::test_workspace_lists_and_reads_bounded_non_sensitive_files"
+      - "backend/tests/test_workspace_tools.py::test_workspace_invalid_patch_is_recoverable_and_does_not_write"
+      - "backend/tests/test_runtime.py::test_invalid_workspace_patch_is_recoverable_at_run_boundary"
+      - "docker compose config --quiet"
+      - "python -m pytest backend/tests -q"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+    limits:
+      - "仅本地开发显式 opt-in；不实现通用 workspace sharing、RBAC、copy-on-write 或生产级隔离"
+
+  - id: "CFG-010"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0034-tool-credentials/proposal.md"
+      - "specs/changes/CHG-0034-tool-credentials/requirements.md"
+      - "specs/changes/CHG-0034-tool-credentials/design.md"
+      - "docs/architecture/adr/ADR-0012-tool-credentials.md"
+    implementation:
+      - "backend/src/uai_forge/models.py::ToolCredential"
+      - "backend/src/uai_forge/storage.py::SQLiteRepository.resolve_tool_credential_secret"
+      - "backend/src/uai_forge/api.py::create_tool_credential"
+    verification:
+      - "backend/tests/test_tool_credentials.py"
+    limits:
+      - "当前仅提供凭证生命周期和内部 resolver；Git push 工具另行定义"
+
+  - id: "CFG-011"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0034-tool-credentials/requirements.md"
+      - "specs/changes/CHG-0034-tool-credentials/design.md"
+    implementation:
+      - "app/control-center.tsx::ToolCredentialsView"
+    verification:
+      - "tests/rendered-html.test.mjs"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+    limits:
+      - "页面不提供原始 secret 读取，也不承担 RBAC"
+
+  - id: "DEP-006"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0034-tool-credentials/compatibility-impact.yaml"
+      - "specs/changes/CHG-0034-tool-credentials/requirements.md"
+    implementation:
+      - "backend/src/uai_forge/storage.py::_migrate_v3_to_v4"
+    verification:
+      - "backend/tests/test_tool_credentials.py::test_v3_database_gets_additive_tool_credentials_migration"
+      - "docker compose config --quiet"
+    limits:
+      - "master key 仍必须由部署 bootstrap/Secret Manager 注入"
+
+  - id: "GIT-001"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0035-bounded-git-sync/proposal.md"
+      - "specs/changes/CHG-0035-bounded-git-sync/requirements.md"
+      - "specs/changes/CHG-0035-bounded-git-sync/design.md"
+      - "docs/architecture/adr/ADR-0015-git-workflow-tool.md"
+    implementation:
+      - "backend/src/uai_forge/git_tools.py::GitTool._scope"
+      - "backend/src/uai_forge/builtins.py::register_builtins"
+      - "app/control-center.tsx::defaultToolConfig"
+    verification:
+      - "backend/tests/test_git_tools.py"
+      - "backend/tests/test_registry.py::test_builtin_tool_catalog_contains_remote_read_only_baseline"
+      - "docker compose config --quiet"
+
+  - id: "GIT-002"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0035-bounded-git-sync/requirements.md"
+      - "specs/changes/CHG-0035-bounded-git-sync/design.md"
+    implementation:
+      - "backend/src/uai_forge/git_tools.py::GitTool._pull_or_push"
+    verification:
+      - "backend/tests/test_git_tools.py::test_git_pull_uses_the_normal_repository_workflow"
+      - "backend/tests/test_git_tools.py::test_git_push_resolves_credential_ref_without_returning_secret"
+
+  - id: "GIT-003"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0035-bounded-git-sync/requirements.md"
+      - "specs/changes/CHG-0035-bounded-git-sync/design.md"
+    implementation:
+      - "backend/src/uai_forge/git_tools.py::GitTool._commit_and_push"
+    verification:
+      - "backend/tests/test_git_tools.py::test_git_commit_and_push_uses_the_normal_repository_workflow"
+      - "backend/tests/test_git_tools.py::test_git_commit_accepts_normal_repository_paths_without_audit_gate"
+
+  - id: "GIT-004"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0035-bounded-git-sync/requirements.md"
+      - "specs/changes/CHG-0035-bounded-git-sync/design.md"
+    implementation:
+      - "backend/src/uai_forge/runtime.py::_tool_credential_port"
+      - "backend/src/uai_forge/git_tools.py::GitTool._resolve_secret"
+    verification:
+      - "backend/tests/test_git_tools.py::test_git_push_resolves_credential_ref_without_returning_secret"
+      - "backend/tests/test_git_tools.py::test_git_push_fails_closed_without_private_credential_port"
+      - "python -m pytest backend/tests -q"
+    limits:
+      - "不实现 outbox/idempotency、RBAC、Secret Manager API 或冲突自动解决"
+
+  - id: "CONV-001"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0036-follow-up-conversation-tool/proposal.md"
+      - "specs/changes/CHG-0036-follow-up-conversation-tool/requirements.md"
+      - "specs/changes/CHG-0036-follow-up-conversation-tool/design.md"
+      - "docs/architecture/adr/ADR-0014-follow-up-conversation-tool.md"
+    implementation:
+      - "backend/src/uai_forge/conversation_tools.py::ConversationTool"
+      - "backend/src/uai_forge/ports.py::RunSubmissionPort"
+      - "backend/src/uai_forge/runtime.py::AgentRuntime.attach_run_submission_port"
+      - "backend/src/uai_forge/run_manager.py::RunManager.start"
+    verification:
+      - "backend/tests/test_conversation_tools.py"
+      - "python -m pytest backend/tests -q"
+
+  - id: "CONV-002"
+    status: "implemented"
+    target: "0.1"
+    contracts:
+      - "specs/changes/CHG-0036-follow-up-conversation-tool/requirements.md"
+      - "specs/changes/CHG-0036-follow-up-conversation-tool/design.md"
+    implementation:
+      - "backend/src/uai_forge/builtins.py::register_builtins"
+      - "app/control-center.tsx::defaultToolConfig"
+    verification:
+      - "backend/tests/test_conversation_tools.py::test_conversation_starts_new_session_for_current_agent"
+      - "npm run lint"
+      - "npm run typecheck"
+      - "npm test"
+    limits:
+      - "当前 0.1 没有 durable Session、全局 loop controller 或 outbox/idempotency"

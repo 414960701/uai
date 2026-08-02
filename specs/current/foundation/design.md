@@ -17,6 +17,9 @@ last_reviewed: 2026-07-30
 - [双多 Agent 语义](../../../docs/architecture/adr/ADR-0003-dual-agent-collaboration.md)
 - [插件信任边界](../../../docs/architecture/adr/ADR-0004-plugin-trust.md)
 - [可恢复执行提案](../../../docs/architecture/adr/ADR-0005-at-least-once-recovery.md)
+- [工具凭证只通过加密资源引用](../../../docs/architecture/adr/ADR-0012-tool-credentials.md)
+- [Git 工作流工具](../../../docs/architecture/adr/ADR-0015-git-workflow-tool.md)
+- [Follow-up Conversation 工具](../../../docs/architecture/adr/ADR-0014-follow-up-conversation-tool.md)
 
 ## 分层
 
@@ -59,6 +62,7 @@ Checkpoint、Outbox、Lease 等恢复端口仍属于后续设计，不能把本�
 - `agent_revisions.status`：`draft` 或 `published`；`published_at` 只在发布时写入。
 - `runs`：Run JSON 与索引状态。
 - `run_events`：每 tenant/run 的单调 sequence。
+- `tool_credentials`：每 tenant 的工具凭证密文、掩码、metadata 和 version；Agent 只保存 `credential_ref`。
 
 当前模型可以支持单进程控制面，但不能支持 worker lease、checkpoint、outbox 或 peer inbox。
 
@@ -175,7 +179,11 @@ discover metadata
 ## 安全
 
 - tenant 必须来自认证上下文，不接受不可信 header 作为生产身份。
-- ModelConfig secret 在 provider 适配器边界解析；数据库只保存密文，Agent 只保存配置 ID。
+- ModelConfig 和 ToolCredential secret 在适配器边界解析；数据库只保存密文，Agent 只保存配置 ID 或 `credential_ref`。
+- `tool.git` 的外部同步由 binding 固定 repository root、remote name 和 `credential_ref`；提供
+  常规 status/diff/pull/commit/push 工作流，但不提供任意 Git 命令、force push、远端删除或冲突自动解决。
+- `tool.conversation` 只能通过 `RunSubmissionPort` 提交新的 UAI Forge Run；它不绕过 Agent/revision、
+  session、拓扑、权限、超时或预算校验。
 - approval 是服务端记录，不是 request metadata。
 - high-impact tool 使用 policy → approval → budget 顺序。
 - 未知 Python 插件与宿主等权，只能作为受信任代码或隔离。

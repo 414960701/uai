@@ -29,6 +29,7 @@ from .ports import (
     ModelOutput,
     ModelRequest,
     RepositoryPort,
+    RunSubmissionPort,
     TokenUsage,
     ToolCall,
 )
@@ -176,6 +177,10 @@ class RootConcurrencyLease:
 
 class AgentRuntime:
     _FAST_PATH_LABEL = "weather_missing_location"
+    # A tool plugin is an extension boundary. An omitted timeout must never
+    # leave a Run waiting forever on an unresponsive adapter.
+    _DEFAULT_TOOL_TIMEOUT_SECONDS = 30.0
+    _TOOL_CANCEL_GRACE_SECONDS = 2.0
     _WEATHER_INTENT = re.compile(
         r"(?:天气|天氣|气温|氣溫|温度|溫度|降雨|下雨|weather|temperature|forecast)",
         re.IGNORECASE,
@@ -194,9 +199,15 @@ class AgentRuntime:
         self.repository = repository
         self.registry = registry
         self.events = event_broker
+        self.run_submission_port: Optional[RunSubmissionPort] = None
         self._mount_semaphores: Dict[
             Tuple[str, str, int, str], asyncio.Semaphore
         ] = {}
+
+    def attach_run_submission_port(self, port: RunSubmissionPort) -> None:
+        """Attach the application service after construction to avoid a cycle."""
+
+        self.run_submission_port = port
 
     def validate_agent_spec(self, spec: AgentSpec) -> None:
         """Expose the runtime binding gate to run submission."""
@@ -486,6 +497,46 @@ class AgentRuntime:
         if len(encoded) > limit:
             return encoded[:limit] + "…"
         return cleaned
+
+    @classmethod
+    def _tool_timeout_seconds(
+        cls,
+        spec: AgentSpec,
+        binding: Any,
+        arguments: Dict[str, Any],
+    ) -> float:
+        """Return the effective bounded deadline for one tool invocation.
+
+        An explicit binding timeout configures the adapter deadline; a per-call
+        timeout can only tighten it. When neither is supplied, use the safe
+        default. The Agent policy remains the outer ceiling, so a tool cannot
+        outlive its owning Run by requesting a larger timeout.
+        """
+
+        configured_timeout: Optional[float] = None
+        configured = getattr(binding, "config", {}).get("timeout_seconds")
+        if configured is not None:
+            try:
+                candidate = float(configured)
+            except (TypeError, ValueError):
+                candidate = 0
+            if candidate > 0:
+                configured_timeout = candidate
+
+        effective = configured_timeout or cls._DEFAULT_TOOL_TIMEOUT_SECONDS
+        requested = arguments.get("timeout_seconds")
+        if requested is not None:
+            try:
+                requested_timeout = float(requested)
+            except (TypeError, ValueError):
+                requested_timeout = 0
+            if requested_timeout > 0:
+                effective = min(effective, requested_timeout)
+
+        return max(
+            0.001,
+            min(effective, float(spec.policy.timeout_seconds)),
+        )
 
     @staticmethod
     def _thinking_mode_for_run(run: RunRecord) -> ThinkingMode:
@@ -1049,9 +1100,14 @@ class AgentRuntime:
                             for task in execution_tasks:
                                 if not task.done():
                                     task.cancel()
-                            await asyncio.gather(
-                                *execution_tasks,
-                                return_exceptions=True,
+                            # A cancelled extension must not hold the Run open
+                            # indefinitely while fail-fast drains sibling tools.
+                            # Cooperative tools finish immediately; an adapter
+                            # that ignores cancellation is bounded so the
+                            # owning Run can still reach a terminal state.
+                            await asyncio.wait(
+                                execution_tasks,
+                                timeout=self._TOOL_CANCEL_GRACE_SECONDS,
                             )
                             raise
                     else:
@@ -1214,6 +1270,11 @@ class AgentRuntime:
             "agent_id": spec.id,
             "agent_revision": spec.revision,
             "depth": depth,
+            # Private adapter context: external-side-effect tools may resolve a
+            # tenant-scoped credential by reference, but this object is never
+            # included in model messages, events, previews, or persisted state.
+            "_tool_credential_port": self.repository,
+            "_run_submission_port": self.run_submission_port,
         }
         arguments = call.arguments
         for middleware in middlewares:
@@ -1223,6 +1284,7 @@ class AgentRuntime:
             argument_validator,
             arguments,
         )
+        tool_timeout = self._tool_timeout_seconds(spec, binding, arguments)
         tool_started = time.monotonic()
         await self._emit(
             run,
@@ -1234,7 +1296,15 @@ class AgentRuntime:
             parent_span_id,
         )
         try:
-            result = await tool.invoke(arguments, context)
+            try:
+                result = await asyncio.wait_for(
+                    tool.invoke(arguments, context),
+                    timeout=tool_timeout,
+                )
+            except asyncio.TimeoutError as exc:
+                raise RuntimeGuardError(
+                    f"tool {call.name} exceeded timeout {tool_timeout:g}s"
+                ) from exc
             for middleware in reversed(middlewares):
                 result = await middleware.after_tool(context, call.name, result)
             await self._emit(

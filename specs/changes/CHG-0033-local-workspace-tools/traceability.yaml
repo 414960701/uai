@@ -1,0 +1,26 @@
+change_id: CHG-0033
+status: in_progress
+implementation_status: in_progress
+requirements:
+  WORKSPACE-001:
+    contracts:
+      - proposal.md
+      - requirements.md
+      - design.md
+      - ../../../../docs/architecture/adr/ADR-0011-local-workspace-tool.md
+    implementation:
+      - ../../../../backend/src/uai_forge/workspace_tools.py::WorkspaceTool
+      - ../../../../backend/src/uai_forge/runtime.py::AgentRuntime._tool_timeout_seconds
+      - ../../../../backend/src/uai_forge/builtins.py::register_builtins
+      - ../../../../docker-compose.yml
+      - ../../../../backend/Dockerfile
+      - ../../../../app/control-center.tsx::defaultToolConfig
+    verification:
+      - ../../../../backend/tests/test_workspace_tools.py
+      - ../../../../backend/tests/test_runtime.py::test_explicit_tool_timeout_can_cover_slow_workspace_checks
+      - docker-compose-config
+      - backend-pytest
+      - frontend-lint-typecheck-test
+    limits:
+      - local-development-only
+      - no-production-workspace-sharing

@@ -1,0 +1,28 @@
+change_id: CHG-0036
+status: in_progress
+implementation_status: implemented
+requirements:
+  CONV-001:
+    contracts:
+      - proposal.md
+      - requirements.md
+      - design.md
+      - ../../../../docs/architecture/adr/ADR-0014-follow-up-conversation-tool.md
+    implementation:
+      - ../../../../backend/src/uai_forge/conversation_tools.py::ConversationTool
+      - ../../../../backend/src/uai_forge/ports.py::RunSubmissionPort
+      - ../../../../backend/src/uai_forge/runtime.py::AgentRuntime.attach_run_submission_port
+      - ../../../../backend/src/uai_forge/run_manager.py::RunManager.start
+    verification:
+      - ../../../../backend/tests/test_conversation_tools.py
+      - backend-pytest
+  CONV-002:
+    contracts:
+      - requirements.md
+      - design.md
+    implementation:
+      - ../../../../app/control-center.tsx::defaultToolConfig
+      - ../../../../backend/src/uai_forge/builtins.py::register_builtins
+    verification:
+      - ../../../../backend/tests/test_conversation_tools.py::test_conversation_starts_new_session_for_current_agent
+      - frontend-lint-typecheck-test

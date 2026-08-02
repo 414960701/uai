@@ -369,6 +369,90 @@ class ModelConfigReferences(StrictModel):
     next_cursor: Optional[str] = None
 
 
+class ToolCredential(StrictModel):
+    """Tenant-owned tool credential with a masked secret view."""
+
+    id: str = Field(min_length=1, max_length=120)
+    tenant_id: str = "default"
+    name: str = Field(min_length=2, max_length=80)
+    provider: str = Field(min_length=1, max_length=80)
+    kind: str = Field(default="token", min_length=1, max_length=80)
+    masked_secret: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+    version: int = Field(default=1, ge=1)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("metadata")
+    @classmethod
+    def reject_plaintext_credentials(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        return reject_inline_secrets(value)
+
+
+class ToolCredentialWrite(StrictModel):
+    id: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    name: str = Field(min_length=2, max_length=80)
+    provider: str = Field(min_length=1, max_length=80)
+    kind: str = Field(default="token", min_length=1, max_length=80)
+    secret: Optional[str] = Field(default=None, min_length=1, max_length=20_000)
+    secret_action: Optional[Literal["replace", "clear"]] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+
+    @field_validator("metadata")
+    @classmethod
+    def reject_plaintext_credentials(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        return reject_inline_secrets(value)
+
+    @model_validator(mode="after")
+    def validate_secret_action(self) -> "ToolCredentialWrite":
+        action = self.secret_action or ("replace" if self.secret is not None else "clear")
+        if action == "replace" and self.secret is None:
+            raise ValueError("secret is required when secret_action is replace")
+        if action == "clear" and self.secret is not None:
+            raise ValueError("secret is only accepted with secret_action replace")
+        return self
+
+
+class ToolCredentialPatch(StrictModel):
+    expected_version: Optional[int] = Field(default=None, ge=1)
+    name: Optional[str] = Field(default=None, min_length=2, max_length=80)
+    provider: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    kind: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    secret: Optional[str] = Field(default=None, min_length=1, max_length=20_000)
+    secret_action: Literal["keep", "replace", "clear"] = "keep"
+    metadata: Optional[Dict[str, Any]] = None
+    enabled: Optional[bool] = None
+
+    @field_validator("metadata")
+    @classmethod
+    def reject_plaintext_credentials(cls, value: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        return reject_inline_secrets(value) if value is not None else value
+
+    @model_validator(mode="after")
+    def validate_secret_action(self) -> "ToolCredentialPatch":
+        if self.secret_action == "replace" and self.secret is None:
+            raise ValueError("secret is required when secret_action is replace")
+        if self.secret_action != "replace" and self.secret is not None:
+            raise ValueError("secret is only accepted with secret_action replace")
+        return self
+
+
+class ToolCredentialReference(StrictModel):
+    agent_id: str
+    agent_name: str
+    revision: int
+    tool_plugin_id: str
+    path: str
+
+
+class ToolCredentialReferences(StrictModel):
+    items: List[ToolCredentialReference] = Field(default_factory=list)
+    total: int = Field(default=0, ge=0)
+    next_cursor: Optional[str] = None
+
+
 class RuntimeConfigEntry(StrictModel):
     """Versioned, non-secret business configuration from the database."""
 

@@ -37,6 +37,15 @@ backup/rebuild，不执行旧数据迁移。
 `tool.sandbox_exec`；当前只证明 argv builder、registry 和本地边界，不声称已经具备生产级
 容器逃逸防护、rootless/dedicated executor、镜像供应链或多租户沙箱服务。
 
+`CHG-0034-tool-credentials` 增加 tenant-scoped 工具凭证资源和独立控制台页面；Agent 工具绑定只保存
+`credential_ref`，secret 使用部署注入的 master key 加密。`CHG-0035-bounded-git-sync` 在此边界上
+增加显式挂载的常规 `tool.git` 工作流；它不改变默认只读工具集合，也不宣称具备任意 Git shell、
+force push、outbox/idempotency、冲突自动解决、RBAC 或生产级 Secret Manager。
+
+`CHG-0036-follow-up-conversation-tool` 增加显式挂载的 `tool.conversation`，让 Agent 通过正常
+RunManager 发起新的异步 follow-up Run；当前单进程基线仍不具备 durable Session、跨 Run checkpoint
+或全局循环控制器。
+
 ## 版本范围
 
 | 范围 | 状态 |

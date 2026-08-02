@@ -24,6 +24,9 @@ from .models import (
     ModelConfigReferences,
     ModelConfigVerification,
     RuntimeConfigEntry,
+    ToolCredential,
+    ToolCredentialReference,
+    ToolCredentialReferences,
     RunEvent,
     RunRecord,
     reject_inline_secrets,
@@ -34,7 +37,8 @@ from .secrets import SecretDecryptionError, decrypt_secret, encrypt_secret, mask
 T = TypeVar("T")
 
 SCHEMA_COMPONENT = "sqlite"
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
+PREVIOUS_SCHEMA_VERSION = 3
 LEGACY_CONFIGURATION_TABLES = {"credential_profiles", "model_profiles"}
 LEGACY_AGENT_RUNTIME_TABLES = {"instances"}
 REQUIRED_TABLES = {
@@ -43,6 +47,7 @@ REQUIRED_TABLES = {
     "runs",
     "run_events",
     "model_configs",
+    "tool_credentials",
     "runtime_configs",
 }
 
@@ -190,10 +195,28 @@ class SQLiteRepository:
                 "schema.version_too_new",
                 f"database schema version {version} is newer than supported version {CURRENT_SCHEMA_VERSION}; use a compatible binary or backup",
             )
-        if version < CURRENT_SCHEMA_VERSION:
+        if version < CURRENT_SCHEMA_VERSION and version != PREVIOUS_SCHEMA_VERSION:
             raise SchemaCompatibilityError(
                 "schema.version_unsupported",
                 f"database schema version {version} is not the current Agent lifecycle schema {CURRENT_SCHEMA_VERSION}; back up and rebuild",
+            )
+        if version == PREVIOUS_SCHEMA_VERSION and "tool_credentials" not in tables:
+            legacy_required_tables = REQUIRED_TABLES - {"tool_credentials"}
+            missing = sorted(legacy_required_tables.difference(tables))
+            if missing:
+                raise SchemaCompatibilityError(
+                    "schema.required_table_missing",
+                    "database is missing required tables: " + ", ".join(missing),
+                )
+            return {
+                "status": "migratable",
+                "version": version,
+                "tables": sorted(tables),
+            }
+        if version < CURRENT_SCHEMA_VERSION:
+            raise SchemaCompatibilityError(
+                "schema.required_table_missing",
+                "database is missing the tool_credentials table; back up and rebuild",
             )
         missing = sorted(REQUIRED_TABLES.difference(tables))
         if missing:
@@ -213,6 +236,10 @@ class SQLiteRepository:
                 "tenant_id", "id", "name", "provider", "protocol", "model", "base_url",
                 "secret_ciphertext", "masked_secret", "config_json", "metadata_json", "enabled",
                 "version", "lifecycle", "verification_json", "created_at", "updated_at",
+            },
+            "tool_credentials": {
+                "tenant_id", "id", "name", "provider", "kind", "secret_ciphertext",
+                "masked_secret", "metadata_json", "enabled", "version", "created_at", "updated_at",
             },
             "runtime_configs": {"tenant_id", "key", "value_json", "version", "updated_at"},
             "schema_meta": {"component", "version", "updated_at"},
@@ -304,6 +331,23 @@ class SQLiteRepository:
                 );
                 CREATE INDEX IF NOT EXISTS idx_model_configs_tenant_name
                     ON model_configs (tenant_id, name COLLATE NOCASE);
+                CREATE TABLE tool_credentials (
+                    tenant_id TEXT NOT NULL,
+                    id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    secret_ciphertext TEXT NOT NULL,
+                    masked_secret TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (tenant_id, id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_tool_credentials_tenant_name
+                    ON tool_credentials (tenant_id, name COLLATE NOCASE);
                 CREATE TABLE runtime_configs (
                     tenant_id TEXT NOT NULL,
                     key TEXT NOT NULL,
@@ -325,11 +369,44 @@ class SQLiteRepository:
             (SCHEMA_COMPONENT, CURRENT_SCHEMA_VERSION, now),
         )
 
+    @staticmethod
+    def _migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
+        """Add the independent tool credential table without touching old data."""
+
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS tool_credentials (
+                tenant_id TEXT NOT NULL,
+                id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                secret_ciphertext TEXT NOT NULL,
+                masked_secret TEXT NOT NULL,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                version INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_tool_credentials_tenant_name
+                ON tool_credentials (tenant_id, name COLLATE NOCASE);
+            """
+        )
+        connection.execute(
+            "UPDATE schema_meta SET version = ?, updated_at = ? WHERE component = ?",
+            (CURRENT_SCHEMA_VERSION, utc_now().isoformat(), SCHEMA_COMPONENT),
+        )
+
     async def initialize(self) -> None:
         def operation(connection: sqlite3.Connection) -> None:
             compatibility = self._inspect_compatibility(connection)
             if compatibility["status"] == "new":
                 self._create_current_schema(connection)
+                return
+            if compatibility["status"] == "migratable":
+                self._migrate_v3_to_v4(connection)
                 return
             # _inspect_compatibility raises before this point for every
             # unsupported database. The current schema is read-only at boot;
@@ -875,6 +952,234 @@ class SQLiteRepository:
             total=len(matches),
             next_cursor=next_cursor,
         )
+
+    # ------------------------------------------------------------------
+    # Deployment-managed tool credentials.  The public object is always a
+    # masked view; only the internal resolver returns a decrypted value.
+
+    @staticmethod
+    def _tool_credential_from_row(row: sqlite3.Row) -> ToolCredential:
+        return ToolCredential(
+            id=row["id"],
+            tenant_id=row["tenant_id"],
+            name=row["name"],
+            provider=row["provider"],
+            kind=row["kind"],
+            masked_secret=row["masked_secret"],
+            metadata=json.loads(row["metadata_json"] or "{}"),
+            enabled=bool(row["enabled"]),
+            version=int(row["version"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    async def list_tool_credentials(self, tenant_id: str) -> List[ToolCredential]:
+        rows = await self._read(
+            lambda connection: connection.execute(
+                "SELECT * FROM tool_credentials WHERE tenant_id = ? ORDER BY name COLLATE NOCASE",
+                (tenant_id,),
+            ).fetchall()
+        )
+        return [self._tool_credential_from_row(row) for row in rows]
+
+    async def get_tool_credential(
+        self, tenant_id: str, credential_id: str
+    ) -> Optional[ToolCredential]:
+        row = await self._read(
+            lambda connection: connection.execute(
+                "SELECT * FROM tool_credentials WHERE tenant_id = ? AND id = ?",
+                (tenant_id, credential_id),
+            ).fetchone()
+        )
+        return self._tool_credential_from_row(row) if row else None
+
+    async def resolve_tool_credential_secret(
+        self,
+        tenant_id: str,
+        credential_id: str,
+        *,
+        include_disabled: bool = False,
+    ) -> Optional[str]:
+        row = await self._read(
+            lambda connection: connection.execute(
+                "SELECT secret_ciphertext, enabled FROM tool_credentials WHERE tenant_id = ? AND id = ?",
+                (tenant_id, credential_id),
+            ).fetchone()
+        )
+        if not row or (not include_disabled and not bool(row["enabled"])):
+            return None
+        if not row["secret_ciphertext"]:
+            return None
+        try:
+            return decrypt_secret(self.credential_master_key, row["secret_ciphertext"])
+        except SecretDecryptionError as exc:
+            raise RuntimeError("tool credential could not be decrypted") from exc
+
+    async def save_tool_credential(
+        self,
+        tenant_id: str,
+        credential: ToolCredential,
+        secret: Optional[str] = None,
+        *,
+        expected_version: Optional[int] = None,
+        secret_action: Optional[str] = None,
+    ) -> ToolCredential:
+        now = utc_now()
+
+        def operation(connection: sqlite3.Connection) -> ToolCredential:
+            current = connection.execute(
+                "SELECT created_at, secret_ciphertext, masked_secret, version FROM tool_credentials WHERE tenant_id = ? AND id = ?",
+                (tenant_id, credential.id),
+            ).fetchone()
+            if current and expected_version is None:
+                raise ConfigurationConflictError("expected tool credential version is required")
+            if current and int(current["version"]) != expected_version:
+                raise ConfigurationConflictError(
+                    f"expected version {expected_version}; current is {current['version']}"
+                )
+            created_at = datetime.fromisoformat(current["created_at"]) if current else now
+            action = secret_action or ("replace" if secret is not None else "keep")
+            if action == "replace" and secret is None:
+                raise ConfigurationConflictError("secret is required for secret_action=replace")
+            if action == "replace":
+                encrypted = encrypt_secret(self.credential_master_key, secret or "")
+                masked = mask_secret(secret or "")
+            elif action == "clear":
+                encrypted = ""
+                masked = ""
+            else:
+                encrypted = current["secret_ciphertext"] if current else ""
+                masked = current["masked_secret"] if current else ""
+            next_version = int(current["version"]) + 1 if current else 1
+            saved = credential.model_copy(
+                update={
+                    "tenant_id": tenant_id,
+                    "masked_secret": masked,
+                    "enabled": bool(credential.enabled) and action != "clear",
+                    "version": next_version,
+                    "created_at": created_at,
+                    "updated_at": now,
+                }
+            )
+            common_values = (
+                saved.name,
+                saved.provider,
+                saved.kind,
+                encrypted,
+                saved.masked_secret,
+                json.dumps(saved.metadata, ensure_ascii=False),
+                int(saved.enabled),
+                saved.version,
+            )
+            if current:
+                cursor = connection.execute(
+                    """
+                    UPDATE tool_credentials SET
+                        name=?, provider=?, kind=?, secret_ciphertext=?, masked_secret=?,
+                        metadata_json=?, enabled=?, version=?, updated_at=?
+                    WHERE tenant_id=? AND id=? AND version=?
+                    """,
+                    common_values + (saved.updated_at.isoformat(), tenant_id, saved.id, expected_version),
+                )
+                if cursor.rowcount != 1:
+                    raise ConfigurationConflictError(
+                        "tool credential changed while it was being updated"
+                    )
+            else:
+                if expected_version not in (None, 0):
+                    raise ConfigurationConflictError("tool credential does not exist")
+                connection.execute(
+                    """
+                    INSERT INTO tool_credentials (
+                        tenant_id, id, name, provider, kind, secret_ciphertext,
+                        masked_secret, metadata_json, enabled, version, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        tenant_id,
+                        saved.id,
+                        *common_values,
+                        saved.created_at.isoformat(),
+                        saved.updated_at.isoformat(),
+                    ),
+                )
+            return saved
+
+        return await self._write(operation)
+
+    async def delete_tool_credential(self, tenant_id: str, credential_id: str) -> bool:
+        def operation(connection: sqlite3.Connection) -> bool:
+            rows = connection.execute(
+                "SELECT spec_json FROM agent_revisions WHERE tenant_id = ?",
+                (tenant_id,),
+            ).fetchall()
+            for row in rows:
+                spec = AgentSpec.model_validate_json(row["spec_json"])
+                if any(
+                    tool.config.get("credential_ref") == credential_id
+                    for tool in spec.tools
+                ):
+                    raise ConfigurationInUseError(
+                        "tool credential is used by an agent"
+                    )
+            return (
+                connection.execute(
+                    "DELETE FROM tool_credentials WHERE tenant_id = ? AND id = ?",
+                    (tenant_id, credential_id),
+                ).rowcount
+                > 0
+            )
+
+        return await self._write(operation)
+
+    async def list_tool_credential_references(
+        self,
+        tenant_id: str,
+        credential_id: str,
+        *,
+        limit: int = 50,
+        cursor: Optional[str] = None,
+    ) -> ToolCredentialReferences:
+        try:
+            offset = max(0, int(cursor or "0"))
+        except ValueError:
+            offset = 0
+        bounded_limit = min(max(limit, 1), 200)
+        rows = await self._read(
+            lambda connection: connection.execute(
+                "SELECT spec_json FROM agent_revisions WHERE tenant_id = ? ORDER BY agent_id, revision",
+                (tenant_id,),
+            ).fetchall()
+        )
+        matches: List[ToolCredentialReference] = []
+        for row in rows:
+            spec = AgentSpec.model_validate_json(row["spec_json"])
+            for index, tool in enumerate(spec.tools):
+                if tool.config.get("credential_ref") == credential_id:
+                    matches.append(
+                        ToolCredentialReference(
+                            agent_id=spec.id,
+                            agent_name=spec.name,
+                            revision=spec.revision,
+                            tool_plugin_id=tool.plugin_id,
+                            path=f"tools[{index}].config.credential_ref",
+                        )
+                    )
+        page = matches[offset : offset + bounded_limit]
+        next_cursor = str(offset + bounded_limit) if offset + bounded_limit < len(matches) else None
+        return ToolCredentialReferences(
+            items=page,
+            total=len(matches),
+            next_cursor=next_cursor,
+        )
+
+    async def tool_credential_is_referenced(
+        self, tenant_id: str, credential_id: str
+    ) -> bool:
+        references = await self.list_tool_credential_references(
+            tenant_id, credential_id, limit=1
+        )
+        return references.total > 0
 
     async def list_runtime_configs(self, tenant_id: str) -> List[RuntimeConfigEntry]:
         rows = await self._read(

@@ -87,6 +87,12 @@ test("keeps advanced Agent configuration and real event history wired", async ()
   assert.match(controlCenter, /Kimi K2.7 Code/);
   assert.match(controlCenter, /GLM-5 Turbo/);
   assert.match(controlCenter, /凭证&模型配置/);
+  assert.match(controlCenter, /工具凭证/);
+  assert.match(controlCenter, /ToolCredentialsView/);
+  assert.match(controlCenter, /credential_ref/);
+  assert.match(controlCenter, /DEPLOYMENT TOOL CREDENTIALS/);
+  assert.match(controlCenter, /secret_action/);
+  assert.doesNotMatch(controlCenter, /tool-credentials\/\$\{[^}]+\}\/secret/);
   assert.match(controlCenter, /anthropic_messages/);
   assert.match(controlCenter, /MODEL_TIMEOUT_OPTIONS/);
   assert.match(controlCenter, /Provider 扩展参数 JSON/);
@@ -202,6 +208,18 @@ test("keeps advanced Agent configuration and real event history wired", async ()
   assert.doesNotMatch(controlCenter, /mock|demoEvents|delegate:analyst/i);
 });
 
+test("projects active Run status from the live event reducer", async () => {
+  const controlCenter = await readFile(
+    new URL("../app/control-center.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(controlCenter, /const applyEvents = \(incoming: RunEvent\[\]\) => \{/);
+  assert.match(controlCenter, /for \(const event of incoming\) \{\s*const projection = runProjectionFromEvent\(event\);\s*if \(projection\) onRunProjection\(selectedRunId, projection\);\s*\}/);
+  assert.match(controlCenter, /if \(event\.type === "run\.started"\) \{\s*patch\.status = "running";/);
+  assert.match(controlCenter, /const terminalEvent = incoming\.find\(\(event\) => Boolean\(terminalStatusForEvent\(event\)\) && event\.type !== "run\.started"\)/);
+});
+
 test("shows cache-hit status in run inspector metrics", async () => {
   const controlCenter = await readFile(
     new URL("../app/control-center.tsx", import.meta.url),
@@ -265,7 +283,8 @@ test("new Agent defaults mount remote read-only tools", async () => {
   assert.match(controlCenter, /tool\.web_json/);
   assert.match(controlCenter, /tool\.web_rss/);
   assert.match(controlCenter, /tool\.sandbox_exec/);
-  assert.match(controlCenter, /沙箱执行需要显式添加，勾选后会预填 sandbox\.docker 与 alpine:3\.20 配置/);
+  assert.match(controlCenter, /tool\.workspace/);
+  assert.match(controlCenter, /沙箱执行、本地工作区和 Git 都需要显式添加/);
   assert.match(controlCenter, /默认已选只读基础工具/);
   assert.match(controlCenter, /defaultAgentToolBindings\(plugins\)/);
 });
@@ -282,7 +301,7 @@ test("sandbox tool pre-fills a runnable binding configuration", async () => {
   assert.match(controlCenter, /sandbox_plugin_id: DEFAULT_SANDBOX_PLUGIN_ID/);
   assert.match(controlCenter, /sandbox_config: \{ image: DEFAULT_SANDBOX_IMAGE \}/);
   assert.match(controlCenter, /defaultToolConfigText\(plugin\.id\)/);
-  assert.match(controlCenter, /勾选后会预填 sandbox\.docker 与 alpine:3\.20 配置/);
+  assert.match(controlCenter, /沙箱执行、本地工作区和 Git 都需要显式添加/);
 });
 
 test("new Agent defaults use usable execution budgets", async () => {

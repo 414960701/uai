@@ -30,6 +30,7 @@ requirements:
     verification:
       - backend/tests/test_sandbox.py::test_docker_sandbox_command_is_hardened_and_argv_only
       - backend/tests/test_sandbox.py::test_sandbox_request_rejects_empty_or_nul_command_parts
+      - backend/tests/test_sandbox.py::test_docker_sandbox_maps_missing_cli_to_stable_error
     limits:
       - 当前只证明本地 argv builder 与 registry 边界，不证明 Docker daemon、kernel、镜像或 egress 的生产隔离
   DEP-005:

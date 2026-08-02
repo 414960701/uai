@@ -1,0 +1,19 @@
+change_id: CHG-0034
+status: accepted
+schema:
+  previous: 3
+  current: 4
+  migration: additive_v3_to_v4
+  breaking: false
+  notes:
+    - "v3→v4 只创建 tool_credentials 表和索引，并更新 schema_meta；不删除或重写旧表。"
+api:
+  additions:
+    - "GET/POST /api/v1/tool-credentials"
+    - "GET/PATCH/DELETE /api/v1/tool-credentials/{credential_id}"
+    - "GET /api/v1/tool-credentials/{credential_id}/references"
+  breaking: false
+security:
+  plaintext_secret_response: forbidden
+  runtime_plaintext_resolver: internal_only
+  real_credentials_in_tests_or_docs: forbidden

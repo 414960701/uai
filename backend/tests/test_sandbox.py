@@ -80,3 +80,20 @@ def test_sandbox_exec_is_opt_in_and_requires_a_provider_binding():
         )
     )
     assert isinstance(tool, SandboxExecTool)
+
+
+@pytest.mark.asyncio
+async def test_docker_sandbox_maps_missing_cli_to_stable_error():
+    async def missing_cli(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory")
+
+    sandbox = DockerSandbox(
+        SandboxBinding(
+            plugin_id="sandbox.docker",
+            config={"image": "alpine:3.20"},
+        ),
+        process_runner=missing_cli,
+    )
+
+    with pytest.raises(RuntimeError, match="sandbox.docker.cli_unavailable"):
+        await sandbox.execute(SandboxRequest(command=["echo", "ok"]), {})

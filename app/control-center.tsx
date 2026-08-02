@@ -96,6 +96,7 @@ type View =
   | "runs"
   | "plugins"
   | "model-configs"
+  | "tool-credentials"
   | "settings";
 type ConnectionMode = "connecting" | "live" | "disconnected";
 
@@ -362,6 +363,32 @@ type ModelConfigReferences = {
   next_cursor?: string | null;
 };
 
+type ToolCredential = {
+  id: string;
+  tenant_id?: string;
+  name: string;
+  provider: string;
+  kind: string;
+  masked_secret: string;
+  metadata?: Record<string, unknown>;
+  enabled: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type ToolCredentialReferences = {
+  items: Array<{
+    agent_id: string;
+    agent_name: string;
+    revision: number;
+    tool_plugin_id: string;
+    path: string;
+  }>;
+  total: number;
+  next_cursor?: string | null;
+};
+
 type RuntimeConfigEntry = {
   key: string;
   value: unknown;
@@ -508,6 +535,7 @@ const NAV_ITEMS: Array<{ id: View; label: string; icon: LucideIcon }> = [
   { id: "runs", label: "运行记录", icon: Activity },
   { id: "plugins", label: "扩展中心", icon: Blocks },
   { id: "model-configs", label: "凭证&模型配置", icon: KeyRound },
+  { id: "tool-credentials", label: "工具凭证", icon: GitBranch },
   { id: "settings", label: "系统设置", icon: Settings },
 ];
 
@@ -531,6 +559,7 @@ const PLUGIN_KIND_LABELS: Record<string, string> = {
   scheduler: "调度器",
   middleware: "中间件",
   ui: "界面扩展",
+  sandbox: "沙箱运行时",
 };
 
 const PLUGIN_LOCALIZED_COPY: Record<string, { name: string; description: string }> = {
@@ -573,6 +602,18 @@ const PLUGIN_LOCALIZED_COPY: Record<string, { name: string; description: string 
   "tool.sandbox_exec": {
     name: "沙箱执行",
     description: "在显式配置的隔离运行时中执行无 Shell 的 argv 命令；默认不挂载，建议保持 confirm 权限。",
+  },
+  "tool.workspace": {
+    name: "本地工作区",
+    description: "在显式配置的项目目录内分段读取、查看 Git、运行后端测试和应用受校验补丁；仅适用于本地开发。",
+  },
+  "tool.git": {
+    name: "Git",
+    description: "使用部署侧凭证完成当前仓库的状态检查、拉取、提交和推送。",
+  },
+  "tool.conversation": {
+    name: "发起新对话",
+    description: "通过正常 RunManager 发起下一轮 Agent 对话；省略 session_id 会创建新的会话。",
   },
   "memory.in_process": {
     name: "进程内记忆",
@@ -627,8 +668,29 @@ const DEFAULT_AGENT_TOOL_PLUGIN_IDS = [
 const SANDBOX_EXEC_TOOL_PLUGIN_ID = "tool.sandbox_exec";
 const DEFAULT_SANDBOX_PLUGIN_ID = "sandbox.docker";
 const DEFAULT_SANDBOX_IMAGE = "alpine:3.20";
+const WORKSPACE_TOOL_PLUGIN_ID = "tool.workspace";
+const GIT_TOOL_PLUGIN_ID = "tool.git";
 
 function defaultToolConfig(pluginId: string): Record<string, unknown> {
+  if (pluginId === WORKSPACE_TOOL_PLUGIN_ID) {
+    return {
+      root_path: "/workspace",
+      allow_write: false,
+      timeout_seconds: 120,
+      max_output_bytes: 120000,
+      max_patch_bytes: 120000,
+    };
+  }
+  if (pluginId === GIT_TOOL_PLUGIN_ID) {
+    return {
+      root_path: "/workspace",
+      credential_ref: "cred_replace_me",
+      remote_name: "origin",
+      timeout_seconds: 120,
+      max_output_bytes: 120000,
+    };
+  }
+  if (pluginId === "tool.conversation") return {};
   if (pluginId !== SANDBOX_EXEC_TOOL_PLUGIN_ID) return {};
   return {
     sandbox_plugin_id: DEFAULT_SANDBOX_PLUGIN_ID,
@@ -2407,6 +2469,7 @@ export function ControlCenter() {
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
   const [modelConfigs, setModelConfigs] = useState<ModelConfig[]>([]);
+  const [toolCredentials, setToolCredentials] = useState<ToolCredential[]>([]);
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigEntry[]>([]);
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const [capabilities, setCapabilities] = useState<CapabilityStatus[]>([]);
@@ -2480,6 +2543,7 @@ export function ControlCenter() {
         { key: "runs", request: apiRequest<RunRecord[]>(`${base}/runs?limit=100`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setRuns(value as RunRecord[]), empty: [] },
         { key: "plugins", request: apiRequest<PluginManifest[]>(`${base}/plugins`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setPlugins(value as PluginManifest[]), empty: [] },
         { key: "modelConfigs", request: apiRequest<ModelConfig[]>(`${base}/model-configs`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setModelConfigs(value as ModelConfig[]), empty: [] },
+        { key: "toolCredentials", request: apiRequest<ToolCredential[]>(`${base}/tool-credentials`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setToolCredentials(value as ToolCredential[]), empty: [] },
         { key: "runtimeConfig", request: apiRequest<RuntimeConfigEntry[]>(`${base}/runtime-config`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setRuntimeConfig(value as RuntimeConfigEntry[]), empty: [] },
         { key: "setup", request: apiRequest<SetupStatus>(`${base}/setup-status`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setSetupStatus(value as SetupStatus), empty: null },
         { key: "capabilities", request: apiRequest<CapabilityStatus[]>(`${base}/capabilities`, { headers: headers(), signal: AbortSignal.timeout(2500) }), apply: (value) => setCapabilities(value as CapabilityStatus[]), empty: [] },
@@ -2530,7 +2594,7 @@ export function ControlCenter() {
   const rootAgent =
     agents.find((agent) => agent.labels?.tier === "leader") || agents[0];
   const urlSelectedAgent =
-    routeResourceId && view !== "runs" && view !== "model-configs"
+    routeResourceId && view !== "runs" && view !== "model-configs" && view !== "tool-credentials"
       ? agents.find((item) => item.id === routeResourceId) || null
       : null;
   const activeSelectedAgent = selectedAgent || urlSelectedAgent;
@@ -2654,6 +2718,7 @@ export function ControlCenter() {
     setRuns([]);
     setPlugins([]);
     setModelConfigs([]);
+    setToolCredentials([]);
     setRuntimeConfig([]);
     setResourceStates({});
   }
@@ -2667,6 +2732,7 @@ export function ControlCenter() {
     setRuns([]);
     setPlugins([]);
     setModelConfigs([]);
+    setToolCredentials([]);
     setRuntimeConfig([]);
     setResourceStates({});
   }
@@ -2815,6 +2881,37 @@ export function ControlCenter() {
     setModelConfigs((current) => current.filter((item) => item.id !== config.id));
     await refresh();
     setNotice(`${config.name} 已删除`);
+  }
+
+  async function updateToolCredential(
+    credential: ToolCredential,
+    patch: Record<string, unknown>,
+  ) {
+    if (mode !== "live") throw new Error("请先连接 Python 控制面；工具凭证只写入数据库");
+    const outgoing = {
+      ...patch,
+      expected_version: credential.version,
+      secret_action: patch.secret ? "replace" : patch.secret_action || "keep",
+    };
+    const updated = await apiRequest<ToolCredential>(`${apiBase}/tool-credentials/${credential.id}`, {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify(outgoing),
+    });
+    setToolCredentials((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+    await refresh();
+    setNotice(`${updated.name} 已更新`);
+  }
+
+  async function deleteToolCredential(credential: ToolCredential) {
+    if (mode !== "live") throw new Error("请先连接 Python 控制面");
+    await apiRequest<unknown>(`${apiBase}/tool-credentials/${credential.id}`, {
+      method: "DELETE",
+      headers: headers(),
+    });
+    setToolCredentials((current) => current.filter((item) => item.id !== credential.id));
+    await refresh();
+    setNotice(`${credential.name} 已删除`);
   }
 
   async function submitRun(
@@ -3262,6 +3359,21 @@ export function ControlCenter() {
               onUpdate={(config, patch) => void updateModelConfig(config, patch)}
               onCheck={(config) => checkModelConfig(config)}
               onDelete={(config) => void deleteModelConfig(config)}
+            />
+          )}
+
+          {view === "tool-credentials" && (
+            <ToolCredentialsView
+              apiBase={apiBase}
+              mode={mode}
+              syncing={syncing}
+              toolCredentials={toolCredentials}
+              resourceId={routeResourceId}
+              onResourceSelect={(resourceId) => navigate("tool-credentials", resourceId)}
+              requestHeaders={headers}
+              onConfigChanged={() => void refresh()}
+              onUpdate={(credential, patch) => void updateToolCredential(credential, patch)}
+              onDelete={(credential) => void deleteToolCredential(credential)}
             />
           )}
 
@@ -4835,11 +4947,13 @@ function RunsView({
     const applyEvents = (incoming: RunEvent[]) => {
       if (!active || !incoming.length) return;
       cursor = Math.max(cursor, ...incoming.map((event) => event.sequence));
+      for (const event of incoming) {
+        const projection = runProjectionFromEvent(event);
+        if (projection) onRunProjection(selectedRunId, projection);
+      }
       const terminalEvent = incoming.find((event) => Boolean(terminalStatusForEvent(event)) && event.type !== "run.started");
       if (terminalEvent) {
         terminal = true;
-        const projection = runProjectionFromTerminalEvent(terminalEvent);
-        if (projection) onRunProjection(selectedRunId, projection);
       }
       setEventHistory((current) => {
         const previous = current.runId === selectedRunId ? current.events : [];
@@ -5468,6 +5582,244 @@ function ModelConfigsView({
   );
 }
 
+type ToolCredentialFormState = {
+  name: string;
+  provider: string;
+  kind: string;
+  secret: string;
+  metadataJson: string;
+  secretAction: "keep" | "replace" | "clear";
+  enabled: boolean;
+};
+
+function newToolCredentialForm(): ToolCredentialFormState {
+  return {
+    name: "",
+    provider: "github",
+    kind: "git_token",
+    secret: "",
+    metadataJson: '{\n  "scope": "repo:owner/name"\n}',
+    secretAction: "replace",
+    enabled: true,
+  };
+}
+
+function formFromToolCredential(credential: ToolCredential): ToolCredentialFormState {
+  return {
+    name: credential.name,
+    provider: credential.provider,
+    kind: credential.kind,
+    secret: "",
+    metadataJson: JSON.stringify(credential.metadata || {}, null, 2),
+    secretAction: "keep",
+    enabled: credential.enabled,
+  };
+}
+
+function ToolCredentialsView({
+  apiBase,
+  mode,
+  syncing,
+  toolCredentials,
+  resourceId,
+  onResourceSelect,
+  requestHeaders,
+  onConfigChanged,
+  onUpdate,
+  onDelete,
+}: {
+  apiBase: string;
+  mode: ConnectionMode;
+  syncing: boolean;
+  toolCredentials: ToolCredential[];
+  resourceId?: string | null;
+  onResourceSelect: (resourceId: string | null) => void;
+  requestHeaders: () => HeadersInit;
+  onConfigChanged: () => void;
+  onUpdate: (credential: ToolCredential, patch: Record<string, unknown>) => Promise<void> | void;
+  onDelete: (credential: ToolCredential) => Promise<void> | void;
+}) {
+  const initialCredential = resourceId
+    ? toolCredentials.find((item) => item.id === resourceId)
+    : undefined;
+  const [editingId, setEditingId] = useState<string | null>(initialCredential?.id || null);
+  const [form, setForm] = useState<ToolCredentialFormState>(() => (
+    initialCredential ? formFromToolCredential(initialCredential) : newToolCredentialForm()
+  ));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [actionId, setActionId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<ToolCredential | null>(null);
+  const [referenceCounts, setReferenceCounts] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (mode !== "live" || !toolCredentials.length) return undefined;
+    let active = true;
+    void Promise.allSettled(toolCredentials.map(async (credential) => {
+      const references = await apiRequest<ToolCredentialReferences>(
+        `${apiBase}/tool-credentials/${credential.id}/references?limit=1`,
+        { headers: requestHeaders() },
+      );
+      return [credential.id, references.total] as const;
+    })).then((results) => {
+      if (!active) return;
+      const next: Record<string, number> = {};
+      for (const result of results) {
+        if (result.status === "fulfilled") next[result.value[0]] = result.value[1];
+      }
+      setReferenceCounts(next);
+    });
+    return () => {
+      active = false;
+    };
+  }, [apiBase, mode, requestHeaders, toolCredentials]);
+
+  function startCreate() {
+    onResourceSelect(null);
+    setEditingId(null);
+    setForm(newToolCredentialForm());
+    setError(null);
+  }
+
+  function startEdit(credential: ToolCredential) {
+    onResourceSelect(credential.id);
+    setEditingId(credential.id);
+    setForm(formFromToolCredential(credential));
+    setError(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function updateForm(patch: Partial<ToolCredentialFormState>) {
+    setForm((current) => ({ ...current, ...patch }));
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const metadata = parseJsonObject(form.metadataJson, "工具凭证 metadata JSON");
+      const payload: Record<string, unknown> = {
+        name: form.name,
+        provider: form.provider,
+        kind: form.kind,
+        metadata,
+        enabled: form.enabled,
+      };
+      if (form.secret.trim()) {
+        payload.secret = form.secret.trim();
+        payload.secret_action = "replace";
+      } else if (editingId) {
+        payload.secret_action = form.secretAction;
+      } else {
+        throw new Error("新建工具凭证必须提交一次性 secret");
+      }
+      if (mode !== "live") throw new Error("请先连接 Python 控制面；工具凭证只写入数据库");
+      if (editingId) {
+        const current = toolCredentials.find((item) => item.id === editingId);
+        if (!current) throw new Error("工具凭证已不存在，请刷新后重试");
+        await onUpdate(current, payload);
+      } else {
+        await apiRequest<ToolCredential>(`${apiBase}/tool-credentials`, {
+          method: "POST",
+          headers: requestHeaders(),
+          body: JSON.stringify(payload),
+        });
+        onConfigChanged();
+      }
+      startCreate();
+    } catch (caught) {
+      setError(caught);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggle(credential: ToolCredential) {
+    setActionId(`toggle:${credential.id}`);
+    setError(null);
+    try {
+      await onUpdate(credential, { enabled: !credential.enabled, secret_action: "keep" });
+    } catch (caught) {
+      setError(caught);
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function remove(credential: ToolCredential) {
+    if (confirmDelete?.id !== credential.id) {
+      setConfirmDelete(credential);
+      return;
+    }
+    setActionId(`delete:${credential.id}`);
+    setBusy(true);
+    setError(null);
+    try {
+      await onDelete(credential);
+      setConfirmDelete(null);
+      if (editingId === credential.id) startCreate();
+    } catch (caught) {
+      setError(caught);
+    } finally {
+      setActionId(null);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="view-stack settings-stack">
+      <div className="view-heading">
+        <div>
+          <span className="section-kicker">DEPLOYMENT TOOL CREDENTIALS</span>
+          <h2>工具凭证</h2>
+          <p>Git、代码托管和其他工具只引用 credential ID；token 在控制面加密保存，列表永不返回明文。</p>
+        </div>
+        <button className="button button-primary" onClick={startCreate} disabled={syncing || busy}>
+          <Plus size={16} /> 新建工具凭证
+        </button>
+      </div>
+
+      <div className="connection-banner connection-banner-warning" role="note">
+        <div><ShieldCheck size={17} /><span>部署侧请注入轮换后的 master key；这里只提交一次性 secret。Agent 配置使用 <code>credential_ref</code>，不要把 token 写进提示词、JSON、事件或日志。</span></div>
+      </div>
+
+      <form className="panel settings-panel" onSubmit={submit}>
+        <div className="settings-panel-head">
+          <span className="settings-icon"><GitBranch size={19} /></span>
+          <div><h3>{editingId ? "编辑工具凭证" : "新建工具凭证"}</h3><p>secret 只在提交时进入控制面，成功后仅保留掩码。</p></div>
+          {editingId && <button type="button" className="button button-ghost" onClick={startCreate}>取消编辑</button>}
+        </div>
+        <div className="form-row">
+          <label className="form-field"><span>名称</span><input required minLength={2} value={form.name} onChange={(event) => updateForm({ name: event.target.value })} placeholder="例如：UAI GitHub 推送凭证" /></label>
+          <label className="form-field"><span>提供方</span><input required value={form.provider} onChange={(event) => updateForm({ provider: event.target.value })} placeholder="github" /></label>
+          <label className="form-field"><span>凭证类型</span><select value={form.kind} onChange={(event) => updateForm({ kind: event.target.value })}><option value="git_token">Git token</option><option value="api_token">API token</option><option value="bearer_token">Bearer token</option><option value="custom">其他</option></select></label>
+        </div>
+        <div className="form-row">
+          <label className="form-field"><span>Secret {editingId ? "（留空表示不替换）" : ""}</span><input type="password" value={form.secret} onChange={(event) => updateForm({ secret: event.target.value, secretAction: event.target.value ? "replace" : form.secretAction })} placeholder={editingId ? "仅轮换时填写" : "提交一次性 token"} autoComplete="new-password" /><small>不会回显；页面、Agent 和事件只看到掩码。</small></label>
+          {editingId ? <label className="form-field"><span>Secret 动作</span><select value={form.secretAction} onChange={(event) => updateForm({ secretAction: event.target.value as ToolCredentialFormState["secretAction"] })}><option value="keep">沿用当前 secret</option><option value="replace">轮换为新 secret</option><option value="clear">清除并停用</option></select></label> : <div className="form-field form-field-note"><span>保存阶段</span><strong>加密保存后只显示掩码</strong><small>部署 master key 不由此页面维护。</small></div>}
+          <label className="form-field"><span>状态</span><select value={form.enabled ? "enabled" : "disabled"} onChange={(event) => updateForm({ enabled: event.target.value === "enabled" })}><option value="enabled">启用</option><option value="disabled">停用</option></select></label>
+        </div>
+        <details className="advanced-config">
+          <summary>非敏感 metadata JSON（可选）</summary>
+          <small>可写仓库 scope、用途等非敏感元数据；禁止写 token、Authorization、密码或其他 secret。</small>
+          <textarea className="json-config-field" value={form.metadataJson} onChange={(event) => updateForm({ metadataJson: event.target.value })} rows={4} spellCheck={false} />
+        </details>
+        <ProblemNotice problem={error} />
+        <div className="modal-actions"><button type="submit" className="button button-primary" disabled={busy || mode !== "live"}>{busy ? "保存中…" : editingId ? "保存修改" : "创建凭证"}</button></div>
+      </form>
+
+      <div className="panel settings-panel">
+        <div className="settings-panel-head"><span className="settings-icon"><KeyRound size={19} /></span><div><h3>已保存工具凭证</h3><p>{toolCredentials.length ? `${toolCredentials.length} 条租户工具凭证 · 只显示掩码和引用 ID` : "还没有工具凭证"}</p></div></div>
+        {toolCredentials.length ? <div className="config-list">{toolCredentials.map((credential) => <div className="config-list-row" key={credential.id}>
+          <span><strong>{credential.name}</strong><small>{credential.provider} · {credential.kind} · {credential.masked_secret || "无 secret"}</small><small><code>{credential.id}</code> · Agent 工具引用：{referenceCounts[credential.id] ?? "—"} · metadata 仅限非敏感字段</small></span>
+          <span className="config-row-actions"><span className={`status-badge ${credential.enabled ? "ready" : "stopped"}`}>{credential.enabled ? "enabled" : "disabled"}</span><button className="button button-secondary" onClick={() => void toggle(credential)} disabled={busy || actionId !== null}>{actionId === `toggle:${credential.id}` ? "更新中…" : credential.enabled ? "停用" : "启用"}</button><button className="button button-ghost" onClick={() => startEdit(credential)} disabled={busy}>编辑</button><button className="button button-danger" onClick={() => void remove(credential)} disabled={busy || actionId !== null}>{confirmDelete?.id === credential.id ? "再次确认删除" : "删除"}</button>{confirmDelete?.id === credential.id && <button className="button button-ghost" onClick={() => setConfirmDelete(null)} disabled={busy}>取消</button>}</span>
+        </div>)}</div> : <div className="empty-state"><GitBranch size={24} /><strong>暂无工具凭证</strong><span>创建后会显示脱敏 secret；删除仍被 Agent 引用的凭证会被拒绝。</span></div>}
+      </div>
+    </div>
+  );
+}
+
 function SettingsView({
   apiBase,
   apiKey,
@@ -6029,7 +6381,7 @@ function NewAgentModal({
             </div>
           <fieldset className="child-picker tool-picker">
             <legend>工具绑定 <span>默认已选只读基础工具</span></legend>
-            <p>新 Agent 默认挂载 Web 搜索、网页访问、公开 JSON、RSS / Atom、计算器和 UTC 时间；沙箱执行需要显式添加，勾选后会预填 sandbox.docker 与 alpine:3.20 配置，默认不挂载。</p>
+            <p>新 Agent 默认挂载 Web 搜索、网页访问、公开 JSON、RSS / Atom、计算器和 UTC 时间；沙箱执行、本地工作区和 Git 都需要显式添加。工作区工具仅适用于本地开发，默认只读；Git 工具使用绑定仓库的常规状态检查、拉取、提交和推送流程，凭证只通过 credential_ref 注入。</p>
             <div className="picker-grid">
               {toolPlugins.map((plugin) => {
                 const selected = tools.some((tool) => tool.plugin_id === plugin.id);
@@ -6662,7 +7014,7 @@ function EditAgentModal({
           </label>
           <fieldset className="child-picker tool-picker">
             <legend>工具绑定</legend>
-            <p>已有别名、权限和配置会保留；新绑定工具默认使用 auto 策略。勾选沙箱执行时会预填 sandbox.docker 与 alpine:3.20 配置，可按部署镜像修改。</p>
+            <p>已有别名、权限和配置会保留；新绑定工具默认使用 auto 策略。勾选沙箱执行时会预填 sandbox.docker 与 alpine:3.20 配置，可按部署镜像修改。Git 使用工具凭证引用和绑定仓库的当前 remote/branch。</p>
             <div className="picker-grid">
               {toolPlugins.map((plugin) => {
                 const selected = tools.some((tool) => tool.plugin_id === plugin.id);

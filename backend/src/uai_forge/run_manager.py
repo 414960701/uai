@@ -47,6 +47,7 @@ class RunManager:
         self._tasks: Dict[Tuple[str, str], asyncio.Task] = {}
         self._active_sessions: Set[Tuple[str, str]] = set()
         self._lock = asyncio.Lock()
+        runtime.attach_run_submission_port(self)
 
     async def _resolve_target(
         self, tenant_id: str, request: RunRequest
@@ -548,7 +549,6 @@ class RunManager:
                         },
                     }
                 )
-            await self.repository.update_run(completed)
             if completed.todo is not None:
                 await self._publish_todo_event(
                     run.tenant_id,
@@ -582,6 +582,11 @@ class RunManager:
                     span_id=run_span_id,
                 ),
             )
+            # Publish the durable terminal event before exposing the terminal
+            # Run status.  Readers that poll the Run and then replay history
+            # must never observe a terminal status whose terminal event has not
+            # been appended yet.
+            await self.repository.update_run(completed)
             await self._sync_source_plan(completed, PlanStatus.COMPLETED)
 
         try:
@@ -602,7 +607,6 @@ class RunManager:
                     "finished_at": utc_now(),
                 }
             )
-            await self.repository.update_run(cancelled)
             if cancelled.todo is not None:
                 await self._publish_todo_event(run.tenant_id, cancelled, EventType.TODO_FAILED, cancelled.todo)
             await self._sync_source_plan(cancelled, PlanStatus.CANCELLED)
@@ -617,6 +621,7 @@ class RunManager:
                     span_id=str((current or run).metrics.get("run_span_id") or f"span_{run.id}_run"),
                 ),
             )
+            await self.repository.update_run(cancelled)
         except Exception as exc:
             current = await self.repository.get_run(run.tenant_id, run.id)
             base = current or run
@@ -634,7 +639,6 @@ class RunManager:
                     "finished_at": utc_now(),
                 }
             )
-            await self.repository.update_run(failed)
             if failed.todo is not None:
                 await self._publish_todo_event(run.tenant_id, failed, EventType.TODO_FAILED, failed.todo)
             await self._sync_source_plan(failed, PlanStatus.FAILED)
@@ -649,6 +653,7 @@ class RunManager:
                     span_id=str((current or run).metrics.get("run_span_id") or f"span_{run.id}_run"),
                 ),
             )
+            await self.repository.update_run(failed)
 
     async def cancel(self, tenant_id: str, run_id: str) -> bool:
         async with self._lock:

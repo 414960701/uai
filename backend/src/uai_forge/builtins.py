@@ -22,6 +22,8 @@ from .tools import (
     create_echo,
     create_utc_now,
 )
+from .git_tools import GIT_MANIFEST, create_git_tool
+from .conversation_tools import CONVERSATION_MANIFEST, create_conversation_tool
 from .web_tools import (
     WEB_FETCH_MANIFEST,
     WEB_JSON_MANIFEST,
@@ -32,6 +34,7 @@ from .web_tools import (
     create_web_rss,
     create_web_search,
 )
+from .workspace_tools import WORKSPACE_MANIFEST, create_workspace_tool
 
 
 def register_builtins(registry: PluginRegistry) -> None:
@@ -40,6 +43,8 @@ def register_builtins(registry: PluginRegistry) -> None:
     registry.register_tool(CALCULATOR_MANIFEST, create_calculator)
     registry.register_tool(ECHO_MANIFEST, create_echo)
     registry.register_tool(UTC_NOW_MANIFEST, create_utc_now)
+    registry.register_tool(GIT_MANIFEST, create_git_tool)
+    registry.register_tool(CONVERSATION_MANIFEST, create_conversation_tool)
     registry.register_tool(WEB_SEARCH_MANIFEST, create_web_search)
     registry.register_tool(WEB_FETCH_MANIFEST, create_web_fetch)
     registry.register_tool(WEB_JSON_MANIFEST, create_web_json)
@@ -49,6 +54,7 @@ def register_builtins(registry: PluginRegistry) -> None:
         SANDBOX_EXEC_MANIFEST,
         lambda binding: create_sandbox_exec(binding, registry),
     )
+    registry.register_tool(WORKSPACE_MANIFEST, create_workspace_tool)
     registry.register_memory(IN_PROCESS_MEMORY_MANIFEST, create_in_process_memory)
     registry.register_middleware(AUDIT_MIDDLEWARE_MANIFEST, create_audit_tags)
     registry.register_manifest(

@@ -20,7 +20,7 @@ async def _doctor(settings: Settings) -> int:
     # database; unsupported existing schemas require an explicit backup/rebuild
     # and are never migrated while the operator is inspecting them.
     schema = await container.repository.compatibility_status()
-    if schema.get("status") != "compatible":
+    if schema.get("status") not in {"compatible", "migratable"}:
         is_new = schema.get("status") == "new"
         payload = {
             "database": settings.database_path,
@@ -46,6 +46,27 @@ async def _doctor(settings: Settings) -> int:
             )
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0 if is_new else 2
+
+    if schema.get("status") == "migratable":
+        payload = {
+            "database": settings.database_path,
+            "agents": 0,
+            "plugins": len(container.registry.manifests()),
+            "providers": [
+                manifest.id
+                for manifest in container.registry.manifests(PluginKind.PROVIDER)
+            ],
+            "plugin_errors": container.registry.discovery_errors,
+            "schema": schema,
+            "migration": {
+                "dry_run": True,
+                "writes_performed": False,
+                "pending": ["additive_v3_to_v4_tool_credentials"],
+            },
+            "status": "pending_migration",
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
 
     agents = await container.repository.list_agents("default")
     payload = {

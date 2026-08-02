@@ -1,4 +1,5 @@
 import asyncio
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -376,6 +377,143 @@ async def test_streaming_model_emits_deltas_after_tool_calls_are_completed(tmp_p
     assert all("tool_calls" not in event.payload for event in deltas)
     assert "已完成协作" in "".join(event.payload["text"] for event in deltas)
     assert any(event.type == EventType.TOOL_STARTED for event in events)
+
+
+@pytest.mark.asyncio
+async def test_tool_adapter_timeout_reaches_a_terminal_run(tmp_path, monkeypatch):
+    repository, manager = await make_runtime(tmp_path)
+    agent = await repository.save_agent(
+        "default",
+        AgentSpec(
+            id="agt_bounded_tool_timeout",
+            name="Bounded Tool Timeout",
+            system_prompt="Use the requested tool.",
+            tools=[
+                ToolBinding(
+                    plugin_id="tool.echo",
+                    alias="echo",
+                    config={"timeout_seconds": 0.05},
+                )
+            ],
+            policy=ExecutionPolicy(timeout_seconds=2),
+        ),
+    )
+
+    class HangingTool:
+        name = "echo"
+        description = "A test-only tool that never returns."
+        parameters = {
+            "type": "object",
+            "properties": {"input": {}},
+            "required": ["input"],
+            "additionalProperties": False,
+        }
+
+        def definition(self, exposed_name=None):
+            return {
+                "type": "function",
+                "function": {
+                    "name": exposed_name or self.name,
+                    "description": self.description,
+                    "parameters": self.parameters,
+                },
+            }
+
+        async def invoke(self, arguments, context):
+            del arguments, context
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(manager.runtime.registry, "create_tool", lambda binding: HangingTool())
+
+    run = await manager.start(
+        "default",
+        RunRequest(agent_id=agent.id, input='tool:echo {"input":"hang"}'),
+    )
+    finished = await asyncio.wait_for(manager.wait("default", run.id), timeout=1)
+    events = await repository.list_events("default", run.id)
+
+    assert finished.status == RunStatus.FAILED
+    assert "tool echo exceeded timeout 0.05s" in (finished.error or "")
+    assert any(
+        event.type == EventType.TOOL_FAILED
+        and "tool echo exceeded timeout 0.05s" in event.payload.get("error", "")
+        for event in events
+    )
+    assert events[-1].type == EventType.RUN_FAILED
+
+
+def test_explicit_tool_timeout_can_cover_slow_workspace_checks():
+    spec = AgentSpec(
+        id="agt_workspace_timeout_contract",
+        name="Workspace Timeout Contract",
+        system_prompt="Use the workspace tool.",
+        tools=[ToolBinding(plugin_id="tool.workspace")],
+        policy=ExecutionPolicy(timeout_seconds=300),
+    )
+    binding = ToolBinding(
+        plugin_id="tool.workspace",
+        config={"timeout_seconds": 120},
+    )
+
+    assert AgentRuntime._tool_timeout_seconds(spec, binding, {}) == 120
+    assert AgentRuntime._tool_timeout_seconds(
+        spec,
+        binding,
+        {"timeout_seconds": 15},
+    ) == 15
+    assert AgentRuntime._tool_timeout_seconds(
+        spec,
+        binding,
+        {"timeout_seconds": 900},
+    ) == 120
+
+
+@pytest.mark.asyncio
+async def test_invalid_workspace_patch_is_recoverable_at_run_boundary(tmp_path):
+    repository, manager = await make_runtime(tmp_path)
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=workspace_root, check=True)
+    (workspace_root / "README.md").write_text("before\n", encoding="utf-8")
+
+    agent = await repository.save_agent(
+        "default",
+        AgentSpec(
+            id="agt_recoverable_workspace_patch",
+            name="Recoverable Workspace Patch Agent",
+            system_prompt="Use the requested workspace tool.",
+            tools=[
+                ToolBinding(
+                    plugin_id="tool.workspace",
+                    alias="workspace",
+                    config={
+                        "root_path": str(workspace_root),
+                        "allow_write": True,
+                        "timeout_seconds": 5,
+                        "max_output_bytes": 20_000,
+                        "max_patch_bytes": 20_000,
+                    },
+                )
+            ],
+            policy=ExecutionPolicy(max_steps=3),
+        ),
+    )
+
+    run = await manager.start(
+        "default",
+        RunRequest(
+            agent_id=agent.id,
+            input='tool:workspace {"action":"patch","patch":"--- a/README.md\\n+++ b/README.md\\n"}',
+        ),
+    )
+    finished = await manager.wait("default", run.id)
+    events = await repository.list_events("default", run.id)
+
+    assert finished.status == RunStatus.SUCCEEDED
+    assert not any(event.type == EventType.TOOL_FAILED for event in events)
+    completed = next(event for event in events if event.type == EventType.TOOL_COMPLETED)
+    assert "workspace.patch_invalid" in str(completed.payload["result"])
+    assert (workspace_root / "README.md").read_text(encoding="utf-8") == "before\n"
 
 
 @pytest.mark.asyncio

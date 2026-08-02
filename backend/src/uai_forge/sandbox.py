@@ -247,12 +247,16 @@ class DockerSandbox(SandboxProvider):
 
         container_name = f"uai-sbx-{uuid4().hex[:24]}"
         command = self.command_for(request, container_name=container_name)
-        process = await self._process_runner(
-            *command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        try:
+            process = await self._process_runner(
+                *command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            # Keep host deployment details out of the Agent-visible error.
+            raise RuntimeError("sandbox.docker.cli_unavailable") from exc
         started = time.monotonic()
         try:
             exit_code, stdout, stderr, truncated = await asyncio.wait_for(

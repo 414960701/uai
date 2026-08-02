@@ -47,6 +47,10 @@ from .models import (
     PluginManifest,
     RuntimeConfigEntry,
     RuntimeConfigPatch,
+    ToolCredential,
+    ToolCredentialPatch,
+    ToolCredentialReferences,
+    ToolCredentialWrite,
     RunEvent,
     RunRecord,
     RunRequest,
@@ -59,6 +63,7 @@ from .settings import Settings
 from .endpoints import EndpointPolicyError, endpoint_summary, validate_endpoint_url
 from .storage import (
     ConfigurationConflictError,
+    ConfigurationInUseError,
     RecordNotFoundError,
     RevisionConflictError,
 )
@@ -582,6 +587,44 @@ def create_app(settings: Settings = None) -> FastAPI:
                     "docs/architecture/adr/ADR-0010-extensible-sandbox-runtimes.md",
                 ],
             ),
+            CapabilityStatus(
+                id="tool_credential_references",
+                state="implemented",
+                summary="工具凭证以 tenant-scoped 加密资源保存，Agent 只引用 credential_ref",
+                limits=["Git 等外部工具仍需显式挂载并配置 credential_ref", "未实现 RBAC/Secret Manager API"],
+                evidence_refs=[
+                    "backend/src/uai_forge/storage.py::SQLiteRepository.resolve_tool_credential_secret",
+                    "specs/changes/CHG-0034-tool-credentials/requirements.md",
+                ],
+            ),
+            CapabilityStatus(
+                id="git_sync",
+                state="implemented",
+                summary="tool.git 提供当前仓库的状态、差异、拉取、提交和推送工作流",
+                limits=[
+                    "不执行任意 Shell/Git 子命令、force push 或远端删除；冲突仍需人工或后续流程处理",
+                    "必须显式挂载并配置 credential_ref；当前 0.1 仍是单进程工具适配器",
+                ],
+                evidence_refs=[
+                    "backend/src/uai_forge/git_tools.py::GitTool",
+                    "backend/tests/test_git_tools.py",
+                    "specs/changes/CHG-0035-bounded-git-sync/requirements.md",
+                ],
+            ),
+            CapabilityStatus(
+                id="conversation_run_submission",
+                state="implemented",
+                summary="tool.conversation 通过正常 RunManager 发起新的 Agent 会话并返回新 Run 标识",
+                limits=[
+                    "每个后续 Run 仍受其 Agent policy、拓扑、revision、session 与预算约束",
+                    "当前 0.1 没有 durable Session/outbox；跨 Run 的无限循环由部署策略负责停止",
+                ],
+                evidence_refs=[
+                    "backend/src/uai_forge/conversation_tools.py::ConversationTool",
+                    "backend/src/uai_forge/run_manager.py::RunManager.start",
+                    "backend/tests/test_conversation_tools.py",
+                ],
+            ),
         ]
 
     @app.get("/api/v1/setup-status", response_model=SetupStatus, dependencies=protected)
@@ -676,6 +719,7 @@ def create_app(settings: Settings = None) -> FastAPI:
                 "database_backed_model_configs",
                 "anthropic_messages",
                 "versioned_runtime_config",
+                "database_backed_tool_credentials",
             ],
             "capabilities": [item.model_dump(mode="json") for item in capability_statuses(current)],
             "storage": await current.repository.compatibility_status(),
@@ -1002,6 +1046,160 @@ def create_app(settings: Settings = None) -> FastAPI:
             raise HTTPException(status_code=409, detail="model configuration is used by an agent")
         if not await current.repository.delete_model_config(tenant, config_id):
             raise HTTPException(status_code=404, detail="model configuration not found")
+        return Response(status_code=204)
+
+    @app.get(
+        "/api/v1/tool-credentials",
+        response_model=List[ToolCredential],
+        dependencies=protected,
+    )
+    async def list_tool_credentials(
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> List[ToolCredential]:
+        return await current.repository.list_tool_credentials(tenant)
+
+    @app.post(
+        "/api/v1/tool-credentials",
+        response_model=ToolCredential,
+        status_code=status.HTTP_201_CREATED,
+        dependencies=protected,
+    )
+    async def create_tool_credential(
+        payload: ToolCredentialWrite,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> ToolCredential:
+        credential_id = payload.id or new_id("cred")
+        if await current.repository.get_tool_credential(tenant, credential_id):
+            raise HTTPException(status_code=409, detail="tool credential id already exists")
+        secret_action = payload.secret_action or ("replace" if payload.secret else "clear")
+        if secret_action != "replace" or not payload.secret:
+            raise HTTPException(
+                status_code=422,
+                detail="a new tool credential requires secret_action=replace",
+            )
+        credential = ToolCredential(
+            id=credential_id,
+            tenant_id=tenant,
+            name=payload.name,
+            provider=payload.provider,
+            kind=payload.kind,
+            metadata=payload.metadata,
+            enabled=payload.enabled,
+        )
+        try:
+            return await current.repository.save_tool_credential(
+                tenant,
+                credential,
+                payload.secret,
+                secret_action=secret_action,
+            )
+        except ConfigurationConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get(
+        "/api/v1/tool-credentials/{credential_id}/references",
+        response_model=ToolCredentialReferences,
+        dependencies=protected,
+    )
+    async def tool_credential_references(
+        credential_id: str,
+        limit: int = 50,
+        cursor: Optional[str] = None,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> ToolCredentialReferences:
+        if await current.repository.get_tool_credential(tenant, credential_id) is None:
+            raise HTTPException(status_code=404, detail="tool credential not found")
+        return await current.repository.list_tool_credential_references(
+            tenant,
+            credential_id,
+            limit=limit,
+            cursor=cursor,
+        )
+
+    @app.get(
+        "/api/v1/tool-credentials/{credential_id}",
+        response_model=ToolCredential,
+        dependencies=protected,
+    )
+    async def get_tool_credential(
+        credential_id: str,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> ToolCredential:
+        credential = await current.repository.get_tool_credential(tenant, credential_id)
+        if credential is None:
+            raise HTTPException(status_code=404, detail="tool credential not found")
+        return credential
+
+    @app.patch(
+        "/api/v1/tool-credentials/{credential_id}",
+        response_model=ToolCredential,
+        dependencies=protected,
+    )
+    async def update_tool_credential(
+        credential_id: str,
+        patch: ToolCredentialPatch,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> ToolCredential:
+        existing = await current.repository.get_tool_credential(tenant, credential_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="tool credential not found")
+        if patch.expected_version is None:
+            raise HTTPException(status_code=428, detail="tool credential version is required")
+        if patch.expected_version != existing.version:
+            raise HTTPException(status_code=409, detail="tool credential version conflict")
+        if patch.provider is not None and patch.provider != existing.provider and patch.secret_action != "replace":
+            raise HTTPException(
+                status_code=422,
+                detail="changing tool credential provider requires a new secret",
+            )
+        data = existing.model_dump()
+        data.update(
+            patch.model_dump(
+                exclude_unset=True,
+                exclude={"expected_version", "secret", "secret_action"},
+            )
+        )
+        if patch.secret_action == "clear":
+            data["enabled"] = False
+        elif patch.enabled is True and not await current.repository.resolve_tool_credential_secret(
+            tenant,
+            credential_id,
+            include_disabled=True,
+        ) and patch.secret_action != "replace":
+            raise HTTPException(status_code=422, detail="tool credential has no stored secret")
+        candidate = ToolCredential.model_validate(data)
+        try:
+            return await current.repository.save_tool_credential(
+                tenant,
+                candidate,
+                patch.secret,
+                expected_version=patch.expected_version,
+                secret_action=patch.secret_action,
+            )
+        except ConfigurationConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.delete(
+        "/api/v1/tool-credentials/{credential_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=protected,
+    )
+    async def delete_tool_credential(
+        credential_id: str,
+        tenant: str = Depends(tenant_id),
+        current: Container = Depends(get_container),
+    ) -> Response:
+        try:
+            deleted = await current.repository.delete_tool_credential(tenant, credential_id)
+        except ConfigurationInUseError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not deleted:
+            raise HTTPException(status_code=404, detail="tool credential not found")
         return Response(status_code=204)
 
     @app.get(

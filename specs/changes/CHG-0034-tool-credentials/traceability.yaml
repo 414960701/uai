@@ -1,0 +1,39 @@
+change_id: CHG-0034
+status: accepted
+implementation_status: implemented
+requirements:
+  CFG-010:
+    contracts:
+      - proposal.md
+      - requirements.md
+      - design.md
+      - ../../../../docs/architecture/adr/ADR-0012-tool-credentials.md
+    implementation:
+      - ../../../../backend/src/uai_forge/models.py::ToolCredential
+      - ../../../../backend/src/uai_forge/storage.py::SQLiteRepository.resolve_tool_credential_secret
+      - ../../../../backend/src/uai_forge/api.py::create_tool_credential
+    verification:
+      - ../../../../backend/tests/test_tool_credentials.py
+      - backend-pytest
+  CFG-011:
+    contracts:
+      - requirements.md
+      - design.md
+    implementation:
+      - ../../../../app/control-center.tsx::ToolCredentialsView
+    verification:
+      - ../../../../tests/rendered-html.test.mjs
+      - frontend-lint-typecheck-test
+  DEP-006:
+    contracts:
+      - requirements.md
+      - compatibility-impact.yaml
+    implementation:
+      - ../../../../backend/src/uai_forge/storage.py::_migrate_v3_to_v4
+    verification:
+      - ../../../../backend/tests/test_tool_credentials.py::test_v3_database_gets_additive_tool_credentials_migration
+      - docker-compose-config
+    limits:
+      - no_git_push_adapter
+      - no_secret_manager_api
+      - no_rbac_or_production_multitenancy
